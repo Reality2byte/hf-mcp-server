@@ -1,8 +1,11 @@
 /**
  * Utility functions for handling Gradio endpoint detection and configuration
  */
+import { spaceInfo } from '@huggingface/hub';
 import { GRADIO_FILES_TOOL_CONFIG } from '@llmindset/hf-mcp';
+import type { SpaceTool } from '../../shared/settings.js';
 import { GRADIO_PREFIX, GRADIO_PRIVATE_PREFIX } from '../../shared/constants.js';
+import { logger } from './logger.js';
 
 /**
  * Determines if a tool name represents a Gradio endpoint
@@ -78,4 +81,150 @@ export function createGradioToolName(
 
 	// Create tool name: {prefix}{1-based-index}_{sanitized_name}
 	return `${prefix}${indexStr}_${sanitizedName}`;
+}
+
+/**
+ * Parsed Gradio space ID before subdomain resolution
+ */
+export interface ParsedGradioSpace {
+	name: string; // e.g., "microsoft/Florence-2-large"
+}
+
+/**
+ * Parses the gradio parameter to extract space IDs.
+ * Does NOT construct subdomains - they must be fetched from the HuggingFace API.
+ *
+ * @param gradioParam - Comma-separated list of space IDs (e.g., "microsoft/Florence-2-large,acme/foo")
+ * @returns Array of parsed space IDs
+ *
+ * @example
+ * parseGradioSpaceIds('microsoft/Florence-2-large') // [{ name: 'microsoft/Florence-2-large' }]
+ * parseGradioSpaceIds('microsoft/Florence-2-large,acme/foo') // [{ name: 'microsoft/Florence-2-large' }, { name: 'acme/foo' }]
+ * parseGradioSpaceIds('none') // []
+ */
+export function parseGradioSpaceIds(gradioParam: string): ParsedGradioSpace[] {
+	const spaces: ParsedGradioSpace[] = [];
+	const trimmed = gradioParam.trim();
+
+	// Treat special sentinel "none" as "disable gradio"
+	if (trimmed.toLowerCase() === 'none') {
+		return spaces;
+	}
+
+	const entries = gradioParam
+		.split(',')
+		.map((s) => s.trim())
+		.filter((s) => s.length > 0);
+
+	for (const entry of entries) {
+		// Skip explicit "none" entries within a list
+		if (entry.toLowerCase() === 'none') {
+			continue;
+		}
+
+		// Validate exactly one slash in the middle (username/space-name format)
+		const slashCount = (entry.match(/\//g) || []).length;
+		const slashIndex = entry.indexOf('/');
+		const isValidFormat = slashCount === 1 && slashIndex > 0 && slashIndex < entry.length - 1;
+
+		if (!isValidFormat) {
+			logger.warn(
+				`Skipping invalid gradio entry "${entry}": must contain exactly one slash with content on both sides (format: username/space-name)`
+			);
+			continue;
+		}
+
+		spaces.push({ name: entry });
+		logger.debug(`Parsed gradio space ID: ${entry}`);
+	}
+
+	return spaces;
+}
+
+/**
+ * Fetches real subdomains from the HuggingFace API for the given space IDs.
+ *
+ * @param spaceIds - Array of space IDs to fetch subdomains for
+ * @param hfToken - Optional HuggingFace token for authentication
+ * @param hubUrl - Optional hub URL for custom HuggingFace instances
+ * @returns Array of SpaceTool objects with real subdomains from the API
+ *
+ * @example
+ * const spaces = [{ name: 'microsoft/Florence-2-large' }];
+ * const tools = await fetchGradioSubdomains(spaces, 'hf_token');
+ * // Returns: [{ _id: 'gradio_...', name: 'microsoft/Florence-2-large', subdomain: 'microsoft-florence-2-large', emoji: '🔧' }]
+ */
+export async function fetchGradioSubdomains(
+	spaceIds: ParsedGradioSpace[],
+	hfToken?: string,
+	hubUrl?: string
+): Promise<SpaceTool[]> {
+	const spaceTools: SpaceTool[] = [];
+
+	for (const space of spaceIds) {
+		try {
+			logger.debug(`Fetching subdomain for space: ${space.name}`);
+
+			// Fetch space info with subdomain field
+			const info = (await spaceInfo({
+				name: space.name,
+				additionalFields: ['subdomain'],
+				...(hubUrl && { hubUrl }),
+				...(hfToken && { credentials: { accessToken: hfToken } }),
+			})) as { subdomain?: string };
+
+			const subdomain = info.subdomain;
+
+			if (!subdomain) {
+				logger.warn(`Space "${space.name}" does not have a subdomain - skipping`);
+				continue;
+			}
+
+			// Generate a unique ID based on the subdomain (which is guaranteed unique)
+			const toolId = `gradio_${subdomain}`;
+
+			spaceTools.push({
+				_id: toolId,
+				name: space.name,
+				subdomain: subdomain,
+				emoji: '🔧',
+			});
+
+			logger.info(`Successfully fetched subdomain for ${space.name}: ${subdomain}`);
+		} catch (error) {
+			logger.error(
+				{ error, spaceName: space.name },
+				`Failed to fetch subdomain for space "${space.name}" - skipping`
+			);
+		}
+	}
+
+	return spaceTools;
+}
+
+/**
+ * Parses gradio parameter and fetches real subdomains from HuggingFace API.
+ * This is the main entry point that combines parsing and API fetching.
+ *
+ * @param gradioParam - Comma-separated list of space IDs
+ * @param hfToken - Optional HuggingFace token for authentication
+ * @param hubUrl - Optional hub URL for custom HuggingFace instances
+ * @returns Array of SpaceTool objects with real subdomains
+ *
+ * @example
+ * const tools = await parseAndFetchGradioEndpoints('microsoft/Florence-2-large', 'hf_token');
+ * // Returns array of SpaceTool objects with real subdomains from HuggingFace API
+ */
+export async function parseAndFetchGradioEndpoints(
+	gradioParam: string,
+	hfToken?: string,
+	hubUrl?: string
+): Promise<SpaceTool[]> {
+	const parsedSpaces = parseGradioSpaceIds(gradioParam);
+
+	if (parsedSpaces.length === 0) {
+		return [];
+	}
+
+	return fetchGradioSubdomains(parsedSpaces, hfToken, hubUrl);
 }
