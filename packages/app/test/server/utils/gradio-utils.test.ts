@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { isGradioTool, createGradioToolName } from '../../../src/server/utils/gradio-utils.js';
+import {
+	isGradioTool,
+	createGradioToolName,
+	parseGradioSpaceIds,
+} from '../../../src/server/utils/gradio-utils.js';
 
 describe('isGradioTool', () => {
 	describe('should return true for valid Gradio tool names', () => {
@@ -255,4 +259,187 @@ describe('createGradioToolName', () => {
 			expect(createGradioToolName('EasyGhibli', 1, false)).toBe('gr2_easyghibli');
 		});
 		});
+});
+
+describe('parseGradioSpaceIds', () => {
+	describe('valid space IDs', () => {
+		it('should parse single space ID', () => {
+			const result = parseGradioSpaceIds('microsoft/Florence-2-large');
+			expect(result).toEqual([{ name: 'microsoft/Florence-2-large' }]);
+		});
+
+		it('should parse multiple space IDs', () => {
+			const result = parseGradioSpaceIds('microsoft/Florence-2-large,acme/foo,bar/baz');
+			expect(result).toEqual([
+				{ name: 'microsoft/Florence-2-large' },
+				{ name: 'acme/foo' },
+				{ name: 'bar/baz' },
+			]);
+		});
+
+		it('should handle spaces around commas', () => {
+			const result = parseGradioSpaceIds('microsoft/Florence-2-large, acme/foo , bar/baz');
+			expect(result).toEqual([
+				{ name: 'microsoft/Florence-2-large' },
+				{ name: 'acme/foo' },
+				{ name: 'bar/baz' },
+			]);
+		});
+
+		it('should preserve case in space IDs', () => {
+			const result = parseGradioSpaceIds('Microsoft/Florence-2-LARGE');
+			expect(result).toEqual([{ name: 'Microsoft/Florence-2-LARGE' }]);
+		});
+
+		it('should handle spaces with special characters', () => {
+			const result = parseGradioSpaceIds('user/space-name.v2,org/model_test');
+			expect(result).toEqual([
+				{ name: 'user/space-name.v2' },
+				{ name: 'org/model_test' },
+			]);
+		});
+
+		it('should handle real-world example from bug report', () => {
+			// This was the actual failing case: microsoft/Florence-2-large
+			const result = parseGradioSpaceIds('microsoft/Florence-2-large');
+			expect(result).toEqual([{ name: 'microsoft/Florence-2-large' }]);
+			// Verify we're NOT converting the slash to a dash here
+			expect(result[0].name).not.toContain('-Florence-'); // Should have /Florence-
+			expect(result[0].name).toContain('/Florence-');
+		});
+	});
+
+	describe('special sentinel values', () => {
+		it('should return empty array for "none"', () => {
+			const result = parseGradioSpaceIds('none');
+			expect(result).toEqual([]);
+		});
+
+		it('should return empty array for "NONE" (case insensitive)', () => {
+			const result = parseGradioSpaceIds('NONE');
+			expect(result).toEqual([]);
+		});
+
+		it('should return empty array for "None"', () => {
+			const result = parseGradioSpaceIds('None');
+			expect(result).toEqual([]);
+		});
+
+		it('should skip "none" in comma-separated list', () => {
+			const result = parseGradioSpaceIds('microsoft/Florence-2-large,none,acme/foo');
+			expect(result).toEqual([
+				{ name: 'microsoft/Florence-2-large' },
+				{ name: 'acme/foo' },
+			]);
+		});
+
+		it('should handle multiple "none" values', () => {
+			const result = parseGradioSpaceIds('none,none,acme/foo,none');
+			expect(result).toEqual([{ name: 'acme/foo' }]);
+		});
+	});
+
+	describe('empty and whitespace inputs', () => {
+		it('should handle empty string', () => {
+			const result = parseGradioSpaceIds('');
+			expect(result).toEqual([]);
+		});
+
+		it('should handle whitespace-only string', () => {
+			const result = parseGradioSpaceIds('   ');
+			expect(result).toEqual([]);
+		});
+
+		it('should handle string with only commas', () => {
+			const result = parseGradioSpaceIds(',,,');
+			expect(result).toEqual([]);
+		});
+
+		it('should filter out empty entries between commas', () => {
+			const result = parseGradioSpaceIds('acme/foo,,bar/baz');
+			expect(result).toEqual([
+				{ name: 'acme/foo' },
+				{ name: 'bar/baz' },
+			]);
+		});
+	});
+
+	describe('invalid space IDs', () => {
+		it('should skip entries with no slash', () => {
+			const result = parseGradioSpaceIds('invalid-space,acme/foo');
+			expect(result).toEqual([{ name: 'acme/foo' }]);
+		});
+
+		it('should skip entries with multiple slashes', () => {
+			const result = parseGradioSpaceIds('microsoft/spaces/Florence-2-large,acme/foo');
+			expect(result).toEqual([{ name: 'acme/foo' }]);
+		});
+
+		it('should skip entries with trailing slash', () => {
+			const result = parseGradioSpaceIds('microsoft/,acme/foo');
+			expect(result).toEqual([{ name: 'acme/foo' }]);
+		});
+
+		it('should skip entries with leading slash', () => {
+			const result = parseGradioSpaceIds('/Florence-2-large,acme/foo');
+			expect(result).toEqual([{ name: 'acme/foo' }]);
+		});
+
+		it('should skip entries with only a slash', () => {
+			const result = parseGradioSpaceIds('/,acme/foo');
+			expect(result).toEqual([{ name: 'acme/foo' }]);
+		});
+
+		it('should handle mix of valid and invalid entries', () => {
+			const result = parseGradioSpaceIds('valid/space,invalid,another/valid,too/many/slashes');
+			expect(result).toEqual([
+				{ name: 'valid/space' },
+				{ name: 'another/valid' },
+			]);
+		});
+	});
+
+	describe('URL encoding scenarios', () => {
+		it('should handle already-decoded slash (Express behavior)', () => {
+			// In real usage, Express decodes %2F to / before our code sees it
+			const result = parseGradioSpaceIds('microsoft/Florence-2-large');
+			expect(result).toEqual([{ name: 'microsoft/Florence-2-large' }]);
+		});
+
+		it('should handle multiple spaces with decoded slashes', () => {
+			// Client sends: microsoft%2FFoo,acme%2Fbar
+			// Express decodes to: microsoft/Foo,acme/bar
+			const result = parseGradioSpaceIds('microsoft/Foo,acme/bar');
+			expect(result).toEqual([
+				{ name: 'microsoft/Foo' },
+				{ name: 'acme/bar' },
+			]);
+		});
+	});
+
+	describe('edge cases from bug investigation', () => {
+		it('should NOT manually construct subdomains', () => {
+			// The old buggy code did: entry.replace(/[/.]/g, '-')
+			// This test ensures we DON'T do that transformation
+			const result = parseGradioSpaceIds('microsoft/Florence-2-large');
+
+			// We should preserve the original space ID exactly
+			expect(result[0].name).toBe('microsoft/Florence-2-large');
+
+			// Verify we're not returning a subdomain at this stage
+			expect(result[0]).not.toHaveProperty('subdomain');
+		});
+
+		it('should preserve dots in space names', () => {
+			const result = parseGradioSpaceIds('user/model.v2');
+			expect(result[0].name).toBe('user/model.v2');
+			expect(result[0].name).toContain('.');
+		});
+
+		it('should preserve underscores in space names', () => {
+			const result = parseGradioSpaceIds('user/my_model');
+			expect(result[0].name).toBe('user/my_model');
+			expect(result[0].name).toContain('_');
+		});
+	});
 });

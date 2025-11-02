@@ -1,16 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import {
-	ToolSelectionStrategy,
-	ToolSelectionMode,
-	BOUQUETS,
-	type ToolSelectionContext,
-} from '../../../src/server/utils/tool-selection-strategy.js';
+import { ToolSelectionStrategy, ToolSelectionMode, type ToolSelectionContext } from '../../../src/server/utils/tool-selection-strategy.js';
 import { McpApiClient, type ApiClientConfig } from '../../../src/server/utils/mcp-api-client.js';
 import type { AppSettings } from '../../../src/shared/settings.js';
 import type { TransportInfo } from '../../../src/shared/transport-info.js';
 import { ALL_BUILTIN_TOOL_IDS, TOOL_ID_GROUPS } from '@llmindset/hf-mcp';
 import { extractAuthBouquetAndMix } from '../../../src/server/utils/auth-utils.js';
 import { normalizeBuiltInTools } from '../../../src/shared/tool-normalizer.js';
+import { BOUQUETS } from '../../../src/shared/bouquet-presets.js';
 
 describe('extractBouquetAndMix', () => {
 	it('should extract bouquet from headers', () => {

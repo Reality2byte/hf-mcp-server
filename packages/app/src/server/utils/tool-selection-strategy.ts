@@ -1,10 +1,11 @@
 import { logger } from './logger.js';
 import type { AppSettings, SpaceTool } from '../../shared/settings.js';
-import { ALL_BUILTIN_TOOL_IDS, HUB_INSPECT_TOOL_ID, TOOL_ID_GROUPS, USE_SPACE_TOOL_ID, HF_JOBS_TOOL_ID } from '@llmindset/hf-mcp';
+import { ALL_BUILTIN_TOOL_IDS } from '@llmindset/hf-mcp';
 import type { McpApiClient } from './mcp-api-client.js';
 import { extractAuthBouquetAndMix } from '../utils/auth-utils.js';
-import { GRADIO_IMAGE_FILTER_FLAG, README_INCLUDE_FLAG } from '../../shared/behavior-flags.js';
 import { normalizeBuiltInTools } from '../../shared/tool-normalizer.js';
+import { BOUQUETS } from '../../shared/bouquet-presets.js';
+import { parseGradioSpaceIds } from './gradio-utils.js';
 
 export enum ToolSelectionMode {
 	BOUQUET_OVERRIDE = 'bouquet_override',
@@ -29,50 +30,6 @@ export interface ToolSelectionResult {
 	gradioSpaceTools?: SpaceTool[];
 }
 
-export const BOUQUETS: Record<string, AppSettings> = {
-	hf_api: {
-		builtInTools: [...TOOL_ID_GROUPS.hf_api],
-		spaceTools: [],
-	},
-	spaces: {
-		builtInTools: [...TOOL_ID_GROUPS.spaces],
-		spaceTools: [],
-	},
-	search: {
-		builtInTools: [...TOOL_ID_GROUPS.search],
-		spaceTools: [],
-	},
-	docs: {
-		builtInTools: [...TOOL_ID_GROUPS.docs],
-		spaceTools: [],
-	},
-	all: {
-		builtInTools: [...ALL_BUILTIN_TOOL_IDS],
-		spaceTools: [],
-	},
-	// Test bouquets for README inclusion behavior
-	hub_repo_details_readme: {
-		builtInTools: [HUB_INSPECT_TOOL_ID, README_INCLUDE_FLAG],
-		spaceTools: [],
-	},
-	hub_repo_details: {
-		builtInTools: [HUB_INSPECT_TOOL_ID],
-		spaceTools: [],
-	},
-	no_gradio_images: {
-		builtInTools: [GRADIO_IMAGE_FILTER_FLAG],
-		spaceTools: [],
-	},
-	mcp_ui: {
-		builtInTools: [USE_SPACE_TOOL_ID],
-		spaceTools: [],
-	},
-	jobs: {
-		builtInTools: [HF_JOBS_TOOL_ID],
-		spaceTools: [],
-	},
-};
-
 /**
  * Tool Selection Strategy - implements clear precedence rules for tool selection
  */
@@ -84,47 +41,30 @@ export class ToolSelectionStrategy {
 	}
 
 	/**
-	 * Parses gradio parameter and converts domain/space format to SpaceTool objects
-	 * @param gradioParam Comma-delimited list of domain/space entries
-	 * @returns Array of SpaceTool objects
+	 * Parses gradio parameter to extract space IDs for metadata/logging.
+	 * Note: This does NOT fetch real subdomains from the API - it's for reporting only.
+	 * Real subdomain fetching happens in mcp-proxy.ts via parseAndFetchGradioEndpoints.
+	 *
+	 * @param gradioParam Comma-delimited list of space IDs (e.g., "microsoft/Florence-2-large")
+	 * @returns Array of SpaceTool objects with placeholder subdomains for metadata
 	 */
 	private parseGradioEndpoints(gradioParam: string): SpaceTool[] {
-		const spaceTools: SpaceTool[] = [];
-		const trimmed = gradioParam.trim();
-		// Treat special sentinel "none" as "disable gradio" without warning
-		if (trimmed.toLowerCase() === 'none') {
-			return spaceTools;
-		}
+		// Use shared parsing logic to extract space IDs
+		const parsedSpaces = parseGradioSpaceIds(gradioParam);
 
-		const entries = gradioParam
-			.split(',')
-			.map((s) => s.trim())
-			.filter((s) => s.length > 0);
+		// Convert to SpaceTool format for metadata (subdomain is placeholder only)
+		return parsedSpaces.map((space) => {
+			// Use a placeholder subdomain for metadata purposes only
+			// Real subdomains are fetched from the API in mcp-proxy.ts
+			const placeholderSubdomain = space.name.replace(/[/]/g, '-');
 
-		for (const entry of entries) {
-			// Skip explicit "none" entries within a list silently
-			if (entry.toLowerCase() === 'none') continue;
-			// Validate exactly one slash
-			const slashCount = (entry.match(/\//g) || []).length;
-			if (slashCount !== 1) {
-				logger.warn(`Skipping invalid gradio entry "${entry}": must contain exactly one slash`);
-				continue;
-			}
-
-			// Convert domain/space to subdomain format (replace / and . with -)
-			const subdomain = entry.replace(/[/._]/g, '-');
-
-			spaceTools.push({
-				_id: `gradio_${subdomain}`,
-				name: entry,
-				subdomain: subdomain,
+			return {
+				_id: `gradio_metadata_${placeholderSubdomain}`,
+				name: space.name,
+				subdomain: placeholderSubdomain,
 				emoji: '🔧',
-			});
-
-			logger.debug(`Added gradio endpoint: ${entry} -> ${subdomain}`);
-		}
-
-		return spaceTools;
+			};
+		});
 	}
 
 	/**
