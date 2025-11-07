@@ -17,6 +17,7 @@ import {
 import { formatCommandHelp, extractFieldDetails, type AnyZodType } from './schema-help.js';
 import type { ToolResult } from '../types/tool-result.js';
 import { CPU_FLAVORS, GPU_FLAVORS, SPECIALIZED_FLAVORS } from './types.js';
+import { DEFAULT_LOG_WAIT_SECONDS } from './sse-handler.js';
 import type {
 	RunArgs,
 	UvArgs,
@@ -354,10 +355,10 @@ Call this tool with:
 ## Tips
 
 - The uv-scripts organisation contains examples for common tasks. dataset_search {'author':'uv-scripts'}
-- Jobs default to detached mode, returning after 10 seconds..
+- Jobs default to non-detached mode (tail logs for up to ${DEFAULT_LOG_WAIT_SECONDS}s or until completion). Set \`detach: true\` to return immediately.
 - Prefer array commands to avoid shell parsing surprises
 - To access private Hub assets, include \`secrets: { "HF_TOKEN": "$HF_TOKEN" }\` (or \`${'${HF_TOKEN}'}\`) to inject your auth token.
-- Logs are time-limited (10s max) - check job page for full logs
+- When not detached, logs are time-limited (${DEFAULT_LOG_WAIT_SECONDS}s max or until job completes) - check job page for full logs
 `;
 
 /**
