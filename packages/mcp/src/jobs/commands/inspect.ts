@@ -34,5 +34,5 @@ export async function cancelCommand(args: CancelArgs, client: JobsApiClient): Pr
 
 	return `✓ Job ${args.job_id} has been cancelled.
 
-To verify: \`hf_jobs("inspect", {"job_id": "${args.job_id}"})\``;
+To verify, call this tool with \`{"operation": "inspect", "args": {"job_id": "${args.job_id}"}}\``;
 }

@@ -133,7 +133,11 @@ const commonArgsSchema = z.object({
 
 // Run command args
 export const runArgsSchema = commonArgsSchema.extend({
-	image: z.string().describe('Docker image or HF Space URL (e.g., "python:3.12" or "hf.co/spaces/user/space")'),
+	image: z
+		.string()
+		.describe('Docker image or HF Space URL (e.g., "python:3.12" or "hf.co/spaces/user/space")')
+		.optional()
+		.default('python:3.12'), // NOTE -- this is a deviation from the hf jobs command (which has no default)
 	command: z
 		.union([z.string(), z.array(z.string())])
 		.describe(
@@ -155,8 +159,8 @@ export const runArgsSchema = commonArgsSchema.extend({
 	detach: z
 		.boolean()
 		.optional()
-		.default(true)
-		.describe('Run in background and return after 10 seconds (default: true)'),
+		.default(false)
+		.describe('If true, return immediately with job ID. If false (default), tail logs for up to 10 seconds.'),
 });
 
 // UV command args
@@ -175,7 +179,7 @@ export const uvArgsSchema = commonArgsSchema.extend({
 		.optional()
 		.describe('Secrets as key-value pairs. Use HF_TOKEN=$HF_TOKEN to include your token'),
 	timeout: z.string().optional().default('30m').describe('Max duration'),
-	detach: z.boolean().optional().default(true).describe('Run in background and return after 10 seconds'),
+	detach: z.boolean().optional().default(false).describe('If true, return immediately with job ID. If false (default), tail logs for up to 10 seconds.'),
 });
 
 // PS command args

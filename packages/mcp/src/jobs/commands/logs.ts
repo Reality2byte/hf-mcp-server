@@ -1,6 +1,6 @@
 import type { LogsArgs } from '../types.js';
 import type { JobsApiClient } from '../api-client.js';
-import { fetchJobLogs } from '../sse-handler.js';
+import { fetchJobLogs, DEFAULT_LOG_WAIT_MS, DEFAULT_LOG_WAIT_SECONDS } from '../sse-handler.js';
 
 /**
  * Execute the 'logs' command
@@ -14,7 +14,7 @@ export async function logsCommand(args: LogsArgs, client: JobsApiClient, token?:
 	// Fetch logs with timeout and line limit
 	const result = await fetchJobLogs(logsUrl, {
 		token,
-		maxDuration: 10000,
+		maxDuration: DEFAULT_LOG_WAIT_MS,
 		maxLines: args.tail,
 	});
 
@@ -29,7 +29,7 @@ export async function logsCommand(args: LogsArgs, client: JobsApiClient, token?:
 	if (result.finished) {
 		response += '\n\n✓ Job finished.';
 	} else if (result.truncated) {
-		response += '\n\n⚠ Log collection stopped after 10 seconds. Job may still be running.';
+		response += `\n\n⚠ Log collection stopped after ${DEFAULT_LOG_WAIT_SECONDS} seconds. Job may still be running.`;
 	}
 
 	return response;

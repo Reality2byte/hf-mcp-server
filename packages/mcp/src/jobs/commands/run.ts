@@ -1,7 +1,7 @@
 import type { RunArgs, UvArgs } from '../types.js';
 import type { JobsApiClient } from '../api-client.js';
 import { createJobSpec } from './utils.js';
-import { fetchJobLogs } from '../sse-handler.js';
+import { fetchJobLogs, DEFAULT_LOG_WAIT_MS, DEFAULT_MAX_LOG_LINES, DEFAULT_LOG_WAIT_SECONDS } from '../sse-handler.js';
 import { resolveUvCommand, UV_DEFAULT_IMAGE } from './uv-utils.js';
 
 /**
@@ -33,18 +33,18 @@ export async function runCommand(args: RunArgs, client: JobsApiClient, token?: s
 **Status:** ${job.status.stage}
 **View at:** ${jobUrl}
 
-To check logs: \`hf_jobs("logs", {"job_id": "${job.id}"})\`
-To inspect: \`hf_jobs("inspect", {"job_id": "${job.id}"})\``;
+	To check logs, call this tool with \`{"operation": "logs", "args": {"job_id": "${job.id}"}}\`
+	To inspect, call this tool with \`{"operation": "inspect", "args": {"job_id": "${job.id}"}}\``;
 	}
 
 	// Not detached - fetch logs
 	const logsUrl = client.getLogsUrl(job.id, job.owner.name);
-	const logResult = await fetchJobLogs(logsUrl, { token, maxDuration: 10000, maxLines: 20 });
+	const logResult = await fetchJobLogs(logsUrl, { token, maxDuration: DEFAULT_LOG_WAIT_MS, maxLines: DEFAULT_MAX_LOG_LINES });
 
 	let response = `Job started: ${job.id}\n\n`;
 
 	if (logResult.logs.length > 0) {
-		response += '**Logs (last 20 lines):**\n```\n';
+		response += `**Logs (last ${DEFAULT_MAX_LOG_LINES} lines):**\n\`\`\`\n`;
 		response += logResult.logs.join('\n');
 		response += '\n```\n\n';
 	}
@@ -52,7 +52,7 @@ To inspect: \`hf_jobs("inspect", {"job_id": "${job.id}"})\``;
 	if (logResult.finished) {
 		response += `Job finished. Full details: ${jobUrl}`;
 	} else if (logResult.truncated) {
-		response += `Log collection stopped after 10s. Job may still be running.\n`;
+		response += `Log collection stopped after ${DEFAULT_LOG_WAIT_SECONDS}s. Job may still be running.\n`;
 		response += `View full logs: ${jobUrl}`;
 	}
 

@@ -111,14 +111,11 @@ export class HfApiCall<TParams = Record<string, string | undefined>, TResponse =
 
 			clearTimeout(timeoutId);
 
+			const responseBodyText = await response.text();
+
 			if (!response.ok) {
 				// Try to get error details from response body
-				let responseBody: string | undefined;
-				try {
-					responseBody = await response.text();
-				} catch {
-					// Ignore if we can't read the body
-				}
+				const responseBody: string | undefined = responseBodyText || undefined;
 
 				// Log the error for debugging
 				console.error(`[API Error] ${response.status} ${response.statusText}`);
@@ -134,7 +131,33 @@ export class HfApiCall<TParams = Record<string, string | undefined>, TResponse =
 				);
 			}
 
-			return (await response.json()) as T;
+			const contentType = response.headers.get('content-type') ?? '';
+			const trimmedBody = responseBodyText.trim();
+			const looksLikeJson =
+				contentType.includes('application/json') || trimmedBody.startsWith('{') || trimmedBody.startsWith('[');
+
+			if (trimmedBody.length === 0) {
+				return undefined as T;
+			}
+
+			if (looksLikeJson) {
+				try {
+					return JSON.parse(responseBodyText) as T;
+				} catch (error) {
+					throw new Error(
+						`API request failed: Unable to parse JSON response (${error instanceof Error ? error.message : 'unknown error'})`
+					);
+				}
+			}
+
+			if (trimmedBody.toUpperCase() === 'OK') {
+				return undefined as T;
+			}
+
+			const truncatedBody = trimmedBody.length > 200 ? `${trimmedBody.slice(0, 200)}…` : trimmedBody;
+			throw new Error(
+				`API request failed: Unexpected non-JSON response${contentType ? ` (content-type: ${contentType})` : ''}: ${truncatedBody}`
+			);
 		} catch (error) {
 			// Re-throw HfApiError as-is to preserve status information
 			if (error instanceof HfApiError) {
@@ -184,5 +207,4 @@ export class HfApiCall<TParams = Record<string, string | undefined>, TResponse =
 		const url = this.buildUrl(params);
 		return this.fetchFromApi<T>(url, options);
 	}
-
 }

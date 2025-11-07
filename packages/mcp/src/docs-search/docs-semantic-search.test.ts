@@ -6,6 +6,17 @@ import { DOC_FETCH_CONFIG } from './doc-fetch.js';
 const mockFetch = vi.fn();
 global.fetch = mockFetch as typeof fetch;
 
+// Helper to create a proper mock Response
+function createMockResponse(data: unknown) {
+	const jsonString = JSON.stringify(data);
+	return {
+		ok: true,
+		text: () => Promise.resolve(jsonString),
+		json: () => Promise.resolve(data),
+		headers: new Headers({ 'content-type': 'application/json' }),
+	};
+}
+
 describe('DocSearchTool', () => {
 	let docSearchTool: DocSearchTool;
 
@@ -20,10 +31,7 @@ describe('DocSearchTool', () => {
 		});
 
 		it('should return no results message when API returns empty array', async () => {
-			mockFetch.mockResolvedValueOnce({
-				ok: true,
-				json: () => Promise.resolve([]),
-			});
+			mockFetch.mockResolvedValueOnce(createMockResponse([]));
 
 			const result = await docSearchTool.search({ query: 'nonexistent' });
 			expect(result.formatted).toBe(`No documentation found for query 'nonexistent'`);
@@ -32,10 +40,7 @@ describe('DocSearchTool', () => {
 		});
 
 		it('should return no results message with product filter', async () => {
-			mockFetch.mockResolvedValueOnce({
-				ok: true,
-				json: () => Promise.resolve([]),
-			});
+			mockFetch.mockResolvedValueOnce(createMockResponse([]));
 
 			const result = await docSearchTool.search({ query: 'nonexistent', product: 'hub' });
 			expect(result.formatted).toBe(`No documentation found for query 'nonexistent' in product 'hub'`);
@@ -70,10 +75,7 @@ describe('DocSearchTool', () => {
 				},
 			];
 
-			mockFetch.mockResolvedValueOnce({
-				ok: true,
-				json: () => Promise.resolve(sampleResults),
-			});
+			mockFetch.mockResolvedValueOnce(createMockResponse(sampleResults));
 
 			const result = await docSearchTool.search({ query: 'analytics' });
 
@@ -124,10 +126,7 @@ describe('DocSearchTool', () => {
 				},
 			];
 
-			mockFetch.mockResolvedValueOnce({
-				ok: true,
-				json: () => Promise.resolve(sampleResults),
-			});
+			mockFetch.mockResolvedValueOnce(createMockResponse(sampleResults));
 
 			const result = await docSearchTool.search({ query: 'transformers' });
 
@@ -150,10 +149,7 @@ describe('DocSearchTool', () => {
 				},
 			];
 
-			mockFetch.mockResolvedValueOnce({
-				ok: true,
-				json: () => Promise.resolve(sampleResults),
-			});
+			mockFetch.mockResolvedValueOnce(createMockResponse(sampleResults));
 
 			const result = await docSearchTool.search({ query: 'special' });
 
@@ -176,10 +172,7 @@ describe('DocSearchTool', () => {
 				},
 			];
 
-			mockFetch.mockResolvedValueOnce({
-				ok: true,
-				json: () => Promise.resolve(sampleResults),
-			});
+			mockFetch.mockResolvedValueOnce(createMockResponse(sampleResults));
 
 			const result = await docSearchTool.search({ query: 'html' });
 
@@ -233,10 +226,7 @@ describe('DocSearchTool', () => {
 				},
 			];
 
-			mockFetch.mockResolvedValueOnce({
-				ok: true,
-				json: () => Promise.resolve(sampleResults),
-			});
+			mockFetch.mockResolvedValueOnce(createMockResponse(sampleResults));
 
 			const result = await docSearchTool.search({ query: 'test' });
 
@@ -263,10 +253,7 @@ describe('DocSearchTool', () => {
 		});
 
 		it('should include product filter in API call when provided', async () => {
-			mockFetch.mockResolvedValueOnce({
-				ok: true,
-				json: () => Promise.resolve([]),
-			});
+			mockFetch.mockResolvedValueOnce(createMockResponse([]));
 
 			await docSearchTool.search({ query: 'test', product: 'hub' });
 
@@ -301,10 +288,7 @@ describe('DocSearchTool', () => {
 				},
 			];
 
-			mockFetch.mockResolvedValueOnce({
-				ok: true,
-				json: () => Promise.resolve(sampleResults),
-			});
+			mockFetch.mockResolvedValueOnce(createMockResponse(sampleResults));
 
 			const result = await docSearchTool.search({ query: 'analytics' });
 
@@ -357,10 +341,7 @@ describe('DocSearchTool', () => {
 				});
 			}
 
-			mockFetch.mockResolvedValueOnce({
-				ok: true,
-				json: () => Promise.resolve(manyResults),
-			});
+			mockFetch.mockResolvedValueOnce(createMockResponse(manyResults));
 
 			const result = await smallBudgetTool.search({ query: 'test' });
 
@@ -423,10 +404,7 @@ describe('DocSearchTool', () => {
 				},
 			];
 
-			mockFetch.mockResolvedValueOnce({
-				ok: true,
-				json: () => Promise.resolve(sampleResults),
-			});
+			mockFetch.mockResolvedValueOnce(createMockResponse(sampleResults));
 
 			const result = await docSearchTool.search({ query: 'test' });
 

@@ -47,8 +47,8 @@ export async function scheduledRunCommand(
 **Suspended:** ${scheduledJob.suspend ? 'Yes' : 'No'}
 **Next Run:** ${scheduledJob.nextRun || 'N/A'}
 
-To inspect: \`hf_jobs("scheduled inspect", {"scheduled_job_id": "${scheduledJob.id}"})\`
-To list all: \`hf_jobs("scheduled ps")\``;
+	To inspect, call this tool with \`{"operation": "scheduled inspect", "args": {"scheduled_job_id": "${scheduledJob.id}"}}\`
+	To list all, call this tool with \`{"operation": "scheduled ps"}\``;
 }
 
 /**
@@ -106,7 +106,7 @@ export async function scheduledPsCommand(args: ScheduledPsArgs, client: JobsApiC
 		if (args.all) {
 			return 'No scheduled jobs found.';
 		}
-		return 'No active scheduled jobs found. Use `{"all": true}` to show suspended jobs.';
+		return 'No active scheduled jobs found. Use `{"args": {"all": true}}` to show suspended jobs.';
 	}
 
 	return `**Scheduled Jobs (${jobs.length} of ${allJobs.length} total):**
@@ -143,7 +143,7 @@ export async function scheduledSuspendCommand(args: ScheduledJobArgs, client: Jo
 
 	return `✓ Scheduled job ${args.scheduled_job_id} has been suspended.
 
-To resume: \`hf_jobs("scheduled resume", {"scheduled_job_id": "${args.scheduled_job_id}"})\``;
+To resume, call this tool with \`{"operation": "scheduled resume", "args": {"scheduled_job_id": "${args.scheduled_job_id}"}}\``;
 }
 
 /**
@@ -155,5 +155,5 @@ export async function scheduledResumeCommand(args: ScheduledJobArgs, client: Job
 
 	return `✓ Scheduled job ${args.scheduled_job_id} has been resumed.
 
-To inspect: \`hf_jobs("scheduled inspect", {"scheduled_job_id": "${args.scheduled_job_id}"})\``;
+To inspect, call this tool with \`{"operation": "scheduled inspect", "args": {"scheduled_job_id": "${args.scheduled_job_id}"}}\``;
 }
