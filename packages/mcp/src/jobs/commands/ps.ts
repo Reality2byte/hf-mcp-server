@@ -31,7 +31,7 @@ export async function psCommand(args: PsArgs, client: JobsApiClient): Promise<st
 		if (args.all) {
 			return 'No jobs found.';
 		}
-		return 'No running jobs found. Use `{"all": true}` to show all jobs.';
+		return 'No running jobs found. Use `{"args": {"all": true}}` to show all jobs.';
 	}
 
 	return `**Jobs (${jobs.length} of ${allJobs.length} total):**

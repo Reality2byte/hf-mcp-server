@@ -33,8 +33,8 @@ export async function runCommand(args: RunArgs, client: JobsApiClient, token?: s
 **Status:** ${job.status.stage}
 **View at:** ${jobUrl}
 
-To check logs: \`hf_jobs("logs", {"job_id": "${job.id}"})\`
-To inspect: \`hf_jobs("inspect", {"job_id": "${job.id}"})\``;
+	To check logs, call this tool with \`{"operation": "logs", "args": {"job_id": "${job.id}"}}\`
+	To inspect, call this tool with \`{"operation": "inspect", "args": {"job_id": "${job.id}"}}\``;
 	}
 
 	// Not detached - fetch logs

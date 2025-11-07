@@ -664,7 +664,8 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 				const result = await jobsTool.execute(params);
 
 				// Log the query with command and result metrics
-				logSearchQuery(HF_JOBS_TOOL_CONFIG.name, params.command || 'no-command', params.args || {}, {
+				const loggedOperation = params.operation ?? 'no-operation';
+				logSearchQuery(HF_JOBS_TOOL_CONFIG.name, loggedOperation, params.args || {}, {
 					...getLoggingOptions(),
 					totalResults: result.totalResults,
 					resultsShared: result.resultsShared,

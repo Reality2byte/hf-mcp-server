@@ -13,9 +13,8 @@
 default_model: slow
 
 mcp_timeline:
-  steps: 30         # number of timeline buckets to render
-  step_seconds: 2  # seconds per bucket (accepts values like "45s", "2m")
-
+  steps: 30 # number of timeline buckets to render
+  step_seconds: 2 # seconds per bucket (accepts values like "45s", "2m")
 
 # Logging and Console Configuration:
 logger:
@@ -32,8 +31,7 @@ logger:
   show_tools: true
   # Truncate long tool responses on the console
   truncate_tools: true
-  
-
+  streaming: none
 
 # MCP Servers
 mcp:
@@ -58,3 +56,8 @@ mcp:
       implementation:
         name: openai-mcp
         version: 0.1.0
+    live_hf:
+      transport: http
+      url: https://huggingface.co/mcp
+      headers:
+        Authorization: Bearer ${HF_TEST_TOKEN}

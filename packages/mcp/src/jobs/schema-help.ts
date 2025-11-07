@@ -5,7 +5,7 @@ import { z } from 'zod';
  * Provides introspection and documentation generation for command arguments
  */
 
-type AnyZodType = z.ZodType<unknown, z.ZodTypeDef, unknown>;
+export type AnyZodType = z.ZodType<unknown, z.ZodTypeDef, unknown>;
 
 export interface FieldDetails {
 	key: string;

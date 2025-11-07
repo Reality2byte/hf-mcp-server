@@ -133,7 +133,11 @@ const commonArgsSchema = z.object({
 
 // Run command args
 export const runArgsSchema = commonArgsSchema.extend({
-	image: z.string().describe('Docker image or HF Space URL (e.g., "python:3.12" or "hf.co/spaces/user/space")'),
+	image: z
+		.string()
+		.describe('Docker image or HF Space URL (e.g., "python:3.12" or "hf.co/spaces/user/space")')
+		.optional()
+		.default('python:3.12'), // NOTE -- this is a deviation from the hf jobs command (which has no default)
 	command: z
 		.union([z.string(), z.array(z.string())])
 		.describe(
