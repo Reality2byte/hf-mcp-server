@@ -145,6 +145,13 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			{
 				name: '@huggingface/mcp-services',
 				version: version,
+				title: "Huggingface",
+				websiteUrl: "https://huggingface.co/mcp",
+				icons: [
+					{
+						src: "https://huggingface.co/favicon.ico"
+					}
+				]
 			},
 			{
 				instructions:
@@ -500,9 +507,9 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 		const hubInspectSchemaShape: z.ZodRawShape = hubInspectReadmeAllowed
 			? hubInspectBaseShape
 			: (() => {
-					const { include_readme: _omit, ...rest } = hubInspectBaseShape as unknown as Record<string, unknown>;
-					return rest as unknown as z.ZodRawShape;
-				})();
+				const { include_readme: _omit, ...rest } = hubInspectBaseShape as unknown as Record<string, unknown>;
+				return rest as unknown as z.ZodRawShape;
+			})();
 
 		toolInstances[HUB_INSPECT_TOOL_CONFIG.name] = server.tool(
 			HUB_INSPECT_TOOL_CONFIG.name,
