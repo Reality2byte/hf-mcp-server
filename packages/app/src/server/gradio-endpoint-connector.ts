@@ -16,6 +16,7 @@ import { spaceInfo } from '@huggingface/hub';
 import { gradioMetrics, getMetricsSafeName } from './utils/gradio-metrics.js';
 import { createGradioToolName } from './utils/gradio-utils.js';
 import { createAudioPlayerUIResource } from './utils/ui/audio-player.js';
+import { spaceMetadataCache, CACHE_CONFIG } from './utils/gradio-cache.js';
 
 // Define types for JSON Schema
 interface JsonSchemaProperty {
@@ -186,14 +187,57 @@ export function parseSchemaResponse(
 }
 
 /**
- * Check if a space is private by fetching its info
+ * Check if a space is private using cache first, then API if needed
  */
-
 async function isSpacePrivate(spaceName: string, hfToken?: string): Promise<boolean> {
 	try {
 		if (!hfToken) return false; // anonymous requests don't have a token to forward
-		const info = await spaceInfo({ name: spaceName, credentials: { accessToken: hfToken } });
-		return info.private;
+
+		// Check cache first
+		const cached = spaceMetadataCache.get(spaceName);
+		if (cached) {
+			logger.trace({ spaceName, private: cached.private }, 'Using cached private status');
+			return cached.private;
+		}
+
+		// Fall back to API call if not cached
+		logger.debug({ spaceName }, 'Cache miss for private status, fetching from API');
+
+		// Create abort controller for timeout
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => controller.abort(), CACHE_CONFIG.SPACE_INFO_TIMEOUT);
+
+		try {
+			const info = await spaceInfo({
+				name: spaceName,
+				credentials: { accessToken: hfToken },
+				// Note: We can't pass signal to spaceInfo, but this is a best-effort timeout
+			});
+
+			clearTimeout(timeoutId);
+
+			// Only cache public spaces - private spaces should always be fetched fresh
+			// This ensures auth-sensitive information is never stale
+			if (!info.private) {
+				const metadata = {
+					_id: (info as { _id?: string })._id || `gradio_${spaceName.replace('/', '-')}`,
+					name: spaceName,
+					subdomain: (info as { subdomain?: string }).subdomain || '',
+					emoji: '🔧',
+					private: info.private,
+					sdk: (info as { sdk?: string }).sdk || 'gradio',
+					fetchedAt: Date.now(),
+				};
+				spaceMetadataCache.set(spaceName, metadata);
+				logger.trace({ spaceName }, 'Public space metadata cached');
+			} else {
+				logger.trace({ spaceName }, 'Private space metadata not cached');
+			}
+
+			return info.private;
+		} finally {
+			clearTimeout(timeoutId);
+		}
 	} catch (error) {
 		// If we can't fetch space info, assume it might be private to be safe
 		logger.warn({ spaceName, error }, 'Failed to fetch space info, assuming private');

@@ -5,9 +5,10 @@ import type { WebServer } from './web-server.js';
 import type { AppSettings } from '../shared/settings.js';
 import { GRADIO_IMAGE_FILTER_FLAG } from '../shared/behavior-flags.js';
 import { logger } from './utils/logger.js';
-import { connectToGradioEndpoints, registerRemoteTools } from './gradio-endpoint-connector.js';
+import { registerRemoteTools } from './gradio-endpoint-connector.js';
 import { extractAuthBouquetAndMix } from './utils/auth-utils.js';
-import { parseAndFetchGradioEndpoints } from './utils/gradio-utils.js';
+import { parseGradioSpaceIds } from './utils/gradio-utils.js';
+import { getGradioSpaces } from './utils/gradio-discovery.js';
 import { repoExists } from '@huggingface/hub';
 import type { GradioFilesParams } from '@llmindset/hf-mcp';
 import { GRADIO_FILES_TOOL_CONFIG, GradioFilesTool } from '@llmindset/hf-mcp';
@@ -145,77 +146,67 @@ export const createProxyServerFactory = (
 			logger.debug(`Proxy has access to user details for: ${userDetails.name}`);
 		}
 
-		// Parse gradio parameter and fetch real subdomains from HuggingFace API
-		const gradioSpaceTools = gradio ? await parseAndFetchGradioEndpoints(gradio, hfToken) : [];
-		const existingSpaceTools = settings?.spaceTools || [];
-		const allSpaceTools = [...existingSpaceTools, ...gradioSpaceTools];
+		// Collect all space names from gradio param and settings
+		const gradioSpaceNames = gradio ? parseGradioSpaceIds(gradio).map(s => s.name) : [];
+		const settingsSpaceNames = settings?.spaceTools?.map(s => s.name) || [];
+		const allSpaceNames = [...new Set([...gradioSpaceNames, ...settingsSpaceNames])]; // Deduplicate
 
-		// Convert to GradioEndpoint format
-		const gradioEndpoints = allSpaceTools.map((spaceTool) => ({
-			name: spaceTool.name,
-			subdomain: spaceTool.subdomain,
-			id: spaceTool._id,
-			emoji: spaceTool.emoji,
-		}));
+		logger.debug({
+			gradioCount: gradioSpaceNames.length,
+			settingsCount: settingsSpaceNames.length,
+			totalUnique: allSpaceNames.length,
+			gradioParam: gradio,
+		}, 'Collected Gradio space names');
 
-		logger.debug(
-			{
-				existingCount: existingSpaceTools.length,
-				gradioCount: gradioSpaceTools.length,
-				totalEndpoints: gradioEndpoints.length,
-				gradioParam: gradio,
-			},
-			'Merged Gradio endpoints from settings and query parameter'
-		);
-
-		// Filter out endpoints with empty subdomain and construct URLs
-		const validEndpoints = gradioEndpoints
-			.filter((ep) => {
-				const isValid = ep.subdomain && ep.subdomain.trim() !== '';
-				if (!isValid) {
-					logger.debug(
-						{
-							endpoint: ep,
-							reason: !ep.subdomain ? 'missing subdomain' : 'empty subdomain',
-						},
-						'Filtering out invalid endpoint'
-					);
-				}
-				return isValid;
-			})
-			.map((ep) => ({
-				...ep,
-				url: `https://${ep.subdomain}.hf.space/gradio_api/mcp/sse`,
-			}));
-
-		logger.debug(
-			{
-				totalCount: gradioEndpoints.length,
-				validCount: validEndpoints.length,
-				validEndpoints: validEndpoints.map((ep) => ({ name: ep.name, subdomain: ep.subdomain, url: ep.url })),
-			},
-			'Gradio endpoints after filtering and URL construction'
-		);
-
-		if (validEndpoints.length === 0) {
-			logger.debug('No valid Gradio endpoints, using local tools only');
+		if (allSpaceNames.length === 0) {
+			logger.debug('No Gradio spaces configured, using local tools only');
 			return result;
 		}
 
-		// Connect to all valid endpoints in parallel with timeout
-		const connections = await connectToGradioEndpoints(validEndpoints, hfToken);
+		// Use optimized discovery API with caching
+		const gradioSpaces = await getGradioSpaces(allSpaceNames, hfToken);
 
-		// Register tools from successful connections
-		for (const connection of connections) {
-			if (!connection.success) continue;
+		logger.debug({
+			requested: allSpaceNames.length,
+			successful: gradioSpaces.length,
+			failed: allSpaceNames.length - gradioSpaces.length,
+		}, 'Gradio space discovery complete');
 
-			registerRemoteTools(server, connection.connection, hfToken, sessionInfo, {
+		if (gradioSpaces.length === 0) {
+			logger.debug('No valid Gradio spaces discovered, using local tools only');
+			return result;
+		}
+
+		// Merge emoji from settings if available
+		const settingsSpaceMap = new Map(settings?.spaceTools?.map(s => [s.name, s]) || []);
+		for (const space of gradioSpaces) {
+			const settingsTool = settingsSpaceMap.get(space.name);
+			if (settingsTool?.emoji) {
+				space.emoji = settingsTool.emoji;
+			}
+		}
+
+		// Convert to connection format and register tools
+		for (const space of gradioSpaces) {
+			// Create connection object in the format expected by registerRemoteTools
+			const connection = {
+				endpointId: space._id,
+				originalIndex: gradioSpaces.indexOf(space),
+				client: null, // No client connection yet (lazy connection)
+				tools: space.tools,
+				name: space.name,
+				emoji: space.emoji,
+				sseUrl: `https://${space.subdomain}.hf.space/gradio_api/mcp/sse`,
+				isPrivate: space.private,
+			};
+
+			registerRemoteTools(server, connection, hfToken, sessionInfo, {
 				stripImageContent,
 				gradioWidgetUri
 			});
 
 			// Register Qwen Image prompt enhancer for specific tool
-			if (connection.connection.name?.toLowerCase() === 'mcp-tools/qwen-image') {
+			if (space.name?.toLowerCase() === 'mcp-tools/qwen-image') {
 				registerQwenImagePrompt(server);
 			}
 		}

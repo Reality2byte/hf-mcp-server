@@ -14,6 +14,7 @@ import { ALL_BUILTIN_TOOL_IDS } from '@llmindset/hf-mcp';
 import { CORS_ALLOWED_ORIGINS, CORS_EXPOSED_HEADERS } from '../shared/constants.js';
 import { apiMetrics } from './utils/api-metrics.js';
 import { gradioMetrics } from './utils/gradio-metrics.js';
+import { formatCacheMetricsForAPI } from './utils/gradio-cache.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -343,6 +344,9 @@ export class WebServer {
 
 				// Add Gradio metrics
 				formattedMetrics.gradioMetrics = gradioMetrics.getMetrics();
+
+				// Add Gradio cache metrics
+				formattedMetrics.gradioCacheMetrics = formatCacheMetricsForAPI();
 
 				// Add temp log status if it was activated or if we need to check current status
 				const extendedMetrics = formattedMetrics as typeof formattedMetrics & { tempLogStatus?: unknown };
