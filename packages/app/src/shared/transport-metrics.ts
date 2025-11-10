@@ -118,6 +118,28 @@ export interface GradioToolMetrics {
 }
 
 /**
+ * Gradio cache metrics for space metadata and schemas
+ */
+export interface GradioCacheMetrics {
+	spaceMetadata: {
+		hits: number;
+		misses: number;
+		hitRate: number; // percentage
+		etagRevalidations: number;
+		cacheSize: number;
+	};
+	schemas: {
+		hits: number;
+		misses: number;
+		hitRate: number; // percentage
+		cacheSize: number;
+	};
+	totalHits: number;
+	totalMisses: number;
+	overallHitRate: number; // percentage
+}
+
+/**
  * API response format for transport metrics
  */
 export interface SessionData {
@@ -225,6 +247,9 @@ export interface TransportMetricsResponse {
 
 	// Gradio tool call metrics
 	gradioMetrics?: GradioToolMetrics;
+
+	// Gradio cache metrics (discovery optimization)
+	gradioCacheMetrics?: GradioCacheMetrics;
 }
 
 /**

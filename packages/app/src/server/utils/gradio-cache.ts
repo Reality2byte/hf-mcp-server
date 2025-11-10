@@ -306,3 +306,63 @@ export function logCacheStats(): void {
 		},
 	}, 'Gradio cache statistics');
 }
+
+/**
+ * Format cache statistics for metrics API
+ */
+export function formatCacheMetricsForAPI(): {
+	spaceMetadata: {
+		hits: number;
+		misses: number;
+		hitRate: number;
+		etagRevalidations: number;
+		cacheSize: number;
+	};
+	schemas: {
+		hits: number;
+		misses: number;
+		hitRate: number;
+		cacheSize: number;
+	};
+	totalHits: number;
+	totalMisses: number;
+	overallHitRate: number;
+} {
+	const stats = getCacheStats();
+
+	const metadataTotal = stats.metadataHits + stats.metadataMisses;
+	const metadataHitRate = metadataTotal > 0
+		? Math.round((stats.metadataHits / metadataTotal) * 10000) / 100
+		: 0;
+
+	const schemaTotal = stats.schemaHits + stats.schemaMisses;
+	const schemaHitRate = schemaTotal > 0
+		? Math.round((stats.schemaHits / schemaTotal) * 10000) / 100
+		: 0;
+
+	const totalHits = stats.metadataHits + stats.schemaHits;
+	const totalMisses = stats.metadataMisses + stats.schemaMisses;
+	const grandTotal = totalHits + totalMisses;
+	const overallHitRate = grandTotal > 0
+		? Math.round((totalHits / grandTotal) * 10000) / 100
+		: 0;
+
+	return {
+		spaceMetadata: {
+			hits: stats.metadataHits,
+			misses: stats.metadataMisses,
+			hitRate: metadataHitRate,
+			etagRevalidations: stats.metadataEtagRevalidations,
+			cacheSize: stats.metadataCacheSize,
+		},
+		schemas: {
+			hits: stats.schemaHits,
+			misses: stats.schemaMisses,
+			hitRate: schemaHitRate,
+			cacheSize: stats.schemaCacheSize,
+		},
+		totalHits,
+		totalMisses,
+		overallHitRate,
+	};
+}
