@@ -183,6 +183,9 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			hfToken,
 		};
 		const toolSelection = await toolSelectionStrategy.selectTools(toolSelectionContext);
+		const rawNoImageHeader = headers?.['x-mcp-no-image-content'];
+		const noImageContentHeaderEnabled =
+			typeof rawNoImageHeader === 'string' && rawNoImageHeader.trim().toLowerCase() === 'true';
 
 		// Always register all tools and store instances for dynamic control
 		const toolInstances: { [name: string]: Tool } = {};
@@ -707,7 +710,9 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					const invokeResult = result as InvokeResult;
 
 					// Prepare post-processing options
-					const stripImageContent = toolSelection.enabledToolIds.includes('NO_GRADIO_IMAGE_CONTENT');
+					const stripImageContent =
+						noImageContentHeaderEnabled ||
+						toolSelection.enabledToolIds.includes('NO_GRADIO_IMAGE_CONTENT');
 					const postProcessOptions: GradioToolCallOptions = {
 						stripImageContent,
 						toolName: SPACE_TOOL_CONFIG.name,
