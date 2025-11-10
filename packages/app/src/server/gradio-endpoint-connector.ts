@@ -8,7 +8,7 @@ import {
 	type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { RequestHandlerExtra, RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
+import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import { logger } from './utils/logger.js';
 import { logGradioEvent } from './utils/query-logger.js';
 import { z } from 'zod';
@@ -18,7 +18,6 @@ import { gradioMetrics, getMetricsSafeName } from './utils/gradio-metrics.js';
 import { createGradioToolName } from './utils/gradio-utils.js';
 import { createAudioPlayerUIResource } from './utils/ui/audio-player.js';
 import { spaceMetadataCache, CACHE_CONFIG } from './utils/gradio-cache.js';
-import { stripImageContentFromResult, extractUrlFromContent } from './utils/gradio-result-processor.js';
 import { callGradioTool, applyResultPostProcessing, type GradioToolCallOptions } from './utils/gradio-tool-caller.js';
 
 // Define types for JSON Schema
@@ -341,57 +340,6 @@ export async function connectToGradioEndpoints(
 	);
 
 	return results;
-}
-
-/**
- * Creates SSE connection to endpoint when needed for tool execution
- */
-async function createLazyConnection(sseUrl: string, hfToken: string | undefined): Promise<Client> {
-	logger.debug({ url: sseUrl }, 'Creating lazy SSE connection for tool execution');
-
-	// Create MCP client
-	const remoteClient = new Client(
-		{
-			name: 'hf-mcp-proxy-client',
-			version: '1.0.0',
-		},
-		{
-			capabilities: {},
-		}
-	);
-
-	// Create SSE transport with HF token if available
-	const transportOptions: SSEClientTransportOptions = {};
-	if (hfToken) {
-		const headerName = 'X-HF-Authorization';
-		const customHeaders = {
-			[headerName]: `Bearer ${hfToken}`,
-		};
-		logger.trace(`connection to gradio endpoint with ${headerName} header`);
-		// Headers for POST requests
-		transportOptions.requestInit = {
-			headers: customHeaders,
-		};
-
-		// Headers for SSE connection
-		transportOptions.eventSourceInit = {
-			fetch: (url, init) => {
-				const headers = new Headers(init.headers);
-				Object.entries(customHeaders).forEach(([key, value]) => {
-					headers.set(key, value);
-				});
-				return fetch(url.toString(), { ...init, headers });
-			},
-		};
-	}
-	logger.debug(`MCP Client connection contains token? (${undefined != hfToken})`);
-	const transport = new SSEClientTransport(new URL(sseUrl), transportOptions);
-
-	// Connect the client to the transport
-	await remoteClient.connect(transport);
-	logger.debug('Lazy SSE connection established');
-
-	return remoteClient;
 }
 
 /**
