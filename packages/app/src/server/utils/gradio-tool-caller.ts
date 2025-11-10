@@ -115,7 +115,7 @@ export async function callGradioTool(
 			logger.debug({ tool: toolName, progressToken }, 'Progress notifications requested');
 
 			// Set up progress relay from remote tool to our client
-			// eslint-disable-next-line @typescript-eslint/no-misused-promises
+			 
 			requestOptions.onprogress = async (progress) => {
 				logger.trace({ tool: toolName, progressToken, progress }, 'Relaying progress notification');
 

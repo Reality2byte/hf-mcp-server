@@ -1,12 +1,6 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { SSEClientTransport, type SSEClientTransportOptions } from '@modelcontextprotocol/sdk/client/sse.js';
-import type {
-	CallToolResultSchema} from '@modelcontextprotocol/sdk/types.js';
-import {
-	type ServerNotification,
-	type ServerRequest,
-	type Tool,
-} from '@modelcontextprotocol/sdk/types.js';
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import type { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import { type ServerNotification, type ServerRequest, type Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import { logger } from './utils/logger.js';
