@@ -155,38 +155,32 @@ export function parseGradioSpaceIds(gradioParam: string): ParsedGradioSpace[] {
  * const tools = await fetchGradioSubdomains(spaces, 'hf_token');
  * // Returns: [{ _id: 'gradio_...', name: 'microsoft/Florence-2-large', subdomain: 'microsoft-florence-2-large', emoji: '🔧' }]
  */
-export async function fetchGradioSubdomains(
-	spaceIds: ParsedGradioSpace[],
-	hfToken?: string,
-	hubUrl?: string
-): Promise<SpaceTool[]> {
-	// Note: hubUrl parameter is deprecated with the new API but kept for backward compatibility
-	if (hubUrl) {
-		logger.warn({ hubUrl }, 'hubUrl parameter is not supported with cached discovery API');
-	}
-
+export async function fetchGradioSubdomains(spaceIds: ParsedGradioSpace[], hfToken?: string): Promise<SpaceTool[]> {
 	if (spaceIds.length === 0) {
 		return [];
 	}
 
-	const spaceNames = spaceIds.map(s => s.name);
+	const spaceNames = spaceIds.map((s) => s.name);
 
 	// Use the new optimized discovery API with caching
 	// Skip schemas since we only need metadata here
 	const spaces = await getGradioSpaces(spaceNames, hfToken, { skipSchemas: true });
 
 	// Convert to SpaceTool format
-	const spaceTools: SpaceTool[] = spaces.map(space => ({
+	const spaceTools: SpaceTool[] = spaces.map((space) => ({
 		_id: space._id,
 		name: space.name,
 		subdomain: space.subdomain,
 		emoji: space.emoji,
 	}));
 
-	logger.debug({
-		requested: spaceIds.length,
-		successful: spaceTools.length,
-	}, 'Fetched Gradio subdomains');
+	logger.debug(
+		{
+			requested: spaceIds.length,
+			successful: spaceTools.length,
+		},
+		'Fetched Gradio subdomains'
+	);
 
 	return spaceTools;
 }
@@ -204,16 +198,12 @@ export async function fetchGradioSubdomains(
  * const tools = await parseAndFetchGradioEndpoints('microsoft/Florence-2-large', 'hf_token');
  * // Returns array of SpaceTool objects with real subdomains from HuggingFace API
  */
-export async function parseAndFetchGradioEndpoints(
-	gradioParam: string,
-	hfToken?: string,
-	hubUrl?: string
-): Promise<SpaceTool[]> {
+export async function parseAndFetchGradioEndpoints(gradioParam: string, hfToken?: string): Promise<SpaceTool[]> {
 	const parsedSpaces = parseGradioSpaceIds(gradioParam);
 
 	if (parsedSpaces.length === 0) {
 		return [];
 	}
 
-	return fetchGradioSubdomains(parsedSpaces, hfToken, hubUrl);
+	return fetchGradioSubdomains(parsedSpaces, hfToken);
 }
