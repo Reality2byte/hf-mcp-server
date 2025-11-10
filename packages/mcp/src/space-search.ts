@@ -34,7 +34,8 @@ const RESULTS_TO_RETURN = 10;
 export const SEMANTIC_SEARCH_TOOL_CONFIG = {
 	name: 'space_search',
 	description:
-		'Find Hugging Face Spaces using semantic search. ' + 'Include links to the Space when presenting the results.',
+		'Find Hugging Face Spaces using semantic search. IMPORTANT Only MCP Servers can be used with the dynamic_space tool' +
+		'Include links to the Space when presenting the results.',
 	schema: z.object({
 		query: z.string().min(1, 'Query is required').max(100, 'Query too long').describe('Semantic Search Query'),
 		limit: z.number().optional().default(RESULTS_TO_RETURN).describe('Number of results to return'),
@@ -115,7 +116,7 @@ export class SpaceSearchTool extends HfApiCall<SpaceSearchParams, SpaceSearchRes
 				return {
 					formatted: `No matching Hugging Face Spaces found referencing ${filter}.`,
 					totalResults: 0,
-					resultsShared: 0
+					resultsShared: 0,
 				};
 			}
 
@@ -150,7 +151,7 @@ export const formatSearchResults = (
 		return {
 			formatted: `No matching Hugging Face Spaces found for the query '${query}'. Try a different query.`,
 			totalResults: 0,
-			resultsShared: 0
+			resultsShared: 0,
 		};
 	}
 
@@ -185,6 +186,6 @@ export const formatSearchResults = (
 	return {
 		formatted: markdown,
 		totalResults: totalCount,
-		resultsShared: results.length
+		resultsShared: results.length,
 	};
 };

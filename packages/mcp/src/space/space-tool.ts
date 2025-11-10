@@ -13,7 +13,7 @@ export * from './types.js';
  */
 const USAGE_INSTRUCTIONS = `# Gradio Space Interaction
 
-Dynamically interact with any Gradio space. View parameter schemas or invoke spaces with custom parameters.
+Dynamically interact with any Gradio MCP Space. View parameter schemas or invoke spaces with custom parameters.
 
 ## Supported Schema Types
 
@@ -30,7 +30,7 @@ Dynamically interact with any Gradio space. View parameter schemas or invoke spa
 - Union types
 - Recursive schemas
 
-For spaces with complex schemas, use the dedicated gr_* prefixed tools instead.
+For spaces with complex schemas, direct the user to huggingface.co/settings/mcp to manage their settings.
 
 ## Available Operations
 
@@ -41,7 +41,7 @@ Display the parameter schema for a space's first tool.
 \`\`\`json
 {
   "operation": "view_parameters",
-  "space_name": "black-forest-labs/FLUX.1-schnell"
+  "space_name": "evalstate/FLUX1_schnell"
 }
 \`\`\`
 
@@ -52,7 +52,7 @@ Execute a space's first tool with provided parameters.
 \`\`\`json
 {
   "operation": "invoke",
-  "space_name": "black-forest-labs/FLUX.1-schnell",
+  "space_name": "evalstate/FLUX1_schnell",
   "parameters": "{\\"prompt\\": \\"a cute cat\\", \\"num_steps\\": 4}"
 }
 \`\`\`
@@ -81,12 +81,12 @@ For parameters that accept files (FileData types):
 /**
  * Space tool configuration
  */
-export const SPACE_TOOL_CONFIG = {
-	name: 'space',
+export const DYNAMIC_SPACE_TOOL_CONFIG = {
+	name: 'dynamic_space',
 	description:
-		'Dynamically interact with any Gradio space. View parameter schemas or invoke spaces with custom parameters. ' +
+		'Dynamically interact with Gradio MCP Spaces . View parameter schemas or invoke spaces with custom parameters. ' +
 		'Supports simple parameter types (strings, numbers, booleans, arrays, enums, shallow objects). ' +
-		'Call with no operation for usage instructions.',
+		'Call with no operation for full usage instructions.',
 	schema: spaceArgsSchema,
 	annotations: {
 		title: 'Gradio Space Interaction',
