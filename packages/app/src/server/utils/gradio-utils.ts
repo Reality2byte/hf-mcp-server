@@ -6,6 +6,7 @@ import { GRADIO_FILES_TOOL_CONFIG } from '@llmindset/hf-mcp';
 import type { SpaceTool } from '../../shared/settings.js';
 import { GRADIO_PREFIX, GRADIO_PRIVATE_PREFIX } from '../../shared/constants.js';
 import { logger } from './logger.js';
+import { getGradioSpaces } from './gradio-discovery.js';
 
 /**
  * Determines if a tool name represents a Gradio endpoint
@@ -143,10 +144,11 @@ export function parseGradioSpaceIds(gradioParam: string): ParsedGradioSpace[] {
 
 /**
  * Fetches real subdomains from the HuggingFace API for the given space IDs.
+ * Now uses the optimized discovery API with caching for better performance.
  *
  * @param spaceIds - Array of space IDs to fetch subdomains for
  * @param hfToken - Optional HuggingFace token for authentication
- * @param hubUrl - Optional hub URL for custom HuggingFace instances
+ * @param hubUrl - Optional hub URL for custom HuggingFace instances (not used with new API)
  * @returns Array of SpaceTool objects with real subdomains from the API
  *
  * @example
@@ -159,45 +161,33 @@ export async function fetchGradioSubdomains(
 	hfToken?: string,
 	hubUrl?: string
 ): Promise<SpaceTool[]> {
-	const spaceTools: SpaceTool[] = [];
-
-	for (const space of spaceIds) {
-		try {
-			logger.debug(`Fetching subdomain for space: ${space.name}`);
-
-			// Fetch space info with subdomain field
-			const info = (await spaceInfo({
-				name: space.name,
-				additionalFields: ['subdomain'],
-				...(hubUrl && { hubUrl }),
-				...(hfToken && { credentials: { accessToken: hfToken } }),
-			})) as { subdomain?: string };
-
-			const subdomain = info.subdomain;
-
-			if (!subdomain) {
-				logger.warn(`Space "${space.name}" does not have a subdomain - skipping`);
-				continue;
-			}
-
-			// Generate a unique ID based on the subdomain (which is guaranteed unique)
-			const toolId = `gradio_${subdomain}`;
-
-			spaceTools.push({
-				_id: toolId,
-				name: space.name,
-				subdomain: subdomain,
-				emoji: '🔧',
-			});
-
-			logger.info(`Successfully fetched subdomain for ${space.name}: ${subdomain}`);
-		} catch (error) {
-			logger.error(
-				{ error, spaceName: space.name },
-				`Failed to fetch subdomain for space "${space.name}" - skipping`
-			);
-		}
+	// Note: hubUrl parameter is deprecated with the new API but kept for backward compatibility
+	if (hubUrl) {
+		logger.warn({ hubUrl }, 'hubUrl parameter is not supported with cached discovery API');
 	}
+
+	if (spaceIds.length === 0) {
+		return [];
+	}
+
+	const spaceNames = spaceIds.map(s => s.name);
+
+	// Use the new optimized discovery API with caching
+	// Skip schemas since we only need metadata here
+	const spaces = await getGradioSpaces(spaceNames, hfToken, { skipSchemas: true });
+
+	// Convert to SpaceTool format
+	const spaceTools: SpaceTool[] = spaces.map(space => ({
+		_id: space._id,
+		name: space.name,
+		subdomain: space.subdomain,
+		emoji: space.emoji,
+	}));
+
+	logger.debug({
+		requested: spaceIds.length,
+		successful: spaceTools.length,
+	}, 'Fetched Gradio subdomains');
 
 	return spaceTools;
 }
