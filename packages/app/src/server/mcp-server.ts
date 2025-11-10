@@ -66,7 +66,7 @@ import type { ServerFactory, ServerFactoryResult } from './transport/base-transp
 import type { McpApiClient } from './utils/mcp-api-client.js';
 import type { WebServer } from './web-server.js';
 import { logger } from './utils/logger.js';
-import { logSearchQuery, logPromptQuery } from './utils/query-logger.js';
+import { logSearchQuery, logPromptQuery, logGradioEvent } from './utils/query-logger.js';
 import { DEFAULT_SPACE_TOOLS, type AppSettings } from '../shared/settings.js';
 import { extractAuthBouquetAndMix } from './utils/auth-utils.js';
 import { ToolSelectionStrategy, type ToolSelectionContext } from './utils/tool-selection-strategy.js';
@@ -702,74 +702,116 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			SPACE_TOOL_CONFIG.schema.shape,
 			SPACE_TOOL_CONFIG.annotations,
 			async (params: SpaceArgs, extra) => {
-				const spaceTool = new SpaceTool(hfToken);
-				const result = await spaceTool.execute(params, extra);
-
-				// Check if this is an InvokeResult (has raw MCP content from invoke operation)
-				if ('result' in result && result.result) {
-					const invokeResult = result as InvokeResult;
-
-					// Prepare post-processing options
-					const stripImageContent =
-						noImageContentHeaderEnabled ||
-						toolSelection.enabledToolIds.includes('NO_GRADIO_IMAGE_CONTENT');
-					const postProcessOptions: GradioToolCallOptions = {
-						stripImageContent,
-						toolName: SPACE_TOOL_CONFIG.name,
-						outwardFacingName: SPACE_TOOL_CONFIG.name,
-						sessionInfo,
-						spaceName: params.space_name,
+				// Check if invoke operation is disabled by gradio=none
+				const { gradio } = extractAuthBouquetAndMix(headers);
+				if (params.operation === 'invoke' && gradio === 'none') {
+					const errorMessage =
+						'The invoke operation is disabled because gradio=none is set. ' +
+						'To use invoke, remove gradio=none from your headers or set gradio to a space ID. ' +
+						'You can still use operation=view_parameters to inspect the tool schema.';
+					return {
+						content: [{ type: 'text', text: errorMessage }],
+						isError: true,
 					};
+				}
 
-					// Apply unified post-processing (image filtering + OpenAI transforms)
-					const processedResult = applyResultPostProcessing(
-						invokeResult.result as typeof CallToolResultSchema._type,
-						postProcessOptions
-					);
+				const startTime = Date.now();
+				let success = false;
 
-					// Prepend warnings if any
-					const warningsContent =
-						invokeResult.warnings.length > 0
-							? [
-									{
-										type: 'text' as const,
-										text:
-											(invokeResult.warnings.length === 1 ? 'Warning:\n' : 'Warnings:\n') +
-											invokeResult.warnings.map((w) => `- ${w}`).join('\n') +
-											'\n',
-									},
-								]
-							: [];
+				try {
+					const spaceTool = new SpaceTool(hfToken);
+					const result = await spaceTool.execute(params, extra);
 
-					// Log the query with operation and result metrics
+					// Check if this is an InvokeResult (has raw MCP content from invoke operation)
+					if ('result' in result && result.result) {
+						const invokeResult = result as InvokeResult;
+						success = !invokeResult.isError;
+
+						// Prepare post-processing options
+						const stripImageContent =
+							noImageContentHeaderEnabled ||
+							toolSelection.enabledToolIds.includes('NO_GRADIO_IMAGE_CONTENT');
+						const postProcessOptions: GradioToolCallOptions = {
+							stripImageContent,
+							toolName: SPACE_TOOL_CONFIG.name,
+							outwardFacingName: SPACE_TOOL_CONFIG.name,
+							sessionInfo,
+							spaceName: params.space_name,
+						};
+
+						// Apply unified post-processing (image filtering + OpenAI transforms)
+						const processedResult = applyResultPostProcessing(
+							invokeResult.result as typeof CallToolResultSchema._type,
+							postProcessOptions
+						);
+
+						// Prepend warnings if any
+						const warningsContent =
+							invokeResult.warnings.length > 0
+								? [
+										{
+											type: 'text' as const,
+											text:
+												(invokeResult.warnings.length === 1 ? 'Warning:\n' : 'Warnings:\n') +
+												invokeResult.warnings.map((w) => `- ${w}`).join('\n') +
+												'\n',
+										},
+									]
+								: [];
+
+						// Log Gradio event with timing metrics for invoke operation (like proxied tools)
+						const endTime = Date.now();
+						const responseContent = [...warningsContent, ...(processedResult.content as unknown[])];
+						logGradioEvent(params.space_name || 'unknown-space', sessionInfo?.clientSessionId || 'unknown', {
+							durationMs: endTime - startTime,
+							isAuthenticated: !!hfToken,
+							clientName: sessionInfo?.clientInfo?.name,
+							clientVersion: sessionInfo?.clientInfo?.version,
+							success,
+							error: invokeResult.isError ? 'Tool returned isError=true' : undefined,
+							responseSizeBytes: JSON.stringify(responseContent).length,
+							isDynamic: true, // Mark as dynamic invocation (vs proxied gr_* tool)
+						});
+
+						return {
+							content: responseContent,
+							...(invokeResult.isError && { isError: true }),
+						} as typeof CallToolResultSchema._type;
+					}
+
+					// For view_parameters and errors - return formatted text
+					const toolResult = result as ToolResult;
+					success = !toolResult.isError;
+
 					const loggedOperation = params.operation ?? 'no-operation';
 					logSearchQuery(SPACE_TOOL_CONFIG.name, loggedOperation, params, {
 						...getLoggingOptions(),
-						totalResults: invokeResult.totalResults,
-						resultsShared: invokeResult.resultsShared,
-						responseCharCount: JSON.stringify(processedResult.content).length,
+						totalResults: toolResult.totalResults,
+						resultsShared: toolResult.resultsShared,
+						responseCharCount: toolResult.formatted.length,
 					});
 
 					return {
-						content: [...warningsContent, ...(processedResult.content as unknown[])],
-						...(invokeResult.isError && { isError: true }),
-					} as typeof CallToolResultSchema._type;
+						content: [{ type: 'text', text: toolResult.formatted }],
+						...(toolResult.isError && { isError: true }),
+					};
+				} catch (err) {
+					// Log error for invoke operation
+					if (params.operation === 'invoke') {
+						const endTime = Date.now();
+						logGradioEvent(params.space_name || 'unknown-space', sessionInfo?.clientSessionId || 'unknown', {
+							durationMs: endTime - startTime,
+							isAuthenticated: !!hfToken,
+							clientName: sessionInfo?.clientInfo?.name,
+							clientVersion: sessionInfo?.clientInfo?.version,
+							success: false,
+							error: err,
+							isDynamic: true,
+						});
+					}
+
+					throw err;
 				}
-
-				// For view_parameters and errors - return formatted text
-				const toolResult = result as ToolResult;
-				const loggedOperation = params.operation ?? 'no-operation';
-				logSearchQuery(SPACE_TOOL_CONFIG.name, loggedOperation, params, {
-					...getLoggingOptions(),
-					totalResults: toolResult.totalResults,
-					resultsShared: toolResult.resultsShared,
-					responseCharCount: toolResult.formatted.length,
-				});
-
-				return {
-					content: [{ type: 'text', text: toolResult.formatted }],
-					...(toolResult.isError && { isError: true }),
-				};
 			}
 		);
 
