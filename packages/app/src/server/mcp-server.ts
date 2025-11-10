@@ -1,4 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { z } from 'zod';
 import { createRequire } from 'module';
 import { whoAmI, type WhoAmI } from '@huggingface/hub';
@@ -54,19 +55,25 @@ import {
 	type DocFetchParams,
 	HF_JOBS_TOOL_CONFIG,
 	HfJobsTool,
+	DYNAMIC_SPACE_TOOL_CONFIG,
+	SpaceTool,
+	type SpaceArgs,
+	type InvokeResult,
+	type ToolResult,
 } from '@llmindset/hf-mcp';
 
 import type { ServerFactory, ServerFactoryResult } from './transport/base-transport.js';
 import type { McpApiClient } from './utils/mcp-api-client.js';
 import type { WebServer } from './web-server.js';
 import { logger } from './utils/logger.js';
-import { logSearchQuery, logPromptQuery } from './utils/query-logger.js';
+import { logSearchQuery, logPromptQuery, logGradioEvent } from './utils/query-logger.js';
 import { DEFAULT_SPACE_TOOLS, type AppSettings } from '../shared/settings.js';
 import { extractAuthBouquetAndMix } from './utils/auth-utils.js';
 import { ToolSelectionStrategy, type ToolSelectionContext } from './utils/tool-selection-strategy.js';
 import { hasReadmeFlag } from '../shared/behavior-flags.js';
 import { registerCapabilities } from './utils/capability-utils.js';
 import { createGradioWidgetResourceConfig } from './resources/gradio-widget-resource.js';
+import { applyResultPostProcessing, type GradioToolCallOptions } from './utils/gradio-tool-caller.js';
 
 // Fallback settings when API fails (enables all tools)
 export const BOUQUET_FALLBACK: AppSettings = {
@@ -176,6 +183,9 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			hfToken,
 		};
 		const toolSelection = await toolSelectionStrategy.selectTools(toolSelectionContext);
+		const rawNoImageHeader = headers?.['x-mcp-no-image-content'];
+		const noImageContentHeaderEnabled =
+			typeof rawNoImageHeader === 'string' && rawNoImageHeader.trim().toLowerCase() === 'true';
 
 		// Always register all tools and store instances for dynamic control
 		const toolInstances: { [name: string]: Tool } = {};
@@ -683,6 +693,124 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					content: [{ type: 'text', text: result.formatted }],
 					...(result.isError && { isError: true }),
 				};
+			}
+		);
+
+		toolInstances[DYNAMIC_SPACE_TOOL_CONFIG.name] = server.tool(
+			DYNAMIC_SPACE_TOOL_CONFIG.name,
+			DYNAMIC_SPACE_TOOL_CONFIG.description,
+			DYNAMIC_SPACE_TOOL_CONFIG.schema.shape,
+			DYNAMIC_SPACE_TOOL_CONFIG.annotations,
+			async (params: SpaceArgs, extra) => {
+				// Check if invoke operation is disabled by gradio=none
+				const { gradio } = extractAuthBouquetAndMix(headers);
+				if (params.operation === 'invoke' && gradio === 'none') {
+					const errorMessage =
+						'The invoke operation is disabled because gradio=none is set. ' +
+						'To use invoke, remove gradio=none from your headers or set gradio to a space ID. ' +
+						'You can still use operation=view_parameters to inspect the tool schema.';
+					return {
+						content: [{ type: 'text', text: errorMessage }],
+						isError: true,
+					};
+				}
+
+				const startTime = Date.now();
+				let success = false;
+
+				try {
+					const spaceTool = new SpaceTool(hfToken);
+					const result = await spaceTool.execute(params, extra);
+
+					// Check if this is an InvokeResult (has raw MCP content from invoke operation)
+					if ('result' in result && result.result) {
+						const invokeResult = result as InvokeResult;
+						success = !invokeResult.isError;
+
+						// Prepare post-processing options
+						const stripImageContent =
+							noImageContentHeaderEnabled || toolSelection.enabledToolIds.includes('NO_GRADIO_IMAGE_CONTENT');
+						const postProcessOptions: GradioToolCallOptions = {
+							stripImageContent,
+							toolName: DYNAMIC_SPACE_TOOL_CONFIG.name,
+							outwardFacingName: DYNAMIC_SPACE_TOOL_CONFIG.name,
+							sessionInfo,
+							spaceName: params.space_name,
+						};
+
+						// Apply unified post-processing (image filtering + OpenAI transforms)
+						const processedResult = applyResultPostProcessing(
+							invokeResult.result as typeof CallToolResultSchema._type,
+							postProcessOptions
+						);
+
+						// Prepend warnings if any
+						const warningsContent =
+							invokeResult.warnings.length > 0
+								? [
+										{
+											type: 'text' as const,
+											text:
+												(invokeResult.warnings.length === 1 ? 'Warning:\n' : 'Warnings:\n') +
+												invokeResult.warnings.map((w) => `- ${w}`).join('\n') +
+												'\n',
+										},
+									]
+								: [];
+
+						// Log Gradio event with timing metrics for invoke operation (like proxied tools)
+						const endTime = Date.now();
+						const responseContent = [...warningsContent, ...(processedResult.content as unknown[])];
+						logGradioEvent(params.space_name || 'unknown-space', sessionInfo?.clientSessionId || 'unknown', {
+							durationMs: endTime - startTime,
+							isAuthenticated: !!hfToken,
+							clientName: sessionInfo?.clientInfo?.name,
+							clientVersion: sessionInfo?.clientInfo?.version,
+							success,
+							error: invokeResult.isError ? 'Tool returned isError=true' : undefined,
+							responseSizeBytes: JSON.stringify(responseContent).length,
+							isDynamic: true, // Mark as dynamic invocation (vs proxied gr_* tool)
+						});
+
+						return {
+							content: responseContent,
+							...(invokeResult.isError && { isError: true }),
+						} as typeof CallToolResultSchema._type;
+					}
+
+					// For view_parameters and errors - return formatted text
+					const toolResult = result as ToolResult;
+					success = !toolResult.isError;
+
+					const loggedOperation = params.operation ?? 'no-operation';
+					logSearchQuery(DYNAMIC_SPACE_TOOL_CONFIG.name, loggedOperation, params, {
+						...getLoggingOptions(),
+						totalResults: toolResult.totalResults,
+						resultsShared: toolResult.resultsShared,
+						responseCharCount: toolResult.formatted.length,
+					});
+
+					return {
+						content: [{ type: 'text', text: toolResult.formatted }],
+						...(toolResult.isError && { isError: true }),
+					};
+				} catch (err) {
+					// Log error for invoke operation
+					if (params.operation === 'invoke') {
+						const endTime = Date.now();
+						logGradioEvent(params.space_name || 'unknown-space', sessionInfo?.clientSessionId || 'unknown', {
+							durationMs: endTime - startTime,
+							isAuthenticated: !!hfToken,
+							clientName: sessionInfo?.clientInfo?.name,
+							clientVersion: sessionInfo?.clientInfo?.version,
+							success: false,
+							error: err,
+							isDynamic: true,
+						});
+					}
+
+					throw err;
+				}
 			}
 		);
 

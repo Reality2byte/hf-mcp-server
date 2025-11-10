@@ -326,6 +326,7 @@ export function logGradioEvent(
 		error?: unknown;
 		responseSizeBytes?: number;
 		notificationCount?: number;
+		isDynamic?: boolean;
 	}
 ): void {
 	if (!gradioLogger) {
@@ -362,6 +363,7 @@ export function logGradioEvent(
 			error: errorString,
 			responseSizeBytes: options.responseSizeBytes || null,
 			notificationCount: options.notificationCount || 0,
+			isDynamic: options.isDynamic ?? false,
 			mcpServerSessionId,
 		},
 		'Gradio event logged'

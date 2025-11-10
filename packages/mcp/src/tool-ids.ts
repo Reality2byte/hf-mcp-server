@@ -22,6 +22,7 @@ import {
 	DOC_FETCH_CONFIG,
 	USE_SPACE_TOOL_CONFIG,
 	HF_JOBS_TOOL_CONFIG,
+	DYNAMIC_SPACE_TOOL_CONFIG,
 } from './index.js';
 
 // Extract tool IDs from their configs (single source of truth)
@@ -43,6 +44,7 @@ export const PAPER_SUMMARY_PROMPT_ID = PAPER_SUMMARY_PROMPT_CONFIG.name;
 export const MODEL_DETAIL_PROMPT_ID = MODEL_DETAIL_PROMPT_CONFIG.name;
 export const DATASET_DETAIL_PROMPT_ID = DATASET_DETAIL_PROMPT_CONFIG.name;
 export const HF_JOBS_TOOL_ID = HF_JOBS_TOOL_CONFIG.name;
+export const DYNAMIC_SPACE_TOOL_ID = DYNAMIC_SPACE_TOOL_CONFIG.name;
 
 // Complete list of all built-in tool IDs
 export const ALL_BUILTIN_TOOL_IDS = [
@@ -60,6 +62,7 @@ export const ALL_BUILTIN_TOOL_IDS = [
 	DOC_FETCH_TOOL_ID,
 	USE_SPACE_TOOL_ID,
 	HF_JOBS_TOOL_ID,
+	DYNAMIC_SPACE_TOOL_ID,
 ] as const;
 // Grouped tool IDs for bouquet configurations
 export const TOOL_ID_GROUPS = {
@@ -88,6 +91,7 @@ export const TOOL_ID_GROUPS = {
 		DOCS_SEMANTIC_SEARCH_TOOL_ID,
 		//		HF_JOBS_TOOL_ID,
 	] as const,
+	dynamic_space: [DYNAMIC_SPACE_TOOL_ID] as const,
 	all: [...ALL_BUILTIN_TOOL_IDS] as const,
 } as const;
 
