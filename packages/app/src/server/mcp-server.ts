@@ -145,6 +145,13 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			{
 				name: '@huggingface/mcp-services',
 				version: version,
+				title: 'Hugging Face',
+				websiteUrl: 'https://huggingface.co/mcp',
+				icons: [
+					{
+						src: 'https://huggingface.co/favicon.ico',
+					},
+				],
 			},
 			{
 				instructions:
