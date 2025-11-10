@@ -117,7 +117,7 @@ export function hasFileData(schema: JsonSchema): boolean {
 export interface InvokeResult {
 	result: {
 		content: unknown[];
-		isError: boolean;
+		isError?: boolean;
 		[key: string]: unknown;
 	};
 	warnings: string[];

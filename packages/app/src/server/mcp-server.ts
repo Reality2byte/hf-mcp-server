@@ -1,4 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { z } from 'zod';
 import { createRequire } from 'module';
 import { whoAmI, type WhoAmI } from '@huggingface/hub';
@@ -715,7 +716,10 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					};
 
 					// Apply unified post-processing (image filtering + OpenAI transforms)
-					const processedResult = applyResultPostProcessing(invokeResult.result, postProcessOptions);
+					const processedResult = applyResultPostProcessing(
+						invokeResult.result as typeof CallToolResultSchema._type,
+						postProcessOptions
+					);
 
 					// Prepend warnings if any
 					const warningsContent =
@@ -741,23 +745,24 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					});
 
 					return {
-						content: [...warningsContent, ...processedResult.content],
+						content: [...warningsContent, ...(processedResult.content as unknown[])],
 						...(invokeResult.isError && { isError: true }),
-					};
+					} as typeof CallToolResultSchema._type;
 				}
 
 				// For view_parameters and errors - return formatted text
+				const toolResult = result as import('@llmindset/hf-mcp').ToolResult;
 				const loggedOperation = params.operation ?? 'no-operation';
 				logSearchQuery(SPACE_TOOL_CONFIG.name, loggedOperation, params, {
 					...getLoggingOptions(),
-					totalResults: result.totalResults,
-					resultsShared: result.resultsShared,
-					responseCharCount: result.formatted.length,
+					totalResults: toolResult.totalResults,
+					resultsShared: toolResult.resultsShared,
+					responseCharCount: toolResult.formatted.length,
 				});
 
 				return {
-					content: [{ type: 'text', text: result.formatted }],
-					...(result.isError && { isError: true }),
+					content: [{ type: 'text', text: toolResult.formatted }],
+					...(toolResult.isError && { isError: true }),
 				};
 			}
 		);
