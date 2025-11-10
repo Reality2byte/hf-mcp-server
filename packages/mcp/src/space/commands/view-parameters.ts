@@ -49,8 +49,18 @@ export async function viewParameters(spaceName: string, hfToken?: string): Promi
 		};
 	} catch (error) {
 		const errorMessage = error instanceof Error ? error.message : String(error);
+
+		// Check if this is a 404 error (space not found)
+		const is404 = errorMessage.includes('404') || errorMessage.toLowerCase().includes('not found');
+
+		let formattedError = `Error fetching parameters for space '${spaceName}': ${errorMessage}`;
+
+		if (is404) {
+			formattedError += '\n\nNote: The space MUST be an MCP enabled space. Use the `space_search` tool to find MCP enabled spaces.';
+		}
+
 		return {
-			formatted: `Error fetching parameters for space '${spaceName}': ${errorMessage}`,
+			formatted: formattedError,
 			totalResults: 0,
 			resultsShared: 0,
 			isError: true,
