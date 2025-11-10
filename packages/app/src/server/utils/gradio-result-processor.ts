@@ -1,4 +1,4 @@
-import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { logger } from './logger.js';
 
 /**
