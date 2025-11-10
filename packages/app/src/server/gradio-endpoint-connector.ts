@@ -218,7 +218,7 @@ async function isSpacePrivate(spaceName: string, hfToken?: string): Promise<bool
 
 			// Cache the result for future use
 			const metadata = {
-				_id: info._id || `gradio_${spaceName.replace('/', '-')}`,
+				_id: (info as { _id?: string })._id || `gradio_${spaceName.replace('/', '-')}`,
 				name: spaceName,
 				subdomain: (info as { subdomain?: string }).subdomain || '',
 				emoji: '🔧',

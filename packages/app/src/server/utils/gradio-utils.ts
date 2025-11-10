@@ -1,7 +1,6 @@
 /**
  * Utility functions for handling Gradio endpoint detection and configuration
  */
-import { spaceInfo } from '@huggingface/hub';
 import { GRADIO_FILES_TOOL_CONFIG } from '@llmindset/hf-mcp';
 import type { SpaceTool } from '../../shared/settings.js';
 import { GRADIO_PREFIX, GRADIO_PRIVATE_PREFIX } from '../../shared/constants.js';

@@ -140,10 +140,13 @@ class SpaceMetadataCache {
 	}
 
 	/**
-	 * Clear all cached entries
+	 * Clear all cached entries and reset statistics
 	 */
 	clear(): void {
 		this.cache.clear();
+		this.stats.hits = 0;
+		this.stats.misses = 0;
+		this.stats.etagRevalidations = 0;
 		logger.debug('Space metadata cache cleared');
 	}
 
@@ -205,10 +208,12 @@ class SchemaCache {
 	}
 
 	/**
-	 * Clear all cached entries
+	 * Clear all cached entries and reset statistics
 	 */
 	clear(): void {
 		this.cache.clear();
+		this.stats.hits = 0;
+		this.stats.misses = 0;
 		logger.debug('Schema cache cleared');
 	}
 

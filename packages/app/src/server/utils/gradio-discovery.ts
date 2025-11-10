@@ -8,7 +8,6 @@
  * 4. Timeouts and graceful error handling
  */
 
-import { spaceInfo } from '@huggingface/hub';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { logger } from './logger.js';
 import {
@@ -60,7 +59,7 @@ export interface GetGradioSpacesOptions {
 /**
  * Result of fetching a single space's metadata
  */
-interface SpaceMetadataResult {
+type SpaceMetadataResult = {
 	success: true;
 	metadata: CachedSpaceMetadata;
 	cached: boolean;
@@ -73,7 +72,7 @@ interface SpaceMetadataResult {
 /**
  * Result of fetching a single space's schema
  */
-interface SchemaResult {
+type SchemaResult = {
 	success: true;
 	spaceName: string;
 	schema: CachedSchema;
@@ -500,8 +499,8 @@ export async function getGradioSpaces(
 
 	logger.info({
 		requested: spaceNames.length,
-		successful: results.size,
-		failed: spaceNames.length - results.size,
+		successful: results.length,
+		failed: spaceNames.length - results.length,
 		durationMs: duration,
 		skipSchemas: options?.skipSchemas,
 	}, 'Gradio space discovery complete');
