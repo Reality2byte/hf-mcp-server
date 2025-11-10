@@ -1,5 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { z } from 'zod';
 import { createRequire } from 'module';
 import { whoAmI, type WhoAmI } from '@huggingface/hub';
@@ -59,6 +59,7 @@ import {
 	SpaceTool,
 	type SpaceArgs,
 	type InvokeResult,
+	type ToolResult,
 } from '@llmindset/hf-mcp';
 
 import type { ServerFactory, ServerFactoryResult } from './transport/base-transport.js';
@@ -751,7 +752,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 				}
 
 				// For view_parameters and errors - return formatted text
-				const toolResult = result as import('@llmindset/hf-mcp').ToolResult;
+				const toolResult = result as ToolResult;
 				const loggedOperation = params.operation ?? 'no-operation';
 				logSearchQuery(SPACE_TOOL_CONFIG.name, loggedOperation, params, {
 					...getLoggingOptions(),
