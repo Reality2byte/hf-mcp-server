@@ -24,8 +24,8 @@ export const CACHE_CONFIG = {
 	// Space info timeout (default: 5 seconds)
 	SPACE_INFO_TIMEOUT: parseInt(process.env.GRADIO_SPACE_INFO_TIMEOUT || '5000', 10),
 
-	// Schema fetch timeout (default: 12 seconds)
-	SCHEMA_TIMEOUT: parseInt(process.env.GRADIO_SCHEMA_TIMEOUT || '12000', 10),
+	// Schema fetch timeout (default: 7.5 seconds)
+	SCHEMA_TIMEOUT: parseInt(process.env.GRADIO_SCHEMA_TIMEOUT || '7500', 10),
 };
 
 /**
@@ -36,22 +36,22 @@ export const CACHE_CONFIG = {
  */
 export interface CachedSpaceMetadata {
 	// Core space data
-	_id: string;           // e.g., "gradio_evalstate-flux1-schnell"
-	name: string;          // e.g., "evalstate/flux1_schnell"
-	subdomain: string;     // e.g., "evalstate-flux1-schnell"
-	emoji: string;         // e.g., "🔧"
-	private: boolean;      // Used for auth header forwarding
-	sdk: string;           // e.g., "gradio", "static", "streamlit"
+	_id: string; // e.g., "gradio_evalstate-flux1-schnell"
+	name: string; // e.g., "evalstate/flux1_schnell"
+	subdomain: string; // e.g., "evalstate-flux1-schnell"
+	emoji: string; // e.g., "🔧"
+	private: boolean; // Used for auth header forwarding
+	sdk: string; // e.g., "gradio", "static", "streamlit"
 
 	// Optional runtime info
 	runtime?: {
-		stage?: string;    // "RUNNING", "SLEEPING", etc.
+		stage?: string; // "RUNNING", "SLEEPING", etc.
 		hardware?: string;
 	};
 
 	// Cache metadata
-	etag?: string;         // For conditional requests (If-None-Match)
-	fetchedAt: number;     // Timestamp when entry was created (NOT last access time)
+	etag?: string; // For conditional requests (If-None-Match)
+	fetchedAt: number; // Timestamp when entry was created (NOT last access time)
 }
 
 /**
@@ -62,10 +62,10 @@ export interface CachedSpaceMetadata {
  */
 export interface CachedSchema {
 	// Schema data
-	tools: Tool[];         // Array of tool definitions with inputSchema
+	tools: Tool[]; // Array of tool definitions with inputSchema
 
 	// Cache metadata
-	fetchedAt: number;     // Timestamp when entry was created (NOT last access time)
+	fetchedAt: number; // Timestamp when entry was created (NOT last access time)
 }
 
 /**
@@ -282,27 +282,32 @@ export function clearAllCaches(): void {
 export function logCacheStats(): void {
 	const stats = getCacheStats();
 
-	const metadataHitRate = stats.metadataHits + stats.metadataMisses > 0
-		? (stats.metadataHits / (stats.metadataHits + stats.metadataMisses) * 100).toFixed(1)
-		: '0.0';
+	const metadataHitRate =
+		stats.metadataHits + stats.metadataMisses > 0
+			? ((stats.metadataHits / (stats.metadataHits + stats.metadataMisses)) * 100).toFixed(1)
+			: '0.0';
 
-	const schemaHitRate = stats.schemaHits + stats.schemaMisses > 0
-		? (stats.schemaHits / (stats.schemaHits + stats.schemaMisses) * 100).toFixed(1)
-		: '0.0';
+	const schemaHitRate =
+		stats.schemaHits + stats.schemaMisses > 0
+			? ((stats.schemaHits / (stats.schemaHits + stats.schemaMisses)) * 100).toFixed(1)
+			: '0.0';
 
-	logger.debug({
-		metadata: {
-			hits: stats.metadataHits,
-			misses: stats.metadataMisses,
-			etagRevalidations: stats.metadataEtagRevalidations,
-			hitRate: `${metadataHitRate}%`,
-			cacheSize: stats.metadataCacheSize,
+	logger.debug(
+		{
+			metadata: {
+				hits: stats.metadataHits,
+				misses: stats.metadataMisses,
+				etagRevalidations: stats.metadataEtagRevalidations,
+				hitRate: `${metadataHitRate}%`,
+				cacheSize: stats.metadataCacheSize,
+			},
+			schema: {
+				hits: stats.schemaHits,
+				misses: stats.schemaMisses,
+				hitRate: `${schemaHitRate}%`,
+				cacheSize: stats.schemaCacheSize,
+			},
 		},
-		schema: {
-			hits: stats.schemaHits,
-			misses: stats.schemaMisses,
-			hitRate: `${schemaHitRate}%`,
-			cacheSize: stats.schemaCacheSize,
-		},
-	}, 'Gradio cache statistics');
+		'Gradio cache statistics'
+	);
 }
