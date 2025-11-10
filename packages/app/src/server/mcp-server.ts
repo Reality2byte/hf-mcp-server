@@ -54,6 +54,10 @@ import {
 	type DocFetchParams,
 	HF_JOBS_TOOL_CONFIG,
 	HfJobsTool,
+	SPACE_TOOL_CONFIG,
+	SpaceTool,
+	type SpaceArgs,
+	type InvokeResult,
 } from '@llmindset/hf-mcp';
 
 import type { ServerFactory, ServerFactoryResult } from './transport/base-transport.js';
@@ -67,6 +71,7 @@ import { ToolSelectionStrategy, type ToolSelectionContext } from './utils/tool-s
 import { hasReadmeFlag } from '../shared/behavior-flags.js';
 import { registerCapabilities } from './utils/capability-utils.js';
 import { createGradioWidgetResourceConfig } from './resources/gradio-widget-resource.js';
+import { applyResultPostProcessing, type GradioToolCallOptions } from './utils/gradio-tool-caller.js';
 
 // Fallback settings when API fails (enables all tools)
 export const BOUQUET_FALLBACK: AppSettings = {
@@ -673,6 +678,77 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 				// Log the query with command and result metrics
 				const loggedOperation = params.operation ?? 'no-operation';
 				logSearchQuery(HF_JOBS_TOOL_CONFIG.name, loggedOperation, params.args || {}, {
+					...getLoggingOptions(),
+					totalResults: result.totalResults,
+					resultsShared: result.resultsShared,
+					responseCharCount: result.formatted.length,
+				});
+
+				return {
+					content: [{ type: 'text', text: result.formatted }],
+					...(result.isError && { isError: true }),
+				};
+			}
+		);
+
+		toolInstances[SPACE_TOOL_CONFIG.name] = server.tool(
+			SPACE_TOOL_CONFIG.name,
+			SPACE_TOOL_CONFIG.description,
+			SPACE_TOOL_CONFIG.schema.shape,
+			SPACE_TOOL_CONFIG.annotations,
+			async (params: SpaceArgs, extra) => {
+				const spaceTool = new SpaceTool(hfToken);
+				const result = await spaceTool.execute(params, extra);
+
+				// Check if this is an InvokeResult (has raw MCP content from invoke operation)
+				if ('result' in result && result.result) {
+					const invokeResult = result as InvokeResult;
+
+					// Prepare post-processing options
+					const stripImageContent = toolSelection.enabledToolIds.includes('NO_GRADIO_IMAGE_CONTENT');
+					const postProcessOptions: GradioToolCallOptions = {
+						stripImageContent,
+						toolName: SPACE_TOOL_CONFIG.name,
+						outwardFacingName: SPACE_TOOL_CONFIG.name,
+						sessionInfo,
+						spaceName: params.space_name,
+					};
+
+					// Apply unified post-processing (image filtering + OpenAI transforms)
+					const processedResult = applyResultPostProcessing(invokeResult.result, postProcessOptions);
+
+					// Prepend warnings if any
+					const warningsContent =
+						invokeResult.warnings.length > 0
+							? [
+									{
+										type: 'text' as const,
+										text:
+											(invokeResult.warnings.length === 1 ? 'Warning:\n' : 'Warnings:\n') +
+											invokeResult.warnings.map((w) => `- ${w}`).join('\n') +
+											'\n',
+									},
+								]
+							: [];
+
+					// Log the query with operation and result metrics
+					const loggedOperation = params.operation ?? 'no-operation';
+					logSearchQuery(SPACE_TOOL_CONFIG.name, loggedOperation, params, {
+						...getLoggingOptions(),
+						totalResults: invokeResult.totalResults,
+						resultsShared: invokeResult.resultsShared,
+						responseCharCount: JSON.stringify(processedResult.content).length,
+					});
+
+					return {
+						content: [...warningsContent, ...processedResult.content],
+						...(invokeResult.isError && { isError: true }),
+					};
+				}
+
+				// For view_parameters and errors - return formatted text
+				const loggedOperation = params.operation ?? 'no-operation';
+				logSearchQuery(SPACE_TOOL_CONFIG.name, loggedOperation, params, {
 					...getLoggingOptions(),
 					totalResults: result.totalResults,
 					resultsShared: result.resultsShared,
