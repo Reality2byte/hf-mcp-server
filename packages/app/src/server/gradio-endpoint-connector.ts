@@ -1,7 +1,8 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport, type SSEClientTransportOptions } from '@modelcontextprotocol/sdk/client/sse.js';
+import type {
+	CallToolResultSchema} from '@modelcontextprotocol/sdk/types.js';
 import {
-	CallToolResultSchema,
 	type ServerNotification,
 	type ServerRequest,
 	type Tool,
@@ -431,7 +432,7 @@ function createToolHandler(
 		let success = false;
 		let error: string | undefined;
 		let responseSizeBytes: number | undefined;
-		let notificationCount = 0;
+		const notificationCount = 0;
 
 		try {
 			// Validate SSE URL
