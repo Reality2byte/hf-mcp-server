@@ -4,6 +4,8 @@ import {
 	HUB_INSPECT_TOOL_ID,
 	USE_SPACE_TOOL_ID,
 	HF_JOBS_TOOL_ID,
+	DYNAMIC_SPACE_TOOL_ID,
+	SPACE_SEARCH_TOOL_ID,
 } from '@llmindset/hf-mcp';
 import type { AppSettings } from './settings.js';
 import { README_INCLUDE_FLAG, GRADIO_IMAGE_FILTER_FLAG } from './behavior-flags.js';
@@ -48,6 +50,10 @@ export const BOUQUETS: Record<string, AppSettings> = {
 	},
 	jobs: {
 		builtInTools: [HF_JOBS_TOOL_ID],
+		spaceTools: [],
+	},
+	dynamic_space: {
+		builtInTools: [SPACE_SEARCH_TOOL_ID, DYNAMIC_SPACE_TOOL_ID],
 		spaceTools: [],
 	},
 };

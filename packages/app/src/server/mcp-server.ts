@@ -55,7 +55,7 @@ import {
 	type DocFetchParams,
 	HF_JOBS_TOOL_CONFIG,
 	HfJobsTool,
-	SPACE_TOOL_CONFIG,
+	DYNAMIC_SPACE_TOOL_CONFIG,
 	SpaceTool,
 	type SpaceArgs,
 	type InvokeResult,
@@ -696,11 +696,11 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			}
 		);
 
-		toolInstances[SPACE_TOOL_CONFIG.name] = server.tool(
-			SPACE_TOOL_CONFIG.name,
-			SPACE_TOOL_CONFIG.description,
-			SPACE_TOOL_CONFIG.schema.shape,
-			SPACE_TOOL_CONFIG.annotations,
+		toolInstances[DYNAMIC_SPACE_TOOL_CONFIG.name] = server.tool(
+			DYNAMIC_SPACE_TOOL_CONFIG.name,
+			DYNAMIC_SPACE_TOOL_CONFIG.description,
+			DYNAMIC_SPACE_TOOL_CONFIG.schema.shape,
+			DYNAMIC_SPACE_TOOL_CONFIG.annotations,
 			async (params: SpaceArgs, extra) => {
 				// Check if invoke operation is disabled by gradio=none
 				const { gradio } = extractAuthBouquetAndMix(headers);
@@ -729,12 +729,11 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 
 						// Prepare post-processing options
 						const stripImageContent =
-							noImageContentHeaderEnabled ||
-							toolSelection.enabledToolIds.includes('NO_GRADIO_IMAGE_CONTENT');
+							noImageContentHeaderEnabled || toolSelection.enabledToolIds.includes('NO_GRADIO_IMAGE_CONTENT');
 						const postProcessOptions: GradioToolCallOptions = {
 							stripImageContent,
-							toolName: SPACE_TOOL_CONFIG.name,
-							outwardFacingName: SPACE_TOOL_CONFIG.name,
+							toolName: DYNAMIC_SPACE_TOOL_CONFIG.name,
+							outwardFacingName: DYNAMIC_SPACE_TOOL_CONFIG.name,
 							sessionInfo,
 							spaceName: params.space_name,
 						};
@@ -784,7 +783,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					success = !toolResult.isError;
 
 					const loggedOperation = params.operation ?? 'no-operation';
-					logSearchQuery(SPACE_TOOL_CONFIG.name, loggedOperation, params, {
+					logSearchQuery(DYNAMIC_SPACE_TOOL_CONFIG.name, loggedOperation, params, {
 						...getLoggingOptions(),
 						totalResults: toolResult.totalResults,
 						resultsShared: toolResult.resultsShared,
