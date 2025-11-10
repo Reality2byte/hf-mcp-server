@@ -20,14 +20,18 @@ Before this optimization, every `tools/list` and `prompts/list` request in state
 #### Cache 1: Space Metadata (from HuggingFace API)
 - **Storage**: In-memory `Map<string, CachedSpaceMetadata>`
 - **TTL**: Configurable via `GRADIO_SPACE_CACHE_TTL` (default: 5 minutes)
+  - Expires from entry creation time, not last access
 - **ETag Support**: Uses `If-None-Match` headers for conditional requests
   - 304 Not Modified → Update timestamp, reuse cached data
   - 200 OK → Update cache with new data + ETag
+- **Security**: Private spaces are NEVER cached - always fetched fresh
 
 #### Cache 2: Gradio Schemas (from Gradio endpoints)
 - **Storage**: In-memory `Map<string, CachedSchema>`
 - **TTL**: Configurable via `GRADIO_SCHEMA_CACHE_TTL` (default: 5 minutes)
+  - Expires from entry creation time, not last access
 - **No ETag Support**: Gradio endpoints don't provide cache headers
+- **Security**: Schemas for private spaces are NEVER cached - always fetched fresh
 
 ### Parallel Discovery with Timeouts
 

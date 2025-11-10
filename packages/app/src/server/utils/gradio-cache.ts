@@ -30,6 +30,9 @@ export const CACHE_CONFIG = {
 
 /**
  * Cached space metadata from HuggingFace API
+ *
+ * IMPORTANT: Only public spaces are cached. Private spaces are always fetched fresh
+ * for security and to ensure auth-sensitive information is never stale.
  */
 export interface CachedSpaceMetadata {
 	// Core space data
@@ -48,18 +51,21 @@ export interface CachedSpaceMetadata {
 
 	// Cache metadata
 	etag?: string;         // For conditional requests (If-None-Match)
-	fetchedAt: number;     // Timestamp for TTL calculation
+	fetchedAt: number;     // Timestamp when entry was created (NOT last access time)
 }
 
 /**
  * Cached Gradio schema
+ *
+ * IMPORTANT: Only schemas for public spaces are cached. Private space schemas
+ * are always fetched fresh for security.
  */
 export interface CachedSchema {
 	// Schema data
 	tools: Tool[];         // Array of tool definitions with inputSchema
 
 	// Cache metadata
-	fetchedAt: number;     // Timestamp (no ETag available from Gradio endpoints)
+	fetchedAt: number;     // Timestamp when entry was created (NOT last access time)
 }
 
 /**
@@ -88,6 +94,9 @@ class SpaceMetadataCache {
 
 	/**
 	 * Get cached metadata if valid (within TTL)
+	 *
+	 * TTL is calculated from entry creation time (fetchedAt), not last access time.
+	 * This ensures entries expire predictably after a fixed duration.
 	 */
 	get(spaceName: string): CachedSpaceMetadata | null {
 		const entry = this.cache.get(spaceName);
@@ -98,6 +107,7 @@ class SpaceMetadataCache {
 			return null;
 		}
 
+		// Check age from creation time, not last access
 		const age = Date.now() - entry.fetchedAt;
 		const isValid = age < CACHE_CONFIG.SPACE_METADATA_TTL;
 
@@ -175,6 +185,9 @@ class SchemaCache {
 
 	/**
 	 * Get cached schema if valid (within TTL)
+	 *
+	 * TTL is calculated from entry creation time (fetchedAt), not last access time.
+	 * This ensures entries expire predictably after a fixed duration.
 	 */
 	get(spaceName: string): CachedSchema | null {
 		const entry = this.cache.get(spaceName);
@@ -185,6 +198,7 @@ class SchemaCache {
 			return null;
 		}
 
+		// Check age from creation time, not last access
 		const age = Date.now() - entry.fetchedAt;
 		const isValid = age < CACHE_CONFIG.SCHEMA_TTL;
 

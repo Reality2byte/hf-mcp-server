@@ -181,10 +181,13 @@ async function fetchSpaceMetadata(
 				fetchedAt: Date.now(),
 			};
 
-			// Cache the metadata
-			spaceMetadataCache.set(spaceName, metadata);
-
-			logger.debug({ spaceName, subdomain: metadata.subdomain, hasEtag: !!newEtag }, 'Space metadata fetched and cached');
+			// Only cache public spaces - private spaces should always be fetched fresh
+			if (!metadata.private) {
+				spaceMetadataCache.set(spaceName, metadata);
+				logger.debug({ spaceName, subdomain: metadata.subdomain, hasEtag: !!newEtag }, 'Space metadata fetched and cached');
+			} else {
+				logger.debug({ spaceName, subdomain: metadata.subdomain }, 'Private space metadata fetched (not cached)');
+			}
 
 			return { success: true, metadata, cached: false };
 		} finally {
@@ -325,10 +328,13 @@ async function fetchSchema(
 				fetchedAt: Date.now(),
 			};
 
-			// Cache the schema
-			schemaCache.set(spaceName, schema);
-
-			logger.debug({ spaceName, toolCount: tools.length }, 'Schema fetched and cached');
+			// Only cache schemas for public spaces - private space schemas should always be fetched fresh
+			if (!metadata.private) {
+				schemaCache.set(spaceName, schema);
+				logger.debug({ spaceName, toolCount: tools.length }, 'Schema fetched and cached');
+			} else {
+				logger.debug({ spaceName, toolCount: tools.length }, 'Private space schema fetched (not cached)');
+			}
 
 			return { success: true, spaceName, schema, cached: false };
 		} finally {

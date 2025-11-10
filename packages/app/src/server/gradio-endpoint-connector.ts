@@ -216,18 +216,23 @@ async function isSpacePrivate(spaceName: string, hfToken?: string): Promise<bool
 
 			clearTimeout(timeoutId);
 
-			// Cache the result for future use
-			const metadata = {
-				_id: (info as { _id?: string })._id || `gradio_${spaceName.replace('/', '-')}`,
-				name: spaceName,
-				subdomain: (info as { subdomain?: string }).subdomain || '',
-				emoji: '🔧',
-				private: info.private,
-				sdk: (info as { sdk?: string }).sdk || 'gradio',
-				fetchedAt: Date.now(),
-			};
-
-			spaceMetadataCache.set(spaceName, metadata);
+			// Only cache public spaces - private spaces should always be fetched fresh
+			// This ensures auth-sensitive information is never stale
+			if (!info.private) {
+				const metadata = {
+					_id: (info as { _id?: string })._id || `gradio_${spaceName.replace('/', '-')}`,
+					name: spaceName,
+					subdomain: (info as { subdomain?: string }).subdomain || '',
+					emoji: '🔧',
+					private: info.private,
+					sdk: (info as { sdk?: string }).sdk || 'gradio',
+					fetchedAt: Date.now(),
+				};
+				spaceMetadataCache.set(spaceName, metadata);
+				logger.trace({ spaceName }, 'Public space metadata cached');
+			} else {
+				logger.trace({ spaceName }, 'Private space metadata not cached');
+			}
 
 			return info.private;
 		} finally {
