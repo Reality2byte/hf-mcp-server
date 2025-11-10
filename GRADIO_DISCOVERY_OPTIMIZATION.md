@@ -153,12 +153,40 @@ if (space?.runtime?.stage === 'RUNNING') {
 
 ## Cache Observability
 
-The cache provides built-in statistics tracking:
+### 1. Transport Metrics Dashboard
+
+**Cache metrics are now exposed in the transport metrics dashboard!**
+
+Access the metrics dashboard at:
+```
+http://localhost:3000/metrics
+```
+
+The dashboard includes a new **"Gradio Cache Metrics"** section showing:
+
+**Space Metadata Cache:**
+- Hits / Misses
+- Hit Rate (%)
+- ETag Revalidations (304 responses)
+- Cache Size (number of entries)
+
+**Schema Cache:**
+- Hits / Misses
+- Hit Rate (%)
+- Cache Size (number of entries)
+
+**Overall Statistics:**
+- Total Hits / Total Misses
+- Overall Hit Rate (%)
+
+### 2. Programmatic Access
+
+You can also access cache statistics programmatically:
 
 ```typescript
-import { getCacheStats, logCacheStats } from './utils/gradio-cache.js';
+import { getCacheStats, logCacheStats, formatCacheMetricsForAPI } from './utils/gradio-cache.js';
 
-// Get statistics
+// Get raw statistics
 const stats = getCacheStats();
 console.log(stats);
 // {
@@ -171,9 +199,90 @@ console.log(stats);
 //   schemaCacheSize: 10
 // }
 
+// Get formatted metrics (same as API)
+const metrics = formatCacheMetricsForAPI();
+console.log(metrics);
+// {
+//   spaceMetadata: {
+//     hits: 100,
+//     misses: 10,
+//     hitRate: 90.91,
+//     etagRevalidations: 5,
+//     cacheSize: 10
+//   },
+//   schemas: {
+//     hits: 90,
+//     misses: 20,
+//     hitRate: 81.82,
+//     cacheSize: 10
+//   },
+//   totalHits: 190,
+//   totalMisses: 30,
+//   overallHitRate: 86.36
+// }
+
 // Log statistics at debug level
 logCacheStats();
 ```
+
+### 3. API Endpoint
+
+Cache metrics are included in the metrics API response:
+
+```bash
+curl http://localhost:3000/api/metrics
+```
+
+Response includes:
+```json
+{
+  "transport": "streamableHttpJson",
+  "gradioCacheMetrics": {
+    "spaceMetadata": {
+      "hits": 100,
+      "misses": 10,
+      "hitRate": 90.91,
+      "etagRevalidations": 5,
+      "cacheSize": 10
+    },
+    "schemas": {
+      "hits": 90,
+      "misses": 20,
+      "hitRate": 81.82,
+      "cacheSize": 10
+    },
+    "totalHits": 190,
+    "totalMisses": 30,
+    "overallHitRate": 86.36
+  }
+}
+```
+
+### Monitoring in Production
+
+**Key Metrics to Watch:**
+
+1. **Overall Hit Rate** - Should be >80% for typical usage
+   - Low hit rate (<50%) indicates TTL too short or high churn
+   - Very high hit rate (>95%) might indicate TTL could be longer
+
+2. **ETag Revalidations** - Shows how many 304 responses we get
+   - High revalidations = effective cache even after TTL expiry
+   - Saves bandwidth and API quota
+
+3. **Cache Size** - Number of unique spaces cached
+   - Grows to match number of distinct spaces queried
+   - Monitor for unexpected growth (memory leak indicator)
+
+4. **Hit/Miss Ratio by Cache Type**
+   - Metadata cache should have higher hit rate (queried more)
+   - Schema cache hits are more valuable (larger responses)
+
+**Recommended Alerts:**
+
+- Overall hit rate drops below 50% → Investigate TTL settings
+- Cache size grows beyond expected count → Check for runaway queries
+- ETag revalidations = 0 → ETag support may be broken
 
 ## Key Improvements
 
