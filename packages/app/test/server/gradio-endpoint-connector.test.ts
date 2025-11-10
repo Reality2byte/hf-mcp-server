@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
 	parseSchemaResponse,
 	convertJsonSchemaToZod,
-	stripImageContentFromResult,
 } from '../../src/server/gradio-endpoint-connector.js';
+import { stripImageContentFromResult } from '../../src/server/utils/gradio-result-processor.js';
 import { z } from 'zod';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 

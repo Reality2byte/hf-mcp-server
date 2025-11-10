@@ -17,6 +17,8 @@ import { gradioMetrics, getMetricsSafeName } from './utils/gradio-metrics.js';
 import { createGradioToolName } from './utils/gradio-utils.js';
 import { createAudioPlayerUIResource } from './utils/ui/audio-player.js';
 import { spaceMetadataCache, CACHE_CONFIG } from './utils/gradio-cache.js';
+import { stripImageContentFromResult, extractUrlFromContent } from './utils/gradio-result-processor.js';
+import { callGradioTool, applyResultPostProcessing, type GradioToolCallOptions } from './utils/gradio-tool-caller.js';
 
 // Define types for JSON Schema
 interface JsonSchemaProperty {
@@ -55,52 +57,6 @@ interface EndpointConnection {
 interface RegisterRemoteToolsOptions {
 	stripImageContent?: boolean;
 	gradioWidgetUri?: string;
-}
-
-interface ImageFilterOptions {
-	enabled: boolean;
-	toolName: string;
-	outwardFacingName: string;
-}
-
-export function stripImageContentFromResult(
-	callResult: typeof CallToolResultSchema._type,
-	{ enabled, toolName, outwardFacingName }: ImageFilterOptions
-): typeof CallToolResultSchema._type {
-	if (!enabled) {
-		return callResult;
-	}
-
-	const content = callResult.content;
-	if (!Array.isArray(content) || content.length === 0) {
-		return callResult;
-	}
-
-	const filteredContent = content.filter((item) => {
-		if (!item || typeof item !== 'object') {
-			return true;
-		}
-
-		const candidate = item as { type?: unknown };
-		const typeValue = typeof candidate.type === 'string' ? candidate.type.toLowerCase() : undefined;
-		return typeValue !== 'image';
-	});
-
-	if (filteredContent.length === content.length) {
-		return callResult;
-	}
-
-	const removedCount = content.length - filteredContent.length;
-	logger.debug({ tool: toolName, outwardFacingName, removedCount }, 'Stripped image content from remote tool response');
-
-	if (filteredContent.length === 0) {
-		filteredContent.push({
-			type: 'text',
-			text: 'Image content omitted due to client configuration (no_image_content=true).',
-		});
-	}
-
-	return { ...callResult, content: filteredContent };
 }
 
 type EndpointConnectionResult =
@@ -450,43 +406,6 @@ function createToolDisplayInfo(connection: EndpointConnection, tool: Tool): { ti
 }
 
 /**
- * Extracts a URL from the result content if present
- */
-function extractUrlFromContent(content: unknown[]): string | undefined {
-	if (!Array.isArray(content) || content.length === 0) {
-		return undefined;
-	}
-
-	// Check each content item for a URL-like string
-	for (const item of content) {
-		if (!item || typeof item !== 'object') {
-			continue;
-		}
-
-		const candidate = item as { type?: string; text?: string; url?: string };
-
-		// Check for explicit url field
-		if (typeof candidate.url === 'string' && /^https?:\/\//i.test(candidate.url.trim())) {
-			return candidate.url.trim();
-		}
-
-		// Check for text field that looks like a URL
-		if (typeof candidate.text === 'string') {
-			let text = candidate.text.trim();
-
-			// Remove "Image URL:" or "Image URL :" prefix if present (case insensitive)
-			text = text.replace(/^image\s+url\s*:\s*/i, '');
-
-			if (/^https?:\/\//i.test(text)) {
-				return text;
-			}
-		}
-	}
-
-	return undefined;
-}
-
-/**
  * Creates the tool handler function
  */
 function createToolHandler(
@@ -515,205 +434,126 @@ function createToolHandler(
 		let notificationCount = 0;
 
 		try {
-			// Since we use schema fetch, we always need to create SSE connection for tool execution
+			// Validate SSE URL
 			if (!connection.sseUrl) {
 				throw new Error('No SSE URL available for tool execution');
 			}
-			logger.debug({ tool: tool.name }, 'Creating SSE connection for tool execution');
-			const activeClient = await createLazyConnection(connection.sseUrl, hfToken);
 
-			// Check if the client is requesting progress notifications
-			const progressToken = extra._meta?.progressToken;
-			const requestOptions: RequestOptions = {};
+			// Use unified Gradio tool caller for SSE connection, MCP call, and progress relay
+			const result = await callGradioTool(connection.sseUrl, tool.name, params, hfToken, extra);
 
-			if (progressToken !== undefined) {
-				logger.debug({ tool: tool.name, progressToken }, 'Progress notifications requested');
-
-				// Set up progress relay from remote tool to our client
-				requestOptions.onprogress = async (progress) => {
-					logger.trace({ tool: tool.name, progressToken, progress }, 'Relaying progress notification');
-
-					// Track notification count
-					notificationCount++;
-
-					// Relay the progress notification to our client
-					await extra.sendNotification({
-						method: 'notifications/progress',
-						params: {
-							progressToken,
-							progress: progress.progress,
-							total: progress.total,
-							message: progress.message,
-						},
-					});
-				};
-			}
-
+			// Calculate response size (rough estimate based on JSON serialization)
 			try {
-				const result = await activeClient.request(
-					{
-						method: 'tools/call',
-						params: {
-							name: tool.name,
-							arguments: params,
-							_meta: progressToken !== undefined ? { progressToken } : undefined,
-						},
-					},
-					CallToolResultSchema,
-					requestOptions
-				);
-
-				// Calculate response size (rough estimate based on JSON serialization)
-				try {
-					responseSizeBytes = JSON.stringify(result).length;
-				} catch {
-					// If serialization fails, don't worry about size
-				}
-
-				success = !result.isError;
-				if (result.isError) {
-					// Extract a meaningful error message from MCP content items
-					const first =
-						Array.isArray(result.content) && result.content.length > 0 ? (result.content[0] as unknown) : undefined;
-					let message: string | undefined;
-					if (typeof first === 'string') {
-						message = first;
-					} else if (first && typeof first === 'object') {
-						const obj = first as Record<string, unknown>;
-						if (typeof obj.text === 'string') {
-							message = obj.text;
-						} else if (typeof obj.message === 'string') {
-							message = obj.message;
-						} else if (typeof obj.error === 'string') {
-							message = obj.error;
-						} else {
-							try {
-								message = JSON.stringify(obj);
-							} catch {
-								message = String(obj);
-							}
-						}
-					} else if (first !== undefined) {
-						// Fallback for other primitive types
-						message = String(first);
-					}
-
-					error = message || 'Unknown error';
-
-					// Bubble up the error so upstream callers and metrics can track failures
-					throw new Error(error);
-				}
-
-				// Record success in gradio metrics when no error and no exception thrown
-				if (success) {
-					const metricsName = getMetricsSafeName(outwardFacingName);
-					gradioMetrics.recordSuccess(metricsName);
-				}
-
-				// Special handling: if the tool name contains "_mcpui" and it returns a single text URL,
-				// wrap it as an embedded audio player UI resource.
-				try {
-					const hasUiSuffix = tool.name.includes('_mcpui');
-					if (!result.isError && hasUiSuffix && Array.isArray(result.content) && result.content.length === 1) {
-						const item = result.content[0] as unknown as { type?: string; text?: string };
-						const text = typeof item?.text === 'string' ? item.text.trim() : '';
-						const looksLikeUrl = /^https?:\/\//i.test(text);
-
-						if ((item.type === 'text' || !item.type) && looksLikeUrl) {
-							let base64Audio: string | undefined;
-							const url = text;
-
-							try {
-								const resp = await fetch(url);
-								if (resp.ok) {
-									const buf = Buffer.from(await resp.arrayBuffer());
-									base64Audio = buf.toString('base64');
-								}
-							} catch (e) {
-								logger.debug(
-									{ tool: tool.name, url, error: e instanceof Error ? e.message : String(e) },
-									'Failed to inline audio; falling back to URL source'
-								);
-							}
-
-							const title = `${connection.name || 'MCP UI tool'}`;
-							const uriSafeName = (connection.name || 'audio').replace(/[^a-z0-9-_]+/gi, '-');
-							const uiUri: `ui://${string}` = `ui://huggingface-mcp/${uriSafeName}/${Date.now().toString()}`;
-
-							const uiResource = createAudioPlayerUIResource(uiUri, {
-								title,
-								base64Audio,
-								srcUrl: base64Audio ? undefined : url,
-								mimeType: `audio/wav`,
-							});
-
-							const decoratedResult = {
-								isError: false,
-								content: [result.content[0], uiResource],
-							} as typeof CallToolResultSchema._type;
-
-							const mcpuiResult = stripImageContentFromResult(decoratedResult, {
-								enabled: !!options.stripImageContent,
-								toolName: tool.name,
-								outwardFacingName,
-							});
-
-							// For openai-mcp client, check if result contains a URL and set structuredContent
-							if (sessionInfo?.clientInfo?.name == 'openai-mcp') {
-								const extractedUrl = extractUrlFromContent(mcpuiResult.content);
-								if (extractedUrl) {
-									logger.debug({ tool: tool.name, url: extractedUrl }, 'Setting structuredContent for _mcpui tool');
-									(
-										mcpuiResult as typeof CallToolResultSchema._type & {
-											structuredContent?: { url: string; spaceName?: string };
-										}
-									).structuredContent = {
-										url: extractedUrl,
-										spaceName: connection.name,
-									};
-								}
-							}
-
-							return mcpuiResult;
-						}
-					}
-				} catch (e) {
-					logger.debug(
-						{ tool: tool.name, error: e instanceof Error ? e.message : String(e) },
-						'MCP UI transform skipped'
-					);
-				}
-
-				// Strip image content first
-				const finalResult = stripImageContentFromResult(result, {
-					enabled: !!options.stripImageContent,
-					toolName: tool.name,
-					outwardFacingName,
-				});
-
-				// For openai-mcp client, check if result contains a URL and set structuredContent
-				if (sessionInfo?.clientInfo?.name == 'openai-mcp') {
-					const extractedUrl = extractUrlFromContent(finalResult.content);
-					if (extractedUrl) {
-						logger.debug({ tool: tool.name, url: extractedUrl }, 'Setting structuredContent with extracted URL');
-						(
-							finalResult as typeof CallToolResultSchema._type & {
-								structuredContent?: { url: string; spaceName?: string };
-							}
-						).structuredContent = {
-							url: extractedUrl,
-							spaceName: connection.name,
-						};
-					}
-				}
-
-				return finalResult;
-			} catch (callError) {
-				// Handle request errors
-				success = false;
-				error = callError instanceof Error ? callError.message : String(callError);
-				throw callError;
+				responseSizeBytes = JSON.stringify(result).length;
+			} catch {
+				// If serialization fails, don't worry about size
 			}
+
+			success = !result.isError;
+			if (result.isError) {
+				// Extract a meaningful error message from MCP content items
+				const first =
+					Array.isArray(result.content) && result.content.length > 0 ? (result.content[0] as unknown) : undefined;
+				let message: string | undefined;
+				if (typeof first === 'string') {
+					message = first;
+				} else if (first && typeof first === 'object') {
+					const obj = first as Record<string, unknown>;
+					if (typeof obj.text === 'string') {
+						message = obj.text;
+					} else if (typeof obj.message === 'string') {
+						message = obj.message;
+					} else if (typeof obj.error === 'string') {
+						message = obj.error;
+					} else {
+						try {
+							message = JSON.stringify(obj);
+						} catch {
+							message = String(obj);
+						}
+					}
+				} else if (first !== undefined) {
+					// Fallback for other primitive types
+					message = String(first);
+				}
+
+				error = message || 'Unknown error';
+
+				// Bubble up the error so upstream callers and metrics can track failures
+				throw new Error(error);
+			}
+
+			// Record success in gradio metrics when no error and no exception thrown
+			if (success) {
+				const metricsName = getMetricsSafeName(outwardFacingName);
+				gradioMetrics.recordSuccess(metricsName);
+			}
+
+			// Prepare post-processing options
+			const postProcessOptions: GradioToolCallOptions = {
+				stripImageContent: options.stripImageContent,
+				toolName: tool.name,
+				outwardFacingName,
+				sessionInfo,
+				gradioWidgetUri: options.gradioWidgetUri,
+				spaceName: connection.name,
+			};
+
+			// Special handling: if the tool name contains "_mcpui" and it returns a single text URL,
+			// wrap it as an embedded audio player UI resource.
+			try {
+				const hasUiSuffix = tool.name.includes('_mcpui');
+				if (!result.isError && hasUiSuffix && Array.isArray(result.content) && result.content.length === 1) {
+					const item = result.content[0] as unknown as { type?: string; text?: string };
+					const text = typeof item?.text === 'string' ? item.text.trim() : '';
+					const looksLikeUrl = /^https?:\/\//i.test(text);
+
+					if ((item.type === 'text' || !item.type) && looksLikeUrl) {
+						let base64Audio: string | undefined;
+						const url = text;
+
+						try {
+							const resp = await fetch(url);
+							if (resp.ok) {
+								const buf = Buffer.from(await resp.arrayBuffer());
+								base64Audio = buf.toString('base64');
+							}
+						} catch (e) {
+							logger.debug(
+								{ tool: tool.name, url, error: e instanceof Error ? e.message : String(e) },
+								'Failed to inline audio; falling back to URL source'
+							);
+						}
+
+						const title = `${connection.name || 'MCP UI tool'}`;
+						const uriSafeName = (connection.name || 'audio').replace(/[^a-z0-9-_]+/gi, '-');
+						const uiUri: `ui://${string}` = `ui://huggingface-mcp/${uriSafeName}/${Date.now().toString()}`;
+
+						const uiResource = createAudioPlayerUIResource(uiUri, {
+							title,
+							base64Audio,
+							srcUrl: base64Audio ? undefined : url,
+							mimeType: `audio/wav`,
+						});
+
+						const decoratedResult = {
+							isError: false,
+							content: [result.content[0], uiResource],
+						} as typeof CallToolResultSchema._type;
+
+						// Apply post-processing to the decorated result
+						return applyResultPostProcessing(decoratedResult, postProcessOptions);
+					}
+				}
+			} catch (e) {
+				logger.debug(
+					{ tool: tool.name, error: e instanceof Error ? e.message : String(e) },
+					'MCP UI transform skipped'
+				);
+			}
+
+			// Apply standard post-processing (image stripping + OpenAI structured content)
+			return applyResultPostProcessing(result, postProcessOptions);
 		} catch (err) {
 			// Ensure meaningful error output instead of [object Object]
 			const errObj =
