@@ -19,6 +19,11 @@ describe('isGradioTool', () => {
 			expect(isGradioTool('grp10_test')).toBe(true);
 		});
 
+		it('should detect special Gradio tools', () => {
+			expect(isGradioTool('gradio_files')).toBe(true);
+			expect(isGradioTool('dynamic_space')).toBe(true);
+		});
+
 		it('should detect real-world Gradio tool names', () => {
 			expect(isGradioTool('gr1_evalstate_flux1_schnell')).toBe(true);
 			expect(isGradioTool('grp3_my_private_space')).toBe(true);
