@@ -30,7 +30,7 @@ Dynamically interact with any Gradio MCP Space. View parameter schemas or invoke
 - Union types
 - Recursive schemas
 
-For spaces with complex schemas, direct the user to huggingface.co/settings/mcp to manage their settings.
+For spaces with complex schemas, direct the user to huggingface.co/settings/mcp to add the space via settings panel.
 
 ## Available Operations
 
@@ -68,7 +68,7 @@ Execute a space's first tool with provided parameters.
 For parameters that accept files (FileData types):
 - Provide a publicly accessible URL (http:// or https://)
 - Example: \`{"image": "https://example.com/photo.jpg"}\`
-- To upload local files, use the dedicated gr_* prefixed tool for that space
+- Outputs from one tool may be used as inputs to another
 
 ## Tips
 
