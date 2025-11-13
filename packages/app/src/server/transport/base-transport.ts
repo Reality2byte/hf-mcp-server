@@ -9,6 +9,7 @@ import { whoAmI, HubApiError, type WhoAmI } from '@huggingface/hub';
 import { extractAuthBouquetAndMix } from '../utils/auth-utils.js';
 import { getMetricsSafeName } from '../utils/gradio-metrics.js';
 import { isGradioTool } from '../utils/gradio-utils.js';
+import { GRADIO_FILES_TOOL_CONFIG } from '@llmindset/hf-mcp';
 
 /**
  * Result returned by ServerFactory containing the server instance and optional user details
@@ -269,6 +270,13 @@ export abstract class BaseTransport {
 
 		// For tools/call, check if it's a Gradio tool using the dedicated method
 		if (methodName === 'tools/call') {
+			const toolName = body?.params?.name;
+
+			// Special case: gradio_files needs Gradio setup (for registration) but not streaming
+			if (toolName === GRADIO_FILES_TOOL_CONFIG.name) {
+				return false; // Don't skip Gradio setup
+			}
+
 			// Return true (skip) for non-Gradio tools, false (don't skip) for Gradio tools
 			return !this.isGradioToolCall(requestBody);
 		}
