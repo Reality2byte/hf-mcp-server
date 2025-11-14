@@ -47,15 +47,6 @@ Find MCP-enabled Spaces for invocation based on task-focused searches.
 }
 \`\`\`
 
-**Example with task hint:**
-\`\`\`json
-{
-  "operation": "discover",
-  "search_query": "FLUX",
-  "task_hint": "text-to-image generation"
-}
-\`\`\`
-
 ### view_parameters
 Display the parameter schema for a space's first tool.
 
@@ -200,7 +191,6 @@ Call this tool with no operation for full usage instructions.`,
 	private async handleDiscover(params: SpaceArgs): Promise<ToolResult> {
 		return await discoverSpaces(
 			params.search_query,
-			params.task_hint,
 			params.limit,
 			this.hfToken
 		);

@@ -71,15 +71,13 @@ Try:
 /**
  * Discovers MCP-enabled Spaces based on search criteria
  *
- * @param searchQuery - The search query (task-focused recommended)
- * @param taskHint - Optional task category hint to refine the search
+ * @param searchQuery - The search query or task category
  * @param limit - Maximum number of results to return
  * @param hfToken - Optional HuggingFace API token
  * @returns Formatted search results
  */
 export async function discoverSpaces(
 	searchQuery?: string,
-	taskHint?: string,
 	limit: number = DEFAULT_RESULTS_LIMIT,
 	hfToken?: string
 ): Promise<ToolResult> {
@@ -93,15 +91,10 @@ export async function discoverSpaces(
 	}
 
 	try {
-		// Construct the final query, optionally incorporating task hint
-		const finalQuery = taskHint
-			? `${searchQuery} ${taskHint}`.trim()
-			: searchQuery;
-
 		// Use SpaceSearchTool to search for MCP-enabled spaces only
 		const searchTool = new SpaceSearchTool(hfToken);
 		const { results, totalCount } = await searchTool.search(
-			finalQuery,
+			searchQuery,
 			limit,
 			true // mcp = true (only MCP-enabled spaces)
 		);

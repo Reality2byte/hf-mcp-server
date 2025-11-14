@@ -22,13 +22,7 @@ export const spaceArgsSchema = z.object({
 		.string()
 		.optional()
 		.describe(
-			'For discover operation: Search query string or task category (e.g. "Image Generation", "OCR") to find MCP-enabled Spaces. Call with blank query to see task hints.'
-		),
-	task_hint: z
-		.string()
-		.optional()
-		.describe(
-			'For discover operation: Optional task category hint (e.g., "text generation", "image classification", "video generation") to guide the search'
+			'For discover operation: Search query or task category (e.g. "Image Generation", "OCR", "FLUX image generation") to find MCP-enabled Spaces. Call with blank query to see task hints.'
 		),
 	limit: z.number().optional().describe('For discover operation: Maximum number of results to return (default: 10)'),
 });
