@@ -47,9 +47,7 @@ To discover MCP-enabled Spaces for a specific task, call this operation with a s
 
 	// Header for search results
 	RESULTS_HEADER: (query: string, showing: number, total: number) => {
-		const showingText = showing < total
-			? `Showing ${showing} of ${total} results`
-			: `All ${showing} results`;
+		const showingText = showing < total ? `Showing ${showing} of ${total} results` : `All ${showing} results`;
 		return `# MCP Space Discovery Results for "${query}" (${showingText})
 
 These MCP-enabled Spaces can be invoked using the \`dynamic_space\` tool.
@@ -115,12 +113,9 @@ export async function discoverSpaces(
 /**
  * Formats discover results as a markdown table
  * Note: Author column is omitted as it's superfluous for invocation purposes
+ * Duplication is OK for the mean time; space_search will be rolled in to a general tool
  */
-function formatDiscoverResults(
-	query: string,
-	results: SpaceSearchResult[],
-	totalCount: number
-): ToolResult {
+function formatDiscoverResults(query: string, results: SpaceSearchResult[], totalCount: number): ToolResult {
 	if (results.length === 0) {
 		return {
 			formatted: DISCOVER_PROMPTS.NO_RESULTS(query),
@@ -141,9 +136,7 @@ function formatDiscoverResults(
 		const description = result.shortDescription || result.ai_short_description || 'No description';
 		const id = result.id || '';
 		const emoji = result.emoji ? escapeMarkdown(result.emoji) + ' ' : '';
-		const relevance = result.semanticRelevancyScore
-			? (result.semanticRelevancyScore * 100).toFixed(1) + '%'
-			: 'N/A';
+		const relevance = result.semanticRelevancyScore ? (result.semanticRelevancyScore * 100).toFixed(1) + '%' : 'N/A';
 
 		markdown +=
 			`| ${emoji}[${escapeMarkdown(title)}](https://hf.co/spaces/${id}) ` +

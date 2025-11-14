@@ -14,7 +14,7 @@ export * from './types.js';
  */
 const USAGE_INSTRUCTIONS = `# Gradio Space Interaction
 
-Dynamically interact with any Gradio MCP Space. Discover MCP-enabled spaces, view parameter schemas, or invoke spaces with custom parameters.
+Dynamically interact with any Gradio MCP Space. Discover dynamic spaces, view space parameter schemas, and invoke spaces.
 
 ## Supported Schema Types
 
@@ -25,18 +25,12 @@ Dynamically interact with any Gradio MCP Space. Discover MCP-enabled spaces, vie
 - Shallow objects (one level deep)
 - FileData (as URL strings)
 
-❌ **Complex types** (not supported):
-- Deeply nested objects (2+ levels)
-- Arrays of objects
-- Union types
-- Recursive schemas
-
-For spaces with complex schemas, direct the user to huggingface.co/settings/mcp to add the space via settings panel.
+To use spaces with complex schemas, add them from  huggingface.co/settings/mcp.
 
 ## Available Operations
 
 ### discover
-Find MCP-enabled Spaces for invocation based on task-focused searches.
+Find MCP-enabled Spaces for available for invocation based on task-focused or semantic searches.
 
 **Example:**
 \`\`\`json
@@ -72,10 +66,9 @@ Execute a space's first tool with provided parameters.
 
 ## Workflow
 
-1. **Discover spaces** - Use \`discover\` to find MCP-enabled spaces for your task
-2. **Inspect parameters** - Use \`view_parameters\` to see what a space accepts
-3. **Invoke the space** - Use \`invoke\` with the required parameters
-4. **Review results** - Get formatted output (text, images, resources)
+1. **Discover Spaces** - Use \`discover\` to find MCP-enabled spaces for your task
+2. **Inspect Parameters** - Use \`view_parameters\` to see what a space accepts
+3. **Invoke the Space** - Use \`invoke\` with the required parameters
 
 ## File Handling
 
@@ -99,8 +92,7 @@ For parameters that accept files (FileData types):
 export const DYNAMIC_SPACE_TOOL_CONFIG = {
 	name: 'dynamic_space',
 	description:
-		'Dynamically interact with Gradio MCP Spaces. Discover MCP-enabled spaces, view parameter schemas, or invoke spaces with custom parameters. ' +
-		'Supports simple parameter types (strings, numbers, booleans, arrays, enums, shallow objects). ' +
+		'Discover (semantic/task search), inspect (view parameter schema) and dynamically invoke Gradio MCP Spaces to perform various ML Tasks. ' +
 		'Call with no operation for full usage instructions.',
 	schema: spaceArgsSchema,
 	annotations: {
@@ -189,11 +181,7 @@ Call this tool with no operation for full usage instructions.`,
 	 * Handle discover operation
 	 */
 	private async handleDiscover(params: SpaceArgs): Promise<ToolResult> {
-		return await discoverSpaces(
-			params.search_query,
-			params.limit,
-			this.hfToken
-		);
+		return await discoverSpaces(params.search_query, params.limit, this.hfToken);
 	}
 
 	/**
