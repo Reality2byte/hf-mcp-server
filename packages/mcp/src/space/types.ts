@@ -10,14 +10,24 @@ export type OperationName = (typeof OPERATION_NAMES)[number];
  * Zod schema for operation arguments
  */
 export const spaceArgsSchema = z.object({
-	operation: z
-		.enum(OPERATION_NAMES)
+	operation: z.enum(OPERATION_NAMES).optional().describe('Operation to execute.'),
+	space_name: z
+		.string()
 		.optional()
-		.describe('Operation to execute. Valid values: "discover", "view_parameters", "invoke"'),
-	space_name: z.string().optional().describe('The Hugging Face space ID (format: "username/space-name"). Required for view_parameters and invoke operations.'),
+		.describe(
+			'The Hugging Face space ID (format: "username/space-name"). Required for view_parameters and invoke operations.'
+		),
 	parameters: z.string().optional().describe('For invoke operation: JSON object string of parameters'),
-	search_query: z.string().optional().describe('For discover operation: Search query string to find MCP-enabled Spaces'),
-	task_hint: z.string().optional().describe('For discover operation: Optional task category hint (e.g., "text generation", "image classification", "video generation") to guide the search'),
+	search_query: z
+		.string()
+		.optional()
+		.describe('For discover operation: Search query string to find MCP-enabled Spaces'),
+	task_hint: z
+		.string()
+		.optional()
+		.describe(
+			'For discover operation: Optional task category hint (e.g., "text generation", "image classification", "video generation") to guide the search'
+		),
 	limit: z.number().optional().describe('For discover operation: Maximum number of results to return (default: 10)'),
 });
 
