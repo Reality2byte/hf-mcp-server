@@ -10,40 +10,40 @@ const DEFAULT_RESULTS_LIMIT = 10;
  * These prompts can be easily tweaked to adjust the search behavior
  */
 const DISCOVER_PROMPTS = {
-	// Prefix added to search queries to guide task-focused searches
-	TASK_FOCUSED_HINT: 'Find MCP-enabled Gradio Spaces for',
+	// Task hints shown when called with blank query
+	TASK_HINTS: `Here are some examples of tasks that dynamic spaces can perform:
 
-	// Guidance message when no search query is provided
-	MISSING_QUERY_HELP: `Error: Missing required parameter: "search_query"
+- Image Generation
+- Video Generation
+- Text Generation
+- Visual QA
+- Language Translation
+- Speech Synthesis
+- 3D Modeling
+- Object Detection
+- Text Analysis
+- Image Editing
+- Code Generation
+- Question Answering
+- Data Visualization
+- Voice Cloning
+- Background Removal
+- OCR
+- Image Captioning
+- Sentiment Analysis
+- Music Generation
+- Style Transfer
 
-The "discover" operation finds MCP-enabled Spaces that can be invoked using the dynamic_space tool.
+To discover MCP-enabled Spaces for a specific task, call this operation with a search query:
 
-**Example - Task-focused search:**
+**Example:**
 \`\`\`json
 {
   "operation": "discover",
   "search_query": "image generation",
   "limit": 10
 }
-\`\`\`
-
-**Example - With task hint:**
-\`\`\`json
-{
-  "operation": "discover",
-  "search_query": "FLUX",
-  "task_hint": "text-to-image generation"
-}
-\`\`\`
-
-**Tip:** Focus your search on specific tasks like:
-- "text generation"
-- "image generation"
-- "video generation"
-- "object detection"
-- "image classification"
-- "text-to-speech"
-- "speech-to-text"`,
+\`\`\``,
 
 	// Header for search results
 	RESULTS_HEADER: (query: string, showing: number, total: number) => {
@@ -83,13 +83,12 @@ export async function discoverSpaces(
 	limit: number = DEFAULT_RESULTS_LIMIT,
 	hfToken?: string
 ): Promise<ToolResult> {
-	// Validate required parameters
+	// Return task hints when called with blank query
 	if (!searchQuery || searchQuery.trim() === '') {
 		return {
-			formatted: DISCOVER_PROMPTS.MISSING_QUERY_HELP,
+			formatted: DISCOVER_PROMPTS.TASK_HINTS,
 			totalResults: 0,
 			resultsShared: 0,
-			isError: true,
 		};
 	}
 

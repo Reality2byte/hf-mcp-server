@@ -21,7 +21,7 @@ export const spaceArgsSchema = z.object({
 	search_query: z
 		.string()
 		.optional()
-		.describe('For discover operation: Search query string to find MCP-enabled Spaces'),
+		.describe('For discover operation: Search query string to find MCP-enabled Spaces. Call with blank query to see task hints.'),
 	task_hint: z
 		.string()
 		.optional()
