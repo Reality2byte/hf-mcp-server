@@ -162,11 +162,9 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			},
 			{
 				instructions:
-					"You have tools for searching the Hugging Face Hub. arXiv paper id's are often " +
+					"You have tools for using the Hugging Face Hub. arXiv paper id's are often " +
 					'used as references between datasets, models and papers. There are over 100 tags in use, ' +
 					"common tags include 'Text Generation', 'Transformers', 'Image Classification' and so on.\n" +
-					"The User has access to 'Prompts' that provide ways to summarise various types of " +
-					'Hugging Face hub content, and you may guide them to check this feature. ' +
 					userInfo,
 			}
 		);
