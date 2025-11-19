@@ -255,13 +255,17 @@ export function StatefulTransportMetrics({ metrics }: StatefulTransportMetricsPr
 							<TableRow>
 								<TableCell className="font-medium text-sm">Total Connections</TableCell>
 								<TableCell className="text-sm font-mono">{metrics.connections.total}</TableCell>
-								<TableCell className="font-medium text-sm">Unique IPs</TableCell>
-								<TableCell className="text-sm font-mono">{metrics.connections.uniqueIps ?? 0}</TableCell>
+								<TableCell className="font-medium text-sm">Requests per Minute (tot/3hr/hr)</TableCell>
+								<TableCell className="text-sm font-mono">
+									{metrics.requests.averagePerMinute}/{metrics.requests.last3Hours}/{metrics.requests.lastHour}
+								</TableCell>
 							</TableRow>
 							<TableRow>
-								<TableCell className="font-medium text-sm">Requests per Minute (tot/3hr/hr)</TableCell>
-								<TableCell className="text-sm font-mono" colSpan={3}>
-									{metrics.requests.averagePerMinute}/{metrics.requests.last3Hours}/{metrics.requests.lastHour}
+								<TableCell className="font-medium text-sm">Unique IPs</TableCell>
+								<TableCell className="text-sm font-mono">{metrics.connections.uniqueIps ?? 0}</TableCell>
+								<TableCell className="font-medium text-sm">Client/Server Errors (4xx/5xx)</TableCell>
+								<TableCell className="text-sm font-mono">
+									{metrics.errors.expected}/{metrics.errors.unexpected}
 								</TableCell>
 							</TableRow>
 							{metrics.sessionLifecycle && (
@@ -272,12 +276,6 @@ export function StatefulTransportMetrics({ metrics }: StatefulTransportMetricsPr
 									</TableCell>
 								</TableRow>
 							)}
-							<TableRow>
-								<TableCell className="font-medium text-sm">Client Errors (4xx)</TableCell>
-								<TableCell className="text-sm font-mono">{metrics.errors.expected}</TableCell>
-								<TableCell className="font-medium text-sm">Server Errors (5xx)</TableCell>
-								<TableCell className="text-sm font-mono">{metrics.errors.unexpected}</TableCell>
-							</TableRow>
 							{metrics.pings && (
 								<TableRow>
 									<TableCell className="font-medium text-sm">Pings Sent</TableCell>
