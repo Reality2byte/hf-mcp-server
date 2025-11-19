@@ -266,6 +266,7 @@ export function logSystemEvent(
 		clientVersion?: string;
 		requestJson?: unknown;
 		capabilities?: unknown;
+		ipAddress?: string;
 	}
 ): void {
 	if (!systemLogger) {
@@ -298,6 +299,9 @@ export function logSystemEvent(
 			name: options?.clientName || capabilitiesName || null,
 			version: options?.clientVersion || capabilitiesVersion || null,
 			authorized: options?.isAuthenticated ?? false, // renamed from isAuthenticated
+
+			// IP address for session tracking
+			ipAddress: options?.ipAddress || null,
 
 			// Full request data for context
 			capabilities: options?.capabilities ? JSON.stringify(options.capabilities) : null,

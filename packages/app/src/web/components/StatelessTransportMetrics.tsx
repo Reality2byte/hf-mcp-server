@@ -180,10 +180,12 @@ export function StatelessTransportMetrics({ metrics }: StatelessTransportMetrics
 								</TableCell>
 							</TableRow>
 							<TableRow>
-								<TableCell className="font-medium text-sm">Client Errors (4xx)</TableCell>
-								<TableCell className="text-sm font-mono">{metrics.errors.expected}</TableCell>
-								<TableCell className="font-medium text-sm">Server Errors (5xx)</TableCell>
-								<TableCell className="text-sm font-mono">{metrics.errors.unexpected}</TableCell>
+								<TableCell className="font-medium text-sm">Unique IPs</TableCell>
+								<TableCell className="text-sm font-mono">{metrics.connections.uniqueIps ?? 0}</TableCell>
+								<TableCell className="font-medium text-sm">Client/Server Errors (4xx/5xx)</TableCell>
+								<TableCell className="text-sm font-mono">
+									{metrics.errors.expected}/{metrics.errors.unexpected}
+								</TableCell>
 							</TableRow>
 							{(metrics.staticPageHits200 !== undefined || metrics.staticPageHits405 !== undefined) && (
 								<TableRow>

@@ -22,6 +22,7 @@ type SessionData = {
 	connectionStatus?: 'Connected' | 'Distressed' | 'Disconnected';
 	pingFailures?: number;
 	lastPingAttempt?: string;
+	ipAddress?: string;
 };
 
 /**
@@ -171,6 +172,15 @@ export function StatefulTransportMetrics({ metrics }: StatefulTransportMetricsPr
 			header: createSortableHeader('Last Activity'),
 			cell: ({ row }) => <div className="text-sm">{formatRelativeTime(row.getValue<string>('lastActivity'))}</div>,
 		},
+		{
+			accessorKey: 'ipAddress',
+			header: createSortableHeader('IP Address'),
+			cell: ({ row }) => (
+				<div className="font-mono text-sm" title={row.getValue<string>('ipAddress') || 'Unknown'}>
+					{row.getValue<string>('ipAddress') || '-'}
+				</div>
+			),
+		},
 	];
 
 	return (
@@ -250,6 +260,14 @@ export function StatefulTransportMetrics({ metrics }: StatefulTransportMetricsPr
 									{metrics.requests.averagePerMinute}/{metrics.requests.last3Hours}/{metrics.requests.lastHour}
 								</TableCell>
 							</TableRow>
+							<TableRow>
+								<TableCell className="font-medium text-sm">Unique IPs</TableCell>
+								<TableCell className="text-sm font-mono">{metrics.connections.uniqueIps ?? 0}</TableCell>
+								<TableCell className="font-medium text-sm">Client/Server Errors (4xx/5xx)</TableCell>
+								<TableCell className="text-sm font-mono">
+									{metrics.errors.expected}/{metrics.errors.unexpected}
+								</TableCell>
+							</TableRow>
 							{metrics.sessionLifecycle && (
 								<TableRow>
 									<TableCell className="font-medium text-sm">Sessions New/Res-fail/Del</TableCell>
@@ -258,12 +276,6 @@ export function StatefulTransportMetrics({ metrics }: StatefulTransportMetricsPr
 									</TableCell>
 								</TableRow>
 							)}
-							<TableRow>
-								<TableCell className="font-medium text-sm">Client Errors (4xx)</TableCell>
-								<TableCell className="text-sm font-mono">{metrics.errors.expected}</TableCell>
-								<TableCell className="font-medium text-sm">Server Errors (5xx)</TableCell>
-								<TableCell className="text-sm font-mono">{metrics.errors.unexpected}</TableCell>
-							</TableRow>
 							{metrics.pings && (
 								<TableRow>
 									<TableCell className="font-medium text-sm">Pings Sent</TableCell>

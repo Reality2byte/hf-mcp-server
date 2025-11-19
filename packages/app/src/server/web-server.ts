@@ -319,6 +319,7 @@ export class WebServer {
 						connectionStatus,
 						pingFailures: session.pingFailures || 0,
 						lastPingAttempt: session.lastPingAttempt?.toISOString(),
+						ipAddress: session.ipAddress,
 					};
 				});
 
