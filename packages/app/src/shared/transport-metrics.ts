@@ -75,6 +75,7 @@ export interface ClientMetrics {
 	isConnected: boolean;
 	activeConnections: number;
 	totalConnections: number;
+	toolCallCount: number;
 }
 
 /**
@@ -224,6 +225,7 @@ export interface TransportMetricsResponse {
 		isConnected: boolean;
 		activeConnections: number;
 		totalConnections: number;
+		toolCallCount: number;
 	}>;
 
 	sessions: SessionData[];
@@ -525,6 +527,7 @@ export class MetricsCounter {
 				isConnected: true,
 				activeConnections: 1,
 				totalConnections: 1,
+				toolCallCount: 0,
 			};
 			this.metrics.clients.set(clientKey, clientMetrics);
 		} else {
@@ -608,6 +611,15 @@ export class MetricsCounter {
 			}
 
 			clientMethodMetrics.count++;
+
+			// If this is a tool call, increment the client's tool call count
+			if (method.startsWith('tools/call:')) {
+				const clientKey = getClientKey(clientInfo.name, clientInfo.version);
+				const clientMetrics = this.metrics.clients.get(clientKey);
+				if (clientMetrics) {
+					clientMetrics.toolCallCount++;
+				}
+			}
 		}
 
 		if (isError) {
