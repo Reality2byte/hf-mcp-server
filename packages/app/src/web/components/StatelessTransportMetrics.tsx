@@ -18,6 +18,7 @@ type ClientData = {
 	lastSeen: string;
 	firstSeen: string;
 	toolCallCount: number;
+	newIpCount: number;
 };
 
 /**
@@ -107,6 +108,11 @@ export function StatelessTransportMetrics({ metrics }: StatelessTransportMetrics
 			accessorKey: 'toolCallCount',
 			header: createSortableHeader('Tool Calls', 'right'),
 			cell: ({ row }) => <div className="text-right font-mono text-sm">{row.getValue<number>('toolCallCount')}</div>,
+		},
+		{
+			accessorKey: 'newIpCount',
+			header: createSortableHeader('New IPs', 'right'),
+			cell: ({ row }) => <div className="text-right font-mono text-sm">{row.getValue<number>('newIpCount')}</div>,
 		},
 		{
 			accessorKey: 'isConnected',

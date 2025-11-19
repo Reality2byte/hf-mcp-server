@@ -269,6 +269,9 @@ export class StatelessHttpTransport extends BaseTransport {
 				this.associateSessionWithClient(extractedClientInfo);
 				this.updateClientActivity(extractedClientInfo);
 
+				// Track IP address for this client
+				this.trackClientIpAddress(ipAddress, extractedClientInfo);
+
 				// Update analytics session with client info
 				if (this.analyticsMode && sessionId) {
 					this.updateAnalyticsSessionClientInfo(sessionId, extractedClientInfo);

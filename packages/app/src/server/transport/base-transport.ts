@@ -173,6 +173,13 @@ export abstract class BaseTransport {
 	}
 
 	/**
+	 * Track an IP address for a specific client
+	 */
+	protected trackClientIpAddress(ipAddress: string | undefined, clientInfo?: { name: string; version: string }): void {
+		this.metrics.trackClientIpAddress(ipAddress, clientInfo);
+	}
+
+	/**
 	 * Extract IP address from request headers
 	 * Handles x-forwarded-for, x-real-ip, and direct IP
 	 */
@@ -454,6 +461,11 @@ export abstract class StatefulTransport<TSession extends BaseSession = BaseSessi
 					session.metadata.clientInfo = clientInfo;
 					// Associate session with real client for metrics tracking
 					this.metrics.associateSessionWithClient(clientInfo);
+
+					// Track IP address for this client if available
+					if (session.metadata.ipAddress) {
+						this.trackClientIpAddress(session.metadata.ipAddress, clientInfo);
+					}
 				}
 
 				if (clientCapabilities) {
