@@ -147,6 +147,11 @@ export class StatelessHttpTransport extends BaseTransport {
 		// Check HF token validity if present
 		const headers = req.headers as Record<string, string>;
 		extractQueryParamsToHeaders(req, headers);
+
+		// Extract IP address for tracking
+		const ipAddress = this.extractIpAddress(req.headers);
+		this.trackIpAddress(ipAddress);
+
 		// Extract method name for tracking using shared utility
 		const requestBody = req.body as
 			| { method?: string; params?: { clientInfo?: unknown; capabilities?: unknown; name?: string } }
@@ -168,7 +173,7 @@ export class StatelessHttpTransport extends BaseTransport {
 			if (requestBody?.method === 'initialize') {
 				// Create new session
 				sessionId = randomUUID();
-				this.createAnalyticsSession(sessionId, authResult.userIdentified);
+				this.createAnalyticsSession(sessionId, authResult.userIdentified, ipAddress);
 
 				// Add session ID to response headers
 				res.setHeader('Mcp-Session-Id', sessionId);
@@ -492,7 +497,7 @@ export class StatelessHttpTransport extends BaseTransport {
 	}
 
 	// Analytics mode methods
-	private createAnalyticsSession(sessionId: string, isAuthenticated: boolean): void {
+	private createAnalyticsSession(sessionId: string, isAuthenticated: boolean, ipAddress?: string): void {
 		const session: AnalyticsSession = {
 			transport: null,
 			server: null, // Server is null in analytics mode
@@ -503,6 +508,7 @@ export class StatelessHttpTransport extends BaseTransport {
 				requestCount: 1,
 				isAuthenticated,
 				capabilities: {},
+				ipAddress,
 			},
 		};
 

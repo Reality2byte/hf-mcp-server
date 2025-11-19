@@ -59,6 +59,7 @@ export interface SessionMetadata {
 	};
 	pingFailures?: number;
 	lastPingAttempt?: Date;
+	ipAddress?: string;
 }
 
 /**
@@ -162,6 +163,32 @@ export abstract class BaseTransport {
 	 */
 	protected trackNewConnection(): void {
 		this.metrics.trackNewConnection();
+	}
+
+	/**
+	 * Track an IP address for unique IP metrics
+	 */
+	protected trackIpAddress(ipAddress: string | undefined): void {
+		this.metrics.trackIpAddress(ipAddress);
+	}
+
+	/**
+	 * Extract IP address from request headers
+	 * Handles x-forwarded-for and direct IP
+	 */
+	protected extractIpAddress(headers: Record<string, string | string[] | undefined>): string | undefined {
+		const forwardedFor = headers['x-forwarded-for'];
+		if (forwardedFor) {
+			// x-forwarded-for can be a comma-separated list, take the first one (original client)
+			const ip = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
+			return ip?.split(',')[0]?.trim();
+		}
+		// Fallback to other headers if available
+		const realIp = headers['x-real-ip'];
+		if (realIp) {
+			return Array.isArray(realIp) ? realIp[0] : realIp;
+		}
+		return undefined;
 	}
 
 	/**

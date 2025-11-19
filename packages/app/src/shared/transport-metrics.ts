@@ -15,6 +15,7 @@ export interface TransportMetrics {
 		anonymous: number;
 		unauthorized?: number; // 401 errors
 		cleaned?: number; // Only for stateful transports
+		uniqueIps?: number; // Unique IP addresses that have connected
 	};
 
 	// Session lifecycle metrics (only for stateful transports)
@@ -155,6 +156,7 @@ export interface SessionData {
 	connectionStatus?: 'Connected' | 'Distressed' | 'Disconnected';
 	pingFailures?: number;
 	lastPingAttempt?: string; // ISO date string
+	ipAddress?: string;
 }
 
 export interface TransportMetricsResponse {
@@ -415,12 +417,14 @@ export class MetricsCounter {
 	private rollingMinute: RollingWindowCounter;
 	private rollingHour: RollingWindowCounter;
 	private rolling3Hours: RollingWindowCounter;
+	private uniqueIps: Set<string>;
 
 	constructor() {
 		this.metrics = createEmptyMetrics();
 		this.rollingMinute = new RollingWindowCounter(1);
 		this.rollingHour = new RollingWindowCounter(60);
 		this.rolling3Hours = new RollingWindowCounter(180);
+		this.uniqueIps = new Set();
 	}
 
 	/**
@@ -430,15 +434,18 @@ export class MetricsCounter {
 		// Calculate rates (requests per minute) for each window
 		// Note: All values represent "requests per minute" calculated over their respective windows
 		this.metrics.requests.lastMinute = this.rollingMinute.getCount(); // Requests in last 1 minute (already per minute)
-		
+
 		// For longer windows, divide total count by window size to get per-minute rate
 		const hourCount = this.rollingHour.getCount();
 		const threeHourCount = this.rolling3Hours.getCount();
-		
+
 		// Calculate per-minute rates for the longer windows
 		this.metrics.requests.lastHour = Math.round((hourCount / 60) * 100) / 100; // Requests per minute over last hour
 		this.metrics.requests.last3Hours = Math.round((threeHourCount / 180) * 100) / 100; // Requests per minute over last 3 hours
-			
+
+		// Update unique IPs count
+		this.metrics.connections.uniqueIps = this.uniqueIps.size;
+
 		return this.metrics;
 	}
 
@@ -491,6 +498,15 @@ export class MetricsCounter {
 	 */
 	trackNewConnection(): void {
 		this.metrics.connections.total++;
+	}
+
+	/**
+	 * Track an IP address
+	 */
+	trackIpAddress(ipAddress: string | undefined): void {
+		if (ipAddress) {
+			this.uniqueIps.add(ipAddress);
+		}
 	}
 
 	/**

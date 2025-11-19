@@ -22,6 +22,7 @@ type SessionData = {
 	connectionStatus?: 'Connected' | 'Distressed' | 'Disconnected';
 	pingFailures?: number;
 	lastPingAttempt?: string;
+	ipAddress?: string;
 };
 
 /**
@@ -171,6 +172,15 @@ export function StatefulTransportMetrics({ metrics }: StatefulTransportMetricsPr
 			header: createSortableHeader('Last Activity'),
 			cell: ({ row }) => <div className="text-sm">{formatRelativeTime(row.getValue<string>('lastActivity'))}</div>,
 		},
+		{
+			accessorKey: 'ipAddress',
+			header: createSortableHeader('IP Address'),
+			cell: ({ row }) => (
+				<div className="font-mono text-sm" title={row.getValue<string>('ipAddress') || 'Unknown'}>
+					{row.getValue<string>('ipAddress') || '-'}
+				</div>
+			),
+		},
 	];
 
 	return (
@@ -245,8 +255,12 @@ export function StatefulTransportMetrics({ metrics }: StatefulTransportMetricsPr
 							<TableRow>
 								<TableCell className="font-medium text-sm">Total Connections</TableCell>
 								<TableCell className="text-sm font-mono">{metrics.connections.total}</TableCell>
+								<TableCell className="font-medium text-sm">Unique IPs</TableCell>
+								<TableCell className="text-sm font-mono">{metrics.connections.uniqueIps ?? 0}</TableCell>
+							</TableRow>
+							<TableRow>
 								<TableCell className="font-medium text-sm">Requests per Minute (tot/3hr/hr)</TableCell>
-								<TableCell className="text-sm font-mono">
+								<TableCell className="text-sm font-mono" colSpan={3}>
 									{metrics.requests.averagePerMinute}/{metrics.requests.last3Hours}/{metrics.requests.lastHour}
 								</TableCell>
 							</TableRow>
