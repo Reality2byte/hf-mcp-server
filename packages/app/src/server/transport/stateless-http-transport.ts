@@ -149,7 +149,7 @@ export class StatelessHttpTransport extends BaseTransport {
 		extractQueryParamsToHeaders(req, headers);
 
 		// Extract IP address for tracking
-		const ipAddress = this.extractIpAddress(req.headers);
+		const ipAddress = this.extractIpAddress(req.headers, req.ip);
 		this.trackIpAddress(ipAddress);
 
 		// Extract method name for tracking using shared utility
@@ -187,6 +187,7 @@ export class StatelessHttpTransport extends BaseTransport {
 					clientVersion: initClientInfo?.version,
 					requestJson: requestBody.params || '{}',
 					capabilities: requestBody?.params?.capabilities,
+					ipAddress,
 				});
 			} else if (sessionId) {
 				// Try to resume existing session
@@ -446,6 +447,7 @@ export class StatelessHttpTransport extends BaseTransport {
 				clientName: analyticsSession?.metadata.clientInfo?.name,
 				clientVersion: analyticsSession?.metadata.clientInfo?.version,
 				requestJson: { method: 'session_delete', sessionId },
+				ipAddress: analyticsSession?.metadata.ipAddress,
 			});
 
 			res.status(200).json({ jsonrpc: '2.0', result: { deleted: true } });

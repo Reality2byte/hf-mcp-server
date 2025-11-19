@@ -174,21 +174,28 @@ export abstract class BaseTransport {
 
 	/**
 	 * Extract IP address from request headers
-	 * Handles x-forwarded-for and direct IP
+	 * Handles x-forwarded-for, x-real-ip, and direct IP
 	 */
-	protected extractIpAddress(headers: Record<string, string | string[] | undefined>): string | undefined {
+	protected extractIpAddress(
+		headers: Record<string, string | string[] | undefined>,
+		directIp?: string
+	): string | undefined {
+		// Try x-forwarded-for first (most reliable for proxied traffic)
 		const forwardedFor = headers['x-forwarded-for'];
 		if (forwardedFor) {
 			// x-forwarded-for can be a comma-separated list, take the first one (original client)
 			const ip = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
 			return ip?.split(',')[0]?.trim();
 		}
-		// Fallback to other headers if available
+
+		// Try x-real-ip (nginx)
 		const realIp = headers['x-real-ip'];
 		if (realIp) {
 			return Array.isArray(realIp) ? realIp[0] : realIp;
 		}
-		return undefined;
+
+		// Fallback to direct IP (no proxy scenario)
+		return directIp;
 	}
 
 	/**

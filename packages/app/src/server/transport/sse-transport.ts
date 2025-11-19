@@ -79,7 +79,7 @@ export class SseTransport extends StatefulTransport<SSEConnection> {
 			extractQueryParamsToHeaders(req, headers);
 
 			// Extract IP address for tracking
-			const ipAddress = this.extractIpAddress(req.headers);
+			const ipAddress = this.extractIpAddress(req.headers, req.ip);
 			this.trackIpAddress(ipAddress);
 
 			// Validate auth and track metrics
@@ -111,6 +111,7 @@ export class SseTransport extends StatefulTransport<SSEConnection> {
 				isAuthenticated,
 				requestJson: req.body ?? {},
 				capabilities: requestBody?.params?.capabilities,
+				ipAddress,
 			});
 
 			// Create comprehensive cleanup function
