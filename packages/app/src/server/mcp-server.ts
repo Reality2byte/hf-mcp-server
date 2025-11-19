@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { z } from 'zod';
 import { createRequire } from 'module';
+import { performance } from 'node:perf_hooks';
 import { whoAmI, type WhoAmI } from '@huggingface/hub';
 import {
 	SpaceSearchTool,
@@ -66,7 +67,12 @@ import type { ServerFactory, ServerFactoryResult } from './transport/base-transp
 import type { McpApiClient } from './utils/mcp-api-client.js';
 import type { WebServer } from './web-server.js';
 import { logger } from './utils/logger.js';
-import { logSearchQuery, logPromptQuery, logGradioEvent } from './utils/query-logger.js';
+import {
+	logSearchQuery,
+	logPromptQuery,
+	logGradioEvent,
+	type QueryLoggerOptions,
+} from './utils/query-logger.js';
 import { DEFAULT_SPACE_TOOLS, type AppSettings } from '../shared/settings.js';
 import { extractAuthBouquetAndMix } from './utils/auth-utils.js';
 import { ToolSelectionStrategy, type ToolSelectionContext } from './utils/tool-selection-strategy.js';
@@ -142,6 +148,52 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			};
 			logger.debug({ sessionInfo, options }, 'Query logging options:');
 			return options;
+		};
+
+		type QueryLoggerFn = (
+			methodName: string,
+			query: string,
+			parameters: Record<string, unknown>,
+			options?: QueryLoggerOptions
+		) => void;
+
+		type BaseQueryLoggerOptions = Omit<QueryLoggerOptions, 'durationMs' | 'success' | 'error'>;
+
+		interface QueryLoggingConfig<T> {
+			methodName: string;
+			query: string;
+			parameters: Record<string, unknown>;
+			baseOptions?: BaseQueryLoggerOptions;
+			successOptions?: (result: T) => BaseQueryLoggerOptions | void;
+		}
+
+		const runWithQueryLogging = async <T>(
+			logFn: QueryLoggerFn,
+			config: QueryLoggingConfig<T>,
+			work: () => Promise<T>
+		): Promise<T> => {
+			const start = performance.now();
+			try {
+				const result = await work();
+				const durationMs = performance.now() - start;
+				const successOptions = config.successOptions?.(result) ?? {};
+				logFn(config.methodName, config.query, config.parameters, {
+					...config.baseOptions,
+					...successOptions,
+					durationMs,
+					success: true,
+				});
+				return result;
+			} catch (error) {
+				const durationMs = performance.now() - start;
+				logFn(config.methodName, config.query, config.parameters, {
+					...config.baseOptions,
+					durationMs,
+					success: false,
+					error,
+				});
+				throw error;
+			}
 		};
 
 		/**
@@ -223,17 +275,22 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			USER_SUMMARY_PROMPT_CONFIG.description,
 			USER_SUMMARY_PROMPT_CONFIG.schema.shape,
 			async (params: UserSummaryParams) => {
-				const userSummary = new UserSummaryPrompt(hfToken);
-				const summaryText = await userSummary.generateSummary(params);
-				logPromptQuery(
-					USER_SUMMARY_PROMPT_CONFIG.name,
-					params.user_id,
-					{ user_id: params.user_id },
+				const summaryText = await runWithQueryLogging(
+					logPromptQuery,
 					{
-						...getLoggingOptions(),
-						totalResults: 1,
-						resultsShared: 1,
-						responseCharCount: summaryText.length,
+						methodName: USER_SUMMARY_PROMPT_CONFIG.name,
+						query: params.user_id,
+						parameters: { user_id: params.user_id },
+						baseOptions: getLoggingOptions(),
+						successOptions: (text) => ({
+							totalResults: 1,
+							resultsShared: 1,
+							responseCharCount: text.length,
+						}),
+					},
+					async () => {
+						const userSummary = new UserSummaryPrompt(hfToken);
+						return userSummary.generateSummary(params);
 					}
 				);
 
@@ -257,17 +314,22 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			PAPER_SUMMARY_PROMPT_CONFIG.description,
 			PAPER_SUMMARY_PROMPT_CONFIG.schema.shape,
 			async (params: PaperSummaryParams) => {
-				const paperSummary = new PaperSummaryPrompt(hfToken);
-				const summaryText = await paperSummary.generateSummary(params);
-				logPromptQuery(
-					PAPER_SUMMARY_PROMPT_CONFIG.name,
-					params.paper_id,
-					{ paper_id: params.paper_id },
+				const summaryText = await runWithQueryLogging(
+					logPromptQuery,
 					{
-						...getLoggingOptions(),
-						totalResults: 1,
-						resultsShared: 1,
-						responseCharCount: summaryText.length,
+						methodName: PAPER_SUMMARY_PROMPT_CONFIG.name,
+						query: params.paper_id,
+						parameters: { paper_id: params.paper_id },
+						baseOptions: getLoggingOptions(),
+						successOptions: (text) => ({
+							totalResults: 1,
+							resultsShared: 1,
+							responseCharCount: text.length,
+						}),
+					},
+					async () => {
+						const paperSummary = new PaperSummaryPrompt(hfToken);
+						return paperSummary.generateSummary(params);
 					}
 				);
 
@@ -291,17 +353,22 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			MODEL_DETAIL_PROMPT_CONFIG.description,
 			MODEL_DETAIL_PROMPT_CONFIG.schema.shape,
 			async (params: ModelDetailParams) => {
-				const modelDetail = new ModelDetailTool(hfToken, undefined);
-				const result = await modelDetail.getDetails(params.model_id, true);
-				logPromptQuery(
-					MODEL_DETAIL_PROMPT_CONFIG.name,
-					params.model_id,
-					{ model_id: params.model_id },
+				const result = await runWithQueryLogging(
+					logPromptQuery,
 					{
-						...getLoggingOptions(),
-						totalResults: result.totalResults,
-						resultsShared: result.resultsShared,
-						responseCharCount: result.formatted.length,
+						methodName: MODEL_DETAIL_PROMPT_CONFIG.name,
+						query: params.model_id,
+						parameters: { model_id: params.model_id },
+						baseOptions: getLoggingOptions(),
+						successOptions: (details) => ({
+							totalResults: details.totalResults,
+							resultsShared: details.resultsShared,
+							responseCharCount: details.formatted.length,
+						}),
+					},
+					async () => {
+						const modelDetail = new ModelDetailTool(hfToken, undefined);
+						return modelDetail.getDetails(params.model_id, true);
 					}
 				);
 
@@ -325,17 +392,22 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			DATASET_DETAIL_PROMPT_CONFIG.description,
 			DATASET_DETAIL_PROMPT_CONFIG.schema.shape,
 			async (params: DatasetDetailParams) => {
-				const datasetDetail = new DatasetDetailTool(hfToken, undefined);
-				const result = await datasetDetail.getDetails(params.dataset_id, true);
-				logPromptQuery(
-					DATASET_DETAIL_PROMPT_CONFIG.name,
-					params.dataset_id,
-					{ dataset_id: params.dataset_id },
+				const result = await runWithQueryLogging(
+					logPromptQuery,
 					{
-						...getLoggingOptions(),
-						totalResults: result.totalResults,
-						resultsShared: result.resultsShared,
-						responseCharCount: result.formatted.length,
+						methodName: DATASET_DETAIL_PROMPT_CONFIG.name,
+						query: params.dataset_id,
+						parameters: { dataset_id: params.dataset_id },
+						baseOptions: getLoggingOptions(),
+						successOptions: (details) => ({
+							totalResults: details.totalResults,
+							resultsShared: details.resultsShared,
+							responseCharCount: details.formatted.length,
+						}),
+					},
+					async () => {
+						const datasetDetail = new DatasetDetailTool(hfToken, undefined);
+						return datasetDetail.getDetails(params.dataset_id, true);
 					}
 				);
 
@@ -360,18 +432,23 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			SEMANTIC_SEARCH_TOOL_CONFIG.schema.shape,
 			SEMANTIC_SEARCH_TOOL_CONFIG.annotations,
 			async (params: SearchParams) => {
-				const semanticSearch = new SpaceSearchTool(hfToken);
-				const searchResult = await semanticSearch.search(params.query, params.limit, params.mcp);
-				const result = formatSearchResults(params.query, searchResult.results, searchResult.totalCount);
-				logSearchQuery(
-					SEMANTIC_SEARCH_TOOL_CONFIG.name,
-					params.query,
-					{ limit: params.limit, mcp: params.mcp },
+				const result = await runWithQueryLogging(
+					logSearchQuery,
 					{
-						...getLoggingOptions(),
-						totalResults: result.totalResults,
-						resultsShared: result.resultsShared,
-						responseCharCount: result.formatted.length,
+						methodName: SEMANTIC_SEARCH_TOOL_CONFIG.name,
+						query: params.query,
+						parameters: { limit: params.limit, mcp: params.mcp },
+						baseOptions: getLoggingOptions(),
+						successOptions: (formatted) => ({
+							totalResults: formatted.totalResults,
+							resultsShared: formatted.resultsShared,
+							responseCharCount: formatted.formatted.length,
+						}),
+					},
+					async () => {
+						const semanticSearch = new SpaceSearchTool(hfToken);
+						const searchResult = await semanticSearch.search(params.query, params.limit, params.mcp);
+						return formatSearchResults(params.query, searchResult.results, searchResult.totalCount);
 					}
 				);
 				return {
@@ -386,17 +463,22 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			MODEL_SEARCH_TOOL_CONFIG.schema.shape,
 			MODEL_SEARCH_TOOL_CONFIG.annotations,
 			async (params: ModelSearchParams) => {
-				const modelSearch = new ModelSearchTool(hfToken);
-				const result = await modelSearch.searchWithParams(params);
-				logSearchQuery(
-					MODEL_SEARCH_TOOL_CONFIG.name,
-					params.query || `sort:${params.sort || 'trendingScore'}`,
-					params,
+				const result = await runWithQueryLogging(
+					logSearchQuery,
 					{
-						...getLoggingOptions(),
-						totalResults: result.totalResults,
-						resultsShared: result.resultsShared,
-						responseCharCount: result.formatted.length,
+						methodName: MODEL_SEARCH_TOOL_CONFIG.name,
+						query: params.query || `sort:${params.sort || 'trendingScore'}`,
+						parameters: params,
+						baseOptions: getLoggingOptions(),
+						successOptions: (formatted) => ({
+							totalResults: formatted.totalResults,
+							resultsShared: formatted.resultsShared,
+							responseCharCount: formatted.formatted.length,
+						}),
+					},
+					async () => {
+						const modelSearch = new ModelSearchTool(hfToken);
+						return modelSearch.searchWithParams(params);
 					}
 				);
 				return {
@@ -411,17 +493,22 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			MODEL_DETAIL_TOOL_CONFIG.schema.shape,
 			MODEL_DETAIL_TOOL_CONFIG.annotations,
 			async (params: ModelDetailParams) => {
-				const modelDetail = new ModelDetailTool(hfToken, undefined);
-				const result = await modelDetail.getDetails(params.model_id, false);
-				logPromptQuery(
-					MODEL_DETAIL_TOOL_CONFIG.name,
-					params.model_id,
-					{ model_id: params.model_id },
+				const result = await runWithQueryLogging(
+					logPromptQuery,
 					{
-						...getLoggingOptions(),
-						totalResults: result.totalResults,
-						resultsShared: result.resultsShared,
-						responseCharCount: result.formatted.length,
+						methodName: MODEL_DETAIL_TOOL_CONFIG.name,
+						query: params.model_id,
+						parameters: { model_id: params.model_id },
+						baseOptions: getLoggingOptions(),
+						successOptions: (details) => ({
+							totalResults: details.totalResults,
+							resultsShared: details.resultsShared,
+							responseCharCount: details.formatted.length,
+						}),
+					},
+					async () => {
+						const modelDetail = new ModelDetailTool(hfToken, undefined);
+						return modelDetail.getDetails(params.model_id, false);
 					}
 				);
 				return {
@@ -436,20 +523,22 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			PAPER_SEARCH_TOOL_CONFIG.schema.shape,
 			PAPER_SEARCH_TOOL_CONFIG.annotations,
 			async (params: z.infer<typeof PAPER_SEARCH_TOOL_CONFIG.schema>) => {
-				const result = await new PaperSearchTool(hfToken).search(
-					params.query,
-					params.results_limit,
-					params.concise_only
-				);
-				logSearchQuery(
-					PAPER_SEARCH_TOOL_CONFIG.name,
-					params.query,
-					{ results_limit: params.results_limit, concise_only: params.concise_only },
+				const result = await runWithQueryLogging(
+					logSearchQuery,
 					{
-						...getLoggingOptions(),
-						totalResults: result.totalResults,
-						resultsShared: result.resultsShared,
-						responseCharCount: result.formatted.length,
+						methodName: PAPER_SEARCH_TOOL_CONFIG.name,
+						query: params.query,
+						parameters: { results_limit: params.results_limit, concise_only: params.concise_only },
+						baseOptions: getLoggingOptions(),
+						successOptions: (formatted) => ({
+							totalResults: formatted.totalResults,
+							resultsShared: formatted.resultsShared,
+							responseCharCount: formatted.formatted.length,
+						}),
+					},
+					async () => {
+						const paperSearchTool = new PaperSearchTool(hfToken);
+						return paperSearchTool.search(params.query, params.results_limit, params.concise_only);
 					}
 				);
 				return {
@@ -464,17 +553,22 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			DATASET_SEARCH_TOOL_CONFIG.schema.shape,
 			DATASET_SEARCH_TOOL_CONFIG.annotations,
 			async (params: DatasetSearchParams) => {
-				const datasetSearch = new DatasetSearchTool(hfToken);
-				const result = await datasetSearch.searchWithParams(params);
-				logSearchQuery(
-					DATASET_SEARCH_TOOL_CONFIG.name,
-					params.query || `sort:${params.sort || 'trendingScore'}`,
-					params,
+				const result = await runWithQueryLogging(
+					logSearchQuery,
 					{
-						...getLoggingOptions(),
-						totalResults: result.totalResults,
-						resultsShared: result.resultsShared,
-						responseCharCount: result.formatted.length,
+						methodName: DATASET_SEARCH_TOOL_CONFIG.name,
+						query: params.query || `sort:${params.sort || 'trendingScore'}`,
+						parameters: params,
+						baseOptions: getLoggingOptions(),
+						successOptions: (formatted) => ({
+							totalResults: formatted.totalResults,
+							resultsShared: formatted.resultsShared,
+							responseCharCount: formatted.formatted.length,
+						}),
+					},
+					async () => {
+						const datasetSearch = new DatasetSearchTool(hfToken);
+						return datasetSearch.searchWithParams(params);
 					}
 				);
 				return {
@@ -489,17 +583,22 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			DATASET_DETAIL_TOOL_CONFIG.schema.shape,
 			DATASET_DETAIL_TOOL_CONFIG.annotations,
 			async (params: DatasetDetailParams) => {
-				const datasetDetail = new DatasetDetailTool(hfToken, undefined);
-				const result = await datasetDetail.getDetails(params.dataset_id, false);
-				logPromptQuery(
-					DATASET_DETAIL_TOOL_CONFIG.name,
-					params.dataset_id,
-					{ dataset_id: params.dataset_id },
+				const result = await runWithQueryLogging(
+					logPromptQuery,
 					{
-						...getLoggingOptions(),
-						totalResults: result.totalResults,
-						resultsShared: result.resultsShared,
-						responseCharCount: result.formatted.length,
+						methodName: DATASET_DETAIL_TOOL_CONFIG.name,
+						query: params.dataset_id,
+						parameters: { dataset_id: params.dataset_id },
+						baseOptions: getLoggingOptions(),
+						successOptions: (details) => ({
+							totalResults: details.totalResults,
+							resultsShared: details.resultsShared,
+							responseCharCount: details.formatted.length,
+						}),
+					},
+					async () => {
+						const datasetDetail = new DatasetDetailTool(hfToken, undefined);
+						return datasetDetail.getDetails(params.dataset_id, false);
 					}
 				);
 				return {
@@ -533,8 +632,6 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 				const wantReadme = (params as { include_readme?: boolean }).include_readme === true; // explicit opt-in required
 				const includeReadme = allowReadme && wantReadme;
 
-				const tool = new HubInspectTool(hfToken, undefined);
-				const result = await tool.inspect(params as unknown as HubInspectParams, includeReadme);
 				// Prepare safe logging parameters without relying on strong typing
 				const repoIdsParam = (params as { repo_ids?: unknown }).repo_ids;
 				const repoIds = Array.isArray(repoIdsParam) ? repoIdsParam : [];
@@ -543,15 +640,22 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 				const repoTypeSafe =
 					repoType === 'model' || repoType === 'dataset' || repoType === 'space' ? repoType : undefined;
 
-				logPromptQuery(
-					HUB_INSPECT_TOOL_CONFIG.name,
-					firstRepoId,
-					{ count: repoIds.length, repo_type: repoTypeSafe, include_readme: includeReadme },
+				const result = await runWithQueryLogging(
+					logPromptQuery,
 					{
-						...getLoggingOptions(),
-						totalResults: result.totalResults,
-						resultsShared: result.resultsShared,
-						responseCharCount: result.formatted.length,
+						methodName: HUB_INSPECT_TOOL_CONFIG.name,
+						query: firstRepoId,
+						parameters: { count: repoIds.length, repo_type: repoTypeSafe, include_readme: includeReadme },
+						baseOptions: getLoggingOptions(),
+						successOptions: (details) => ({
+							totalResults: details.totalResults,
+							resultsShared: details.resultsShared,
+							responseCharCount: details.formatted.length,
+						}),
+					},
+					async () => {
+						const tool = new HubInspectTool(hfToken, undefined);
+						return tool.inspect(params as unknown as HubInspectParams, includeReadme);
 					}
 				);
 				return {
@@ -566,17 +670,22 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			DOCS_SEMANTIC_SEARCH_CONFIG.schema.shape,
 			DOCS_SEMANTIC_SEARCH_CONFIG.annotations,
 			async (params: DocSearchParams) => {
-				const docSearch = new DocSearchTool(hfToken);
-				const result = await docSearch.search(params);
-				logSearchQuery(
-					DOCS_SEMANTIC_SEARCH_CONFIG.name,
-					params.query,
-					{ product: params.product },
+				const result = await runWithQueryLogging(
+					logSearchQuery,
 					{
-						...getLoggingOptions(),
-						totalResults: result.totalResults,
-						resultsShared: result.resultsShared,
-						responseCharCount: result.formatted.length,
+						methodName: DOCS_SEMANTIC_SEARCH_CONFIG.name,
+						query: params.query,
+						parameters: { product: params.product },
+						baseOptions: getLoggingOptions(),
+						successOptions: (formatted) => ({
+							totalResults: formatted.totalResults,
+							resultsShared: formatted.resultsShared,
+							responseCharCount: formatted.formatted.length,
+						}),
+					},
+					async () => {
+						const docSearch = new DocSearchTool(hfToken);
+						return docSearch.search(params);
 					}
 				);
 				return {
@@ -650,17 +759,22 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			USE_SPACE_TOOL_CONFIG.schema.shape,
 			USE_SPACE_TOOL_CONFIG.annotations,
 			async (params: UseSpaceParams) => {
-				const useSpaceTool = new UseSpaceTool(hfToken, undefined);
-				const result = await formatUseSpaceResult(useSpaceTool, params);
-				logPromptQuery(
-					USE_SPACE_TOOL_CONFIG.name,
-					params.space_id,
-					{ space_id: params.space_id },
+				const result = await runWithQueryLogging(
+					logPromptQuery,
 					{
-						...getLoggingOptions(),
-						totalResults: result.metadata.totalResults,
-						resultsShared: result.metadata.resultsShared,
-						responseCharCount: result.metadata.formatted.length,
+						methodName: USE_SPACE_TOOL_CONFIG.name,
+						query: params.space_id,
+						parameters: { space_id: params.space_id },
+						baseOptions: getLoggingOptions(),
+						successOptions: (useSpaceResult) => ({
+							totalResults: useSpaceResult.metadata.totalResults,
+							resultsShared: useSpaceResult.metadata.resultsShared,
+							responseCharCount: useSpaceResult.metadata.formatted.length,
+						}),
+					},
+					async () => {
+						const useSpaceTool = new UseSpaceTool(hfToken, undefined);
+						return formatUseSpaceResult(useSpaceTool, params);
 					}
 				);
 				return {
@@ -677,17 +791,25 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			async (params: z.infer<typeof HF_JOBS_TOOL_CONFIG.schema>) => {
 				// Jobs require authentication - check if user has token
 				const isAuthenticated = !!hfToken;
-				const jobsTool = new HfJobsTool(hfToken, isAuthenticated, username);
-				const result = await jobsTool.execute(params);
-
-				// Log the query with command and result metrics
 				const loggedOperation = params.operation ?? 'no-operation';
-				logSearchQuery(HF_JOBS_TOOL_CONFIG.name, loggedOperation, params.args || {}, {
-					...getLoggingOptions(),
-					totalResults: result.totalResults,
-					resultsShared: result.resultsShared,
-					responseCharCount: result.formatted.length,
-				});
+				const result = await runWithQueryLogging(
+					logSearchQuery,
+					{
+						methodName: HF_JOBS_TOOL_CONFIG.name,
+						query: loggedOperation,
+						parameters: params.args || {},
+						baseOptions: getLoggingOptions(),
+						successOptions: (jobResult) => ({
+							totalResults: jobResult.totalResults,
+							resultsShared: jobResult.resultsShared,
+							responseCharCount: jobResult.formatted.length,
+						}),
+					},
+					async () => {
+						const jobsTool = new HfJobsTool(hfToken, isAuthenticated, username);
+						return jobsTool.execute(params);
+					}
+				);
 
 				return {
 					content: [{ type: 'text', text: result.formatted }],
@@ -715,102 +837,131 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					};
 				}
 
-				const startTime = Date.now();
-				let success = false;
+				const loggedOperation = params.operation ?? 'no-operation';
 
-				try {
-					const spaceTool = new SpaceTool(hfToken);
-					const result = await spaceTool.execute(params, extra);
+				if (params.operation === 'invoke') {
+					const startTime = Date.now();
+					let success = false;
 
-					// Check if this is an InvokeResult (has raw MCP content from invoke operation)
-					if ('result' in result && result.result) {
-						const invokeResult = result as InvokeResult;
-						success = !invokeResult.isError;
+					try {
+						const spaceTool = new SpaceTool(hfToken);
+						const result = await spaceTool.execute(params, extra);
 
-						// Prepare post-processing options
-						const stripImageContent =
-							noImageContentHeaderEnabled || toolSelection.enabledToolIds.includes('NO_GRADIO_IMAGE_CONTENT');
-						const postProcessOptions: GradioToolCallOptions = {
-							stripImageContent,
-							toolName: DYNAMIC_SPACE_TOOL_CONFIG.name,
-							outwardFacingName: DYNAMIC_SPACE_TOOL_CONFIG.name,
-							sessionInfo,
-							spaceName: params.space_name,
-						};
+						if ('result' in result && result.result) {
+							const invokeResult = result as InvokeResult;
+							success = !invokeResult.isError;
 
-						// Apply unified post-processing (image filtering + OpenAI transforms)
-						const processedResult = applyResultPostProcessing(
-							invokeResult.result as typeof CallToolResultSchema._type,
-							postProcessOptions
-						);
+							const stripImageContent =
+								noImageContentHeaderEnabled || toolSelection.enabledToolIds.includes('NO_GRADIO_IMAGE_CONTENT');
+							const postProcessOptions: GradioToolCallOptions = {
+								stripImageContent,
+								toolName: DYNAMIC_SPACE_TOOL_CONFIG.name,
+								outwardFacingName: DYNAMIC_SPACE_TOOL_CONFIG.name,
+								sessionInfo,
+								spaceName: params.space_name,
+							};
 
-						// Prepend warnings if any
-						const warningsContent =
-							invokeResult.warnings.length > 0
-								? [
-										{
-											type: 'text' as const,
-											text:
-												(invokeResult.warnings.length === 1 ? 'Warning:\n' : 'Warnings:\n') +
-												invokeResult.warnings.map((w) => `- ${w}`).join('\n') +
-												'\n',
-										},
-									]
-								: [];
+							const processedResult = applyResultPostProcessing(
+								invokeResult.result as typeof CallToolResultSchema._type,
+								postProcessOptions
+							);
 
-						// Log Gradio event with timing metrics for invoke operation (like proxied tools)
-						const endTime = Date.now();
-						const responseContent = [...warningsContent, ...(processedResult.content as unknown[])];
-						logGradioEvent(params.space_name || 'unknown-space', sessionInfo?.clientSessionId || 'unknown', {
-							durationMs: endTime - startTime,
-							isAuthenticated: !!hfToken,
-							clientName: sessionInfo?.clientInfo?.name,
-							clientVersion: sessionInfo?.clientInfo?.version,
+							const warningsContent =
+								invokeResult.warnings.length > 0
+									? [
+											{
+												type: 'text' as const,
+												text:
+													(invokeResult.warnings.length === 1 ? 'Warning:\n' : 'Warnings:\n') +
+													invokeResult.warnings.map((w) => `- ${w}`).join('\n') +
+													'\n',
+											},
+										]
+									: [];
+
+							const durationMs = Date.now() - startTime;
+							const responseContent = [...warningsContent, ...(processedResult.content as unknown[])];
+							logGradioEvent(
+								params.space_name || 'unknown-space',
+								sessionInfo?.clientSessionId || 'unknown',
+								{
+									durationMs,
+									isAuthenticated: !!hfToken,
+									clientName: sessionInfo?.clientInfo?.name,
+									clientVersion: sessionInfo?.clientInfo?.version,
+									success,
+									error: invokeResult.isError ? 'Tool returned isError=true' : undefined,
+									responseSizeBytes: JSON.stringify(responseContent).length,
+									isDynamic: true,
+								}
+							);
+
+							return {
+								content: responseContent,
+								...(invokeResult.isError && { isError: true }),
+							} as typeof CallToolResultSchema._type;
+						}
+
+						const toolResult = result as ToolResult;
+						success = !toolResult.isError;
+
+						const durationMs = Date.now() - startTime;
+						logSearchQuery(DYNAMIC_SPACE_TOOL_CONFIG.name, loggedOperation, params, {
+							...getLoggingOptions(),
+							totalResults: toolResult.totalResults,
+							resultsShared: toolResult.resultsShared,
+							responseCharCount: toolResult.formatted.length,
+							durationMs,
 							success,
-							error: invokeResult.isError ? 'Tool returned isError=true' : undefined,
-							responseSizeBytes: JSON.stringify(responseContent).length,
-							isDynamic: true, // Mark as dynamic invocation (vs proxied gr_* tool)
 						});
 
 						return {
-							content: responseContent,
-							...(invokeResult.isError && { isError: true }),
-						} as typeof CallToolResultSchema._type;
+							content: [{ type: 'text', text: toolResult.formatted }],
+							...(toolResult.isError && { isError: true }),
+						};
+					} catch (err) {
+						const durationMs = Date.now() - startTime;
+						logGradioEvent(
+							params.space_name || 'unknown-space',
+							sessionInfo?.clientSessionId || 'unknown',
+							{
+								durationMs,
+								isAuthenticated: !!hfToken,
+								clientName: sessionInfo?.clientInfo?.name,
+								clientVersion: sessionInfo?.clientInfo?.version,
+								success: false,
+								error: err,
+								isDynamic: true,
+							}
+						);
+						throw err;
 					}
-
-					// For view_parameters and errors - return formatted text
-					const toolResult = result as ToolResult;
-					success = !toolResult.isError;
-
-					const loggedOperation = params.operation ?? 'no-operation';
-					logSearchQuery(DYNAMIC_SPACE_TOOL_CONFIG.name, loggedOperation, params, {
-						...getLoggingOptions(),
-						totalResults: toolResult.totalResults,
-						resultsShared: toolResult.resultsShared,
-						responseCharCount: toolResult.formatted.length,
-					});
-
-					return {
-						content: [{ type: 'text', text: toolResult.formatted }],
-						...(toolResult.isError && { isError: true }),
-					};
-				} catch (err) {
-					// Log error for invoke operation
-					if (params.operation === 'invoke') {
-						const endTime = Date.now();
-						logGradioEvent(params.space_name || 'unknown-space', sessionInfo?.clientSessionId || 'unknown', {
-							durationMs: endTime - startTime,
-							isAuthenticated: !!hfToken,
-							clientName: sessionInfo?.clientInfo?.name,
-							clientVersion: sessionInfo?.clientInfo?.version,
-							success: false,
-							error: err,
-							isDynamic: true,
-						});
-					}
-
-					throw err;
 				}
+
+				const toolResult = await runWithQueryLogging(
+					logSearchQuery,
+					{
+						methodName: DYNAMIC_SPACE_TOOL_CONFIG.name,
+						query: loggedOperation,
+						parameters: params,
+						baseOptions: getLoggingOptions(),
+						successOptions: (result) => ({
+							totalResults: result.totalResults,
+							resultsShared: result.resultsShared,
+							responseCharCount: result.formatted.length,
+						}),
+					},
+					async () => {
+						const spaceTool = new SpaceTool(hfToken);
+						const result = await spaceTool.execute(params, extra);
+						return result as ToolResult;
+					}
+				);
+
+				return {
+					content: [{ type: 'text', text: toolResult.formatted }],
+					...(toolResult.isError && { isError: true }),
+				};
 			}
 		);
 
