@@ -136,7 +136,7 @@ export class StreamableHttpTransport extends StatefulTransport<Session> {
 					return;
 				}
 
-				transport = await this.createSession(headers);
+				transport = await this.createSession(headers, req);
 			} else if (!sessionId) {
 				// No session ID and not an initialization request
 				this.trackError(400);
@@ -220,11 +220,15 @@ export class StreamableHttpTransport extends StatefulTransport<Session> {
 		await this.removeSession(sessionId);
 	}
 
-	private async createSession(requestHeaders?: Record<string, string>): Promise<StreamableHTTPServerTransport> {
+	private async createSession(requestHeaders?: Record<string, string>, req?: Request): Promise<StreamableHTTPServerTransport> {
 		// Create server instance using factory with request headers
 		// Note: Auth validation is now done in handlePostRequest before calling this method
 		const result = await this.serverFactory(requestHeaders || null);
 		const server = result.server;
+
+		// Extract IP address and auth token for tracking
+		const ipAddress = req ? this.extractIpAddress(req.headers as Record<string, string | string[] | undefined>, req.ip) : undefined;
+		const authToken = requestHeaders?.['authorization']?.replace(/^Bearer\s+/i, '');
 
 		const transport = new StreamableHTTPServerTransport({
 			sessionIdGenerator: () => randomUUID(),
@@ -235,6 +239,7 @@ export class StreamableHttpTransport extends StatefulTransport<Session> {
 				logSystemEvent('initialize', sessionId, {
 					clientSessionId: sessionId,
 					isAuthenticated: !!requestHeaders?.['authorization'],
+					ipAddress,
 				});
 
 				// Create session object and store it immediately
@@ -248,6 +253,8 @@ export class StreamableHttpTransport extends StatefulTransport<Session> {
 						requestCount: 0,
 						isAuthenticated: !!requestHeaders?.['authorization'],
 						capabilities: {},
+						ipAddress,
+						authToken,
 					},
 					cleaningUp: false,
 				};
