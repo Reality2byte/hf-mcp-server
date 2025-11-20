@@ -269,6 +269,13 @@ export class StatelessHttpTransport extends BaseTransport {
 				this.associateSessionWithClient(extractedClientInfo);
 				this.updateClientActivity(extractedClientInfo);
 
+				// Track IP address for this client
+				this.trackClientIpAddress(ipAddress, extractedClientInfo);
+
+				// Track auth status for this client
+				const authToken = headers['authorization']?.replace(/^Bearer\s+/i, '');
+				this.trackClientAuth(authToken, extractedClientInfo);
+
 				// Update analytics session with client info
 				if (this.analyticsMode && sessionId) {
 					this.updateAnalyticsSessionClientInfo(sessionId, extractedClientInfo);

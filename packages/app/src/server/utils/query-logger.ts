@@ -208,6 +208,8 @@ export function logSearchQuery(
 ): void {
 	// Use a stable mcpServerSessionId per process/transport instance
 	const mcpServerSessionId = getMcpServerSessionId();
+	const normalizedDurationMs =
+		options?.durationMs !== undefined ? Math.round(options.durationMs) : undefined;
 	const serializedParameters = JSON.stringify(data);
 	const requestPayload = {
 		methodName,
@@ -230,7 +232,7 @@ export function logSearchQuery(
 		totalResults: options?.totalResults,
 		resultsShared: options?.resultsShared,
 		responseCharCount: options?.responseCharCount,
-		durationMs: options?.durationMs,
+		durationMs: normalizedDurationMs,
 		success: options?.success ?? true,
 		errorMessage: normalizedError,
 	});
@@ -247,6 +249,8 @@ export function logPromptQuery(
 ): void {
 	// Use a stable mcpServerSessionId per process/transport instance
 	const mcpServerSessionId = getMcpServerSessionId();
+	const normalizedDurationMs =
+		options?.durationMs !== undefined ? Math.round(options.durationMs) : undefined;
 	const serializedParameters = JSON.stringify(data);
 	const requestPayload = {
 		methodName,
@@ -269,7 +273,7 @@ export function logPromptQuery(
 		totalResults: options?.totalResults,
 		resultsShared: options?.resultsShared,
 		responseCharCount: options?.responseCharCount,
-		durationMs: options?.durationMs,
+		durationMs: normalizedDurationMs,
 		success: options?.success ?? true,
 		errorMessage: normalizedError,
 	});

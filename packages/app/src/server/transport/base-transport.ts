@@ -60,6 +60,7 @@ export interface SessionMetadata {
 	pingFailures?: number;
 	lastPingAttempt?: Date;
 	ipAddress?: string;
+	authToken?: string;
 }
 
 /**
@@ -170,6 +171,20 @@ export abstract class BaseTransport {
 	 */
 	protected trackIpAddress(ipAddress: string | undefined): void {
 		this.metrics.trackIpAddress(ipAddress);
+	}
+
+	/**
+	 * Track an IP address for a specific client
+	 */
+	protected trackClientIpAddress(ipAddress: string | undefined, clientInfo?: { name: string; version: string }): void {
+		this.metrics.trackClientIpAddress(ipAddress, clientInfo);
+	}
+
+	/**
+	 * Track auth status for a specific client
+	 */
+	protected trackClientAuth(authToken: string | undefined, clientInfo?: { name: string; version: string }): void {
+		this.metrics.trackClientAuth(authToken, clientInfo);
 	}
 
 	/**
@@ -454,6 +469,14 @@ export abstract class StatefulTransport<TSession extends BaseSession = BaseSessi
 					session.metadata.clientInfo = clientInfo;
 					// Associate session with real client for metrics tracking
 					this.metrics.associateSessionWithClient(clientInfo);
+
+					// Track IP address for this client if available
+					if (session.metadata.ipAddress) {
+						this.trackClientIpAddress(session.metadata.ipAddress, clientInfo);
+					}
+
+					// Track auth status for this client
+					this.trackClientAuth(session.metadata.authToken, clientInfo);
 				}
 
 				if (clientCapabilities) {
