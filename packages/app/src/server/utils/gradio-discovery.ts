@@ -10,6 +10,7 @@
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { logger } from './logger.js';
+import { gradioMetrics } from './gradio-metrics.js';
 import {
 	spaceMetadataCache,
 	schemaCache,
@@ -341,11 +342,16 @@ async function fetchSchema(
 			clearTimeout(timeoutId);
 		}
 	} catch (error) {
-		logger.warn({
-			spaceName,
-			subdomain: metadata.subdomain,
-			error: error instanceof Error ? error.message : String(error),
-		}, 'Failed to fetch schema');
+		const isFirstError = gradioMetrics.schemaFetchError(spaceName);
+		const logFn = isFirstError ? 'warn' : 'trace';
+		logger[logFn](
+			{
+				spaceName,
+				subdomain: metadata.subdomain,
+				error: error instanceof Error ? error.message : String(error),
+			},
+			'Failed to fetch schema'
+		);
 
 		return {
 			success: false,
