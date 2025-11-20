@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { TransportType } from './constants.js';
 
 /**
@@ -416,16 +417,10 @@ class RollingWindowCounter {
 }
 
 /**
- * Simple hash function for auth tokens (for privacy)
+ * Hash auth tokens before counting them to avoid storing raw secrets.
  */
 function hashToken(token: string): string {
-	let hash = 0;
-	for (let i = 0; i < token.length; i++) {
-		const char = token.charCodeAt(i);
-		hash = ((hash << 5) - hash) + char;
-		hash = hash & hash; // Convert to 32bit integer
-	}
-	return hash.toString(16);
+	return createHash('sha256').update(token).digest('hex');
 }
 
 /**
