@@ -18,6 +18,9 @@ type ClientData = {
 	lastSeen: string;
 	firstSeen: string;
 	toolCallCount: number;
+	newIpCount: number;
+	anonCount: number;
+	uniqueAuthCount: number;
 };
 
 /**
@@ -107,6 +110,23 @@ export function StatelessTransportMetrics({ metrics }: StatelessTransportMetrics
 			accessorKey: 'toolCallCount',
 			header: createSortableHeader('Tool Calls', 'right'),
 			cell: ({ row }) => <div className="text-right font-mono text-sm">{row.getValue<number>('toolCallCount')}</div>,
+		},
+		{
+			accessorKey: 'newIpCount',
+			header: createSortableHeader('New IPs', 'right'),
+			cell: ({ row }) => <div className="text-right font-mono text-sm">{row.getValue<number>('newIpCount')}</div>,
+		},
+		{
+			accessorKey: 'anonCount',
+			header: createSortableHeader('Anon/Auth', 'right'),
+			cell: ({ row }) => {
+				const client = row.original;
+				return (
+					<div className="text-right font-mono text-sm">
+						{client.anonCount}/{client.uniqueAuthCount}
+					</div>
+				);
+			},
 		},
 		{
 			accessorKey: 'isConnected',

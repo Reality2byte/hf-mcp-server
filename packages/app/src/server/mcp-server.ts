@@ -157,7 +157,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			options?: QueryLoggerOptions
 		) => void;
 
-		type BaseQueryLoggerOptions = Omit<QueryLoggerOptions, 'durationMs' | 'success' | 'error'>;
+		type BaseQueryLoggerOptions = Omit<QueryLoggerOptions, 'durationMs' | 'error'>;
 
 		interface QueryLoggingConfig<T> {
 			methodName: string;
@@ -175,17 +175,24 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			const start = performance.now();
 			try {
 				const result = await work();
-				const durationMs = performance.now() - start;
+				const durationMs = Math.round(performance.now() - start);
 				const successOptions = config.successOptions?.(result) ?? {};
+				const { success: successOverride, ...restSuccessOptions } = successOptions;
+				const resultHasError =
+					typeof result === 'object' &&
+					result !== null &&
+					'isError' in result &&
+					Boolean((result as { isError?: boolean }).isError);
+				const successFlag = successOverride ?? !resultHasError;
 				logFn(config.methodName, config.query, config.parameters, {
 					...config.baseOptions,
-					...successOptions,
+					...restSuccessOptions,
 					durationMs,
-					success: true,
+					success: successFlag,
 				});
 				return result;
 			} catch (error) {
-				const durationMs = performance.now() - start;
+				const durationMs = Math.round(performance.now() - start);
 				logFn(config.methodName, config.query, config.parameters, {
 					...config.baseOptions,
 					durationMs,

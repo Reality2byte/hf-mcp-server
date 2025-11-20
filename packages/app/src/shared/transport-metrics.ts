@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { TransportType } from './constants.js';
 
 /**
@@ -77,6 +78,9 @@ export interface ClientMetrics {
 	activeConnections: number;
 	totalConnections: number;
 	toolCallCount: number;
+	newIpCount: number;
+	anonCount: number;
+	uniqueAuthCount: number;
 }
 
 /**
@@ -228,6 +232,9 @@ export interface TransportMetricsResponse {
 		activeConnections: number;
 		totalConnections: number;
 		toolCallCount: number;
+		newIpCount: number;
+		anonCount: number;
+		uniqueAuthCount: number;
 	}>;
 
 	sessions: SessionData[];
@@ -410,6 +417,13 @@ class RollingWindowCounter {
 }
 
 /**
+ * Hash auth tokens before counting them to avoid storing raw secrets.
+ */
+function hashToken(token: string): string {
+	return createHash('sha256').update(token).digest('hex');
+}
+
+/**
  * Centralized metrics counter for transport operations
  */
 export class MetricsCounter {
@@ -418,6 +432,8 @@ export class MetricsCounter {
 	private rollingHour: RollingWindowCounter;
 	private rolling3Hours: RollingWindowCounter;
 	private uniqueIps: Set<string>;
+	private clientIps: Map<string, Set<string>>; // Map of clientKey -> Set of IPs
+	private clientAuthHashes: Map<string, Set<string>>; // Map of clientKey -> Set of auth token hashes
 
 	constructor() {
 		this.metrics = createEmptyMetrics();
@@ -425,6 +441,8 @@ export class MetricsCounter {
 		this.rollingHour = new RollingWindowCounter(60);
 		this.rolling3Hours = new RollingWindowCounter(180);
 		this.uniqueIps = new Set();
+		this.clientIps = new Map();
+		this.clientAuthHashes = new Map();
 	}
 
 	/**
@@ -510,6 +528,70 @@ export class MetricsCounter {
 	}
 
 	/**
+	 * Track an IP address for a specific client
+	 */
+	trackClientIpAddress(ipAddress: string | undefined, clientInfo?: { name: string; version: string }): void {
+		// Always track globally
+		this.trackIpAddress(ipAddress);
+
+		// Track per-client if client info is available
+		if (ipAddress && clientInfo) {
+			const clientKey = getClientKey(clientInfo.name, clientInfo.version);
+			const clientMetrics = this.metrics.clients.get(clientKey);
+
+			if (clientMetrics) {
+				// Get or create the IP set for this client
+				let clientIpSet = this.clientIps.get(clientKey);
+				if (!clientIpSet) {
+					clientIpSet = new Set();
+					this.clientIps.set(clientKey, clientIpSet);
+				}
+
+				// Check if this is a new IP for this client
+				const isNewIp = !clientIpSet.has(ipAddress);
+				if (isNewIp) {
+					clientIpSet.add(ipAddress);
+					clientMetrics.newIpCount++;
+				}
+			}
+		}
+	}
+
+	/**
+	 * Track auth status for a specific client
+	 */
+	trackClientAuth(authToken: string | undefined, clientInfo?: { name: string; version: string }): void {
+		if (!clientInfo) return;
+
+		const clientKey = getClientKey(clientInfo.name, clientInfo.version);
+		const clientMetrics = this.metrics.clients.get(clientKey);
+
+		if (clientMetrics) {
+			if (!authToken) {
+				// Anonymous request
+				clientMetrics.anonCount++;
+			} else {
+				// Authenticated request - hash the token for privacy
+				const tokenHash = hashToken(authToken);
+
+				// Get or create the auth hash set for this client
+				let clientAuthSet = this.clientAuthHashes.get(clientKey);
+				if (!clientAuthSet) {
+					clientAuthSet = new Set();
+					this.clientAuthHashes.set(clientKey, clientAuthSet);
+				}
+
+				// Check if this is a new auth token for this client
+				const isNewAuth = !clientAuthSet.has(tokenHash);
+				if (isNewAuth) {
+					clientAuthSet.add(tokenHash);
+					clientMetrics.uniqueAuthCount++;
+				}
+			}
+		}
+	}
+
+	/**
 	 * Update active connection count
 	 */
 	updateActiveConnections(count: number): void {
@@ -544,6 +626,9 @@ export class MetricsCounter {
 				activeConnections: 1,
 				totalConnections: 1,
 				toolCallCount: 0,
+				newIpCount: 0,
+				anonCount: 0,
+				uniqueAuthCount: 0,
 			};
 			this.metrics.clients.set(clientKey, clientMetrics);
 		} else {

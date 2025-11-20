@@ -118,6 +118,7 @@ export class SseTransport extends StatefulTransport<SSEConnection> {
 			const cleanup = this.createCleanupFunction(sessionId);
 
 			// Store connection with metadata
+			const authToken = headers['authorization']?.replace(/^Bearer\s+/i, '');
 			const connection: SSEConnection = {
 				transport,
 				server,
@@ -130,6 +131,7 @@ export class SseTransport extends StatefulTransport<SSEConnection> {
 					isAuthenticated: authResult.shouldContinue && !!headers['authorization'],
 					capabilities: {},
 					ipAddress,
+					authToken,
 				},
 				cleaningUp: false,
 			};
