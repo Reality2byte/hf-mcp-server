@@ -78,6 +78,8 @@ export interface ClientMetrics {
 	totalConnections: number;
 	toolCallCount: number;
 	newIpCount: number;
+	anonCount: number;
+	uniqueAuthCount: number;
 }
 
 /**
@@ -230,6 +232,8 @@ export interface TransportMetricsResponse {
 		totalConnections: number;
 		toolCallCount: number;
 		newIpCount: number;
+		anonCount: number;
+		uniqueAuthCount: number;
 	}>;
 
 	sessions: SessionData[];
@@ -412,6 +416,19 @@ class RollingWindowCounter {
 }
 
 /**
+ * Simple hash function for auth tokens (for privacy)
+ */
+function hashToken(token: string): string {
+	let hash = 0;
+	for (let i = 0; i < token.length; i++) {
+		const char = token.charCodeAt(i);
+		hash = ((hash << 5) - hash) + char;
+		hash = hash & hash; // Convert to 32bit integer
+	}
+	return hash.toString(16);
+}
+
+/**
  * Centralized metrics counter for transport operations
  */
 export class MetricsCounter {
@@ -421,6 +438,7 @@ export class MetricsCounter {
 	private rolling3Hours: RollingWindowCounter;
 	private uniqueIps: Set<string>;
 	private clientIps: Map<string, Set<string>>; // Map of clientKey -> Set of IPs
+	private clientAuthHashes: Map<string, Set<string>>; // Map of clientKey -> Set of auth token hashes
 
 	constructor() {
 		this.metrics = createEmptyMetrics();
@@ -429,6 +447,7 @@ export class MetricsCounter {
 		this.rolling3Hours = new RollingWindowCounter(180);
 		this.uniqueIps = new Set();
 		this.clientIps = new Map();
+		this.clientAuthHashes = new Map();
 	}
 
 	/**
@@ -544,6 +563,40 @@ export class MetricsCounter {
 	}
 
 	/**
+	 * Track auth status for a specific client
+	 */
+	trackClientAuth(authToken: string | undefined, clientInfo?: { name: string; version: string }): void {
+		if (!clientInfo) return;
+
+		const clientKey = getClientKey(clientInfo.name, clientInfo.version);
+		const clientMetrics = this.metrics.clients.get(clientKey);
+
+		if (clientMetrics) {
+			if (!authToken) {
+				// Anonymous request
+				clientMetrics.anonCount++;
+			} else {
+				// Authenticated request - hash the token for privacy
+				const tokenHash = hashToken(authToken);
+
+				// Get or create the auth hash set for this client
+				let clientAuthSet = this.clientAuthHashes.get(clientKey);
+				if (!clientAuthSet) {
+					clientAuthSet = new Set();
+					this.clientAuthHashes.set(clientKey, clientAuthSet);
+				}
+
+				// Check if this is a new auth token for this client
+				const isNewAuth = !clientAuthSet.has(tokenHash);
+				if (isNewAuth) {
+					clientAuthSet.add(tokenHash);
+					clientMetrics.uniqueAuthCount++;
+				}
+			}
+		}
+	}
+
+	/**
 	 * Update active connection count
 	 */
 	updateActiveConnections(count: number): void {
@@ -579,6 +632,8 @@ export class MetricsCounter {
 				totalConnections: 1,
 				toolCallCount: 0,
 				newIpCount: 0,
+				anonCount: 0,
+				uniqueAuthCount: 0,
 			};
 			this.metrics.clients.set(clientKey, clientMetrics);
 		} else {
