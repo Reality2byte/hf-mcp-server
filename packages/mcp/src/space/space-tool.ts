@@ -1,6 +1,7 @@
 import type { ToolResult } from '../types/tool-result.js';
 import type { ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
+import type { z } from 'zod';
 import {
 	spaceArgsSchema,
 	type SpaceArgs,
@@ -165,7 +166,7 @@ function getUsageInstructions(): string {
 export function getDynamicSpaceToolConfig(): {
 	name: string;
 	description: string;
-	schema: import('zod').ZodObject<import('zod').ZodRawShape>;
+	schema: z.ZodObject<z.ZodRawShape>;
 	annotations: { title: string; readOnlyHint: boolean; openWorldHint: boolean };
 } {
 	const dynamicMode = isDynamicSpaceMode();
