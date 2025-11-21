@@ -67,12 +67,7 @@ import type { ServerFactory, ServerFactoryResult } from './transport/base-transp
 import type { McpApiClient } from './utils/mcp-api-client.js';
 import type { WebServer } from './web-server.js';
 import { logger } from './utils/logger.js';
-import {
-	logSearchQuery,
-	logPromptQuery,
-	logGradioEvent,
-	type QueryLoggerOptions,
-} from './utils/query-logger.js';
+import { logSearchQuery, logPromptQuery, logGradioEvent, type QueryLoggerOptions } from './utils/query-logger.js';
 import { DEFAULT_SPACE_TOOLS, type AppSettings } from '../shared/settings.js';
 import { extractAuthBouquetAndMix } from './utils/auth-utils.js';
 import { ToolSelectionStrategy, type ToolSelectionContext } from './utils/tool-selection-strategy.js';
@@ -888,20 +883,16 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 
 							const durationMs = Date.now() - startTime;
 							const responseContent = [...warningsContent, ...(processedResult.content as unknown[])];
-							logGradioEvent(
-								params.space_name || 'unknown-space',
-								sessionInfo?.clientSessionId || 'unknown',
-								{
-									durationMs,
-									isAuthenticated: !!hfToken,
-									clientName: sessionInfo?.clientInfo?.name,
-									clientVersion: sessionInfo?.clientInfo?.version,
-									success,
-									error: invokeResult.isError ? 'Tool returned isError=true' : undefined,
-									responseSizeBytes: JSON.stringify(responseContent).length,
-									isDynamic: true,
-								}
-							);
+							logGradioEvent(params.space_name || 'unknown-space', sessionInfo?.clientSessionId || 'unknown', {
+								durationMs,
+								isAuthenticated: !!hfToken,
+								clientName: sessionInfo?.clientInfo?.name,
+								clientVersion: sessionInfo?.clientInfo?.version,
+								success,
+								error: invokeResult.isError ? JSON.stringify(responseContent) : undefined,
+								responseSizeBytes: JSON.stringify(responseContent).length,
+								isDynamic: true,
+							});
 
 							return {
 								content: responseContent,
@@ -928,19 +919,15 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 						};
 					} catch (err) {
 						const durationMs = Date.now() - startTime;
-						logGradioEvent(
-							params.space_name || 'unknown-space',
-							sessionInfo?.clientSessionId || 'unknown',
-							{
-								durationMs,
-								isAuthenticated: !!hfToken,
-								clientName: sessionInfo?.clientInfo?.name,
-								clientVersion: sessionInfo?.clientInfo?.version,
-								success: false,
-								error: err,
-								isDynamic: true,
-							}
-						);
+						logGradioEvent(params.space_name || 'unknown-space', sessionInfo?.clientSessionId || 'unknown', {
+							durationMs,
+							isAuthenticated: !!hfToken,
+							clientName: sessionInfo?.clientInfo?.name,
+							clientVersion: sessionInfo?.clientInfo?.version,
+							success: false,
+							error: err,
+							isDynamic: true,
+						});
 						throw err;
 					}
 				}
