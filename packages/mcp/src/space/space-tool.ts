@@ -101,12 +101,12 @@ For parameters that accept files (FileData types):
  */
 const DYNAMIC_USAGE_INSTRUCTIONS = `# Gradio Space Interaction
 
-Interact with pre-configured Gradio MCP Spaces. Discover available spaces, view their parameter schemas, and invoke them.
+Dynamically use Gradio MCP Spaces. Discover available spaces, view their parameter schemas, and invoke them. Use "discover" to find recommended spaces for tasks.
 
 ## Available Operations
 
 ### discover
-List all available spaces from the configured space list.
+List recommended spaces and their categories.
 
 **Example:**
 \`\`\`json
@@ -149,7 +149,7 @@ Execute a space's first tool with provided parameters.
 For parameters that accept files (FileData types):
 - Provide a publicly accessible URL (http:// or https://)
 - Example: \`{"image": "https://example.com/photo.jpg"}\`
-- Outputs from one tool may be used as inputs to another
+- Output url's from one tool may be used as inputs to another.
 `;
 
 /**
@@ -173,9 +173,9 @@ export function getDynamicSpaceToolConfig(): {
 	return {
 		name: 'dynamic_space',
 		description: dynamicMode
-			? 'Discover, inspect (view parameter schema) and dynamically invoke Gradio MCP Spaces. ' +
+			? 'Discover, inspect (view parameter schema) and dynamically invoke Gradio MCP Spaces to conduct ML Tasks including Image Generation, Background Removal, Text to Speech and more ' +
 				'Call with no operation for full usage instructions.'
-			: 'Find (semantic/task search), inspect (view parameter schema) and dynamically invoke Gradio MCP Spaces to perform various ML Tasks. ' +
+			: 'Find (semantic/task search), inspect (view parameter schema) and dynamically invoke Gradio MCP Spaces. ' +
 				'Call with no operation for full usage instructions.',
 		schema: getSpaceArgsSchema(),
 		annotations: {
@@ -192,7 +192,7 @@ export function getDynamicSpaceToolConfig(): {
 export const DYNAMIC_SPACE_TOOL_CONFIG = {
 	name: 'dynamic_space',
 	description:
-		'Find (semantic/task search), inspect (view parameter schema) and dynamically invoke Gradio MCP Spaces to perform various ML Tasks. ' +
+		'Find (semantic/task search), inspect (view parameter schema) and dynamically invoke Gradio MCP Spaces. ' +
 		'Call with no operation for full usage instructions.',
 	schema: spaceArgsSchema,
 	annotations: {

@@ -7,7 +7,7 @@ import { escapeMarkdown } from '../../utilities.js';
  */
 export const DISCOVER_PROMPTS = {
 	// Header for results
-	RESULTS_HEADER: `# Available Spaces
+	RESULTS_HEADER: `**Available Spaces:**
 
 These spaces can be invoked using the \`dynamic_space\` tool.
 Use \`"operation": "view_parameters"\` to inspect a space's parameters before invoking.
@@ -18,8 +18,7 @@ Use \`"operation": "view_parameters"\` to inspect a space's parameters before in
 	NO_RESULTS: `No spaces available in the configured list.`,
 
 	// Error fetching
-	FETCH_ERROR: (url: string, error: string): string =>
-		`Error fetching space list from ${url}: ${error}`,
+	FETCH_ERROR: (url: string, error: string): string => `Error fetching space list from ${url}: ${error}`,
 };
 
 /**
@@ -34,8 +33,7 @@ function parseCsvContent(content: string): Array<{ id: string; category: string;
 		if (!line.trim()) continue;
 
 		// Parse CSV with quoted fields
-		const match = line.match(/^([^,]+),([^,]+),"([^"]*)"$/) ||
-			line.match(/^([^,]+),([^,]+),(.*)$/);
+		const match = line.match(/^([^,]+),([^,]+),"([^"]*)"$/) || line.match(/^([^,]+),([^,]+),(.*)$/);
 
 		if (match && match[1] && match[2] && match[3]) {
 			results.push({
