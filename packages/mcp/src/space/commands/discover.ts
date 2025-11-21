@@ -18,7 +18,7 @@ Use \`"operation": "view_parameters"\` to inspect a space's parameters before in
 	NO_RESULTS: `No spaces available in the configured list.`,
 
 	// Error fetching
-	FETCH_ERROR: (url: string, error: string) =>
+	FETCH_ERROR: (url: string, error: string): string =>
 		`Error fetching space list from ${url}: ${error}`,
 };
 

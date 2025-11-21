@@ -62,7 +62,7 @@ export const dynamicSpaceArgsSchema = z.object({
 /**
  * Get the appropriate schema based on mode
  */
-export function getSpaceArgsSchema() {
+export function getSpaceArgsSchema(): typeof spaceArgsSchema | typeof dynamicSpaceArgsSchema {
 	return isDynamicSpaceMode() ? dynamicSpaceArgsSchema : spaceArgsSchema;
 }
 

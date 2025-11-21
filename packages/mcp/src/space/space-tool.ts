@@ -162,7 +162,12 @@ function getUsageInstructions(): string {
  * Space tool configuration
  * Returns dynamic config based on environment
  */
-export function getDynamicSpaceToolConfig() {
+export function getDynamicSpaceToolConfig(): {
+	name: string;
+	description: string;
+	schema: ReturnType<typeof getSpaceArgsSchema>;
+	annotations: { title: string; readOnlyHint: boolean; openWorldHint: boolean };
+} {
 	const dynamicMode = isDynamicSpaceMode();
 	return {
 		name: 'dynamic_space',
