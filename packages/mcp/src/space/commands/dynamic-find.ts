@@ -9,7 +9,7 @@ const DEFAULT_RESULTS_LIMIT = 10;
  * Prompt configuration for discover operation
  * These prompts can be easily tweaked to adjust the search behavior
  */
-const DISCOVER_PROMPTS = {
+const FIND_PROMPTS = {
 	// Task hints shown when called with blank query
 	TASK_HINTS: `Here are some examples of tasks that dynamic spaces can perform:
 
@@ -34,12 +34,12 @@ const DISCOVER_PROMPTS = {
 - Music Generation
 - Style Transfer
 
-To discover MCP-enabled Spaces for a specific task, call this operation with a search query:
+To find MCP-enabled Spaces for a specific task, call this operation with a search query:
 
 **Example:**
 \`\`\`json
 {
-  "operation": "discover",
+  "operation": "find",
   "search_query": "image generation",
   "limit": 10
 }
@@ -48,7 +48,7 @@ To discover MCP-enabled Spaces for a specific task, call this operation with a s
 	// Header for search results
 	RESULTS_HEADER: (query: string, showing: number, total: number) => {
 		const showingText = showing < total ? `Showing ${showing} of ${total} results` : `All ${showing} results`;
-		return `# MCP Space Discovery Results for "${query}" (${showingText})
+		return `# MCP Space Find Results for "${query}" (${showingText})
 
 These MCP-enabled Spaces can be invoked using the \`dynamic_space\` tool.
 Use \`"operation": "view_parameters"\` to inspect a space's parameters before invoking.
@@ -74,7 +74,7 @@ Try:
  * @param hfToken - Optional HuggingFace API token
  * @returns Formatted search results
  */
-export async function discoverSpaces(
+export async function findSpaces(
 	searchQuery?: string,
 	limit: number = DEFAULT_RESULTS_LIMIT,
 	hfToken?: string
@@ -82,7 +82,7 @@ export async function discoverSpaces(
 	// Return task hints when called with blank query
 	if (!searchQuery || searchQuery.trim() === '') {
 		return {
-			formatted: DISCOVER_PROMPTS.TASK_HINTS,
+			formatted: FIND_PROMPTS.TASK_HINTS,
 			totalResults: 0,
 			resultsShared: 0,
 		};
@@ -98,7 +98,7 @@ export async function discoverSpaces(
 		);
 
 		// Format and return results
-		return formatDiscoverResults(searchQuery, results, totalCount);
+		return formatFindResults(searchQuery, results, totalCount);
 	} catch (error) {
 		const errorMessage = error instanceof Error ? error.message : String(error);
 		return {
@@ -115,16 +115,16 @@ export async function discoverSpaces(
  * Note: Author column is omitted as it's superfluous for invocation purposes
  * Duplication is OK for the mean time; space_search will be rolled in to a general tool
  */
-function formatDiscoverResults(query: string, results: SpaceSearchResult[], totalCount: number): ToolResult {
+function formatFindResults(query: string, results: SpaceSearchResult[], totalCount: number): ToolResult {
 	if (results.length === 0) {
 		return {
-			formatted: DISCOVER_PROMPTS.NO_RESULTS(query),
+			formatted: FIND_PROMPTS.NO_RESULTS(query),
 			totalResults: 0,
 			resultsShared: 0,
 		};
 	}
 
-	let markdown = DISCOVER_PROMPTS.RESULTS_HEADER(query, results.length, totalCount);
+	let markdown = FIND_PROMPTS.RESULTS_HEADER(query, results.length, totalCount);
 
 	// Table header (without Author column)
 	markdown += '| Space | Description | Space ID | Category | Likes | Trending | Relevance |\n';
