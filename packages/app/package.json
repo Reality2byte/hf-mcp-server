@@ -1,6 +1,6 @@
 {
 	"name": "@llmindset/hf-mcp-server",
-	"version": "0.2.50",
+	"version": "0.2.51",
 	"description": "Official Hugging Face MCP Server",
 	"type": "module",
 	"main": "./dist/server/streamableHttp.js",
