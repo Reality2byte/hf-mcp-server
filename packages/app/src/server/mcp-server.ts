@@ -56,7 +56,7 @@ import {
 	type DocFetchParams,
 	HF_JOBS_TOOL_CONFIG,
 	HfJobsTool,
-	DYNAMIC_SPACE_TOOL_CONFIG,
+	getDynamicSpaceToolConfig,
 	SpaceTool,
 	type SpaceArgs,
 	type InvokeResult,
@@ -820,11 +820,13 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			}
 		);
 
-		toolInstances[DYNAMIC_SPACE_TOOL_CONFIG.name] = server.tool(
-			DYNAMIC_SPACE_TOOL_CONFIG.name,
-			DYNAMIC_SPACE_TOOL_CONFIG.description,
-			DYNAMIC_SPACE_TOOL_CONFIG.schema.shape,
-			DYNAMIC_SPACE_TOOL_CONFIG.annotations,
+		// Get dynamic config based on environment (uses DYNAMIC_SPACE_DATA env var)
+		const dynamicSpaceToolConfig = getDynamicSpaceToolConfig();
+		toolInstances[dynamicSpaceToolConfig.name] = server.tool(
+			dynamicSpaceToolConfig.name,
+			dynamicSpaceToolConfig.description,
+			dynamicSpaceToolConfig.schema.shape,
+			dynamicSpaceToolConfig.annotations,
 			async (params: SpaceArgs, extra) => {
 				// Check if invoke operation is disabled by gradio=none
 				const { gradio } = extractAuthBouquetAndMix(headers);
@@ -857,8 +859,8 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 								noImageContentHeaderEnabled || toolSelection.enabledToolIds.includes('NO_GRADIO_IMAGE_CONTENT');
 							const postProcessOptions: GradioToolCallOptions = {
 								stripImageContent,
-								toolName: DYNAMIC_SPACE_TOOL_CONFIG.name,
-								outwardFacingName: DYNAMIC_SPACE_TOOL_CONFIG.name,
+								toolName: dynamicSpaceToolConfig.name,
+								outwardFacingName: dynamicSpaceToolConfig.name,
 								sessionInfo,
 								spaceName: params.space_name,
 							};
@@ -904,7 +906,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 						success = !toolResult.isError;
 
 						const durationMs = Date.now() - startTime;
-						logSearchQuery(DYNAMIC_SPACE_TOOL_CONFIG.name, loggedOperation, params, {
+						logSearchQuery(dynamicSpaceToolConfig.name, loggedOperation, params, {
 							...getLoggingOptions(),
 							totalResults: toolResult.totalResults,
 							resultsShared: toolResult.resultsShared,
@@ -935,7 +937,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 				const toolResult = await runWithQueryLogging(
 					logSearchQuery,
 					{
-						methodName: DYNAMIC_SPACE_TOOL_CONFIG.name,
+						methodName: dynamicSpaceToolConfig.name,
 						query: loggedOperation,
 						parameters: params,
 						baseOptions: getLoggingOptions(),

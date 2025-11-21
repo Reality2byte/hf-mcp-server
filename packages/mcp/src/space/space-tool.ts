@@ -165,7 +165,7 @@ function getUsageInstructions(): string {
 export function getDynamicSpaceToolConfig(): {
 	name: string;
 	description: string;
-	schema: ReturnType<typeof getSpaceArgsSchema>;
+	schema: import('zod').ZodObject<import('zod').ZodRawShape>;
 	annotations: { title: string; readOnlyHint: boolean; openWorldHint: boolean };
 } {
 	const dynamicMode = isDynamicSpaceMode();
