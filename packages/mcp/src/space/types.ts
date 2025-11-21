@@ -2,12 +2,30 @@ import { z } from 'zod';
 
 /**
  * Operations supported by the space tool
+ * Standard mode: find, view_parameters, invoke
+ * Dynamic mode (DYNAMIC_SPACE_DATA): discover, view_parameters, invoke
  */
 export const OPERATION_NAMES = ['find', 'view_parameters', 'invoke'] as const;
+export const DYNAMIC_OPERATION_NAMES = ['discover', 'view_parameters', 'invoke'] as const;
 export type OperationName = (typeof OPERATION_NAMES)[number];
+export type DynamicOperationName = (typeof DYNAMIC_OPERATION_NAMES)[number];
 
 /**
- * Zod schema for operation arguments
+ * Check if dynamic space mode is enabled
+ */
+export function isDynamicSpaceMode(): boolean {
+	return !!process.env.DYNAMIC_SPACE_DATA;
+}
+
+/**
+ * Get the appropriate operation names based on mode
+ */
+export function getOperationNames(): readonly string[] {
+	return isDynamicSpaceMode() ? DYNAMIC_OPERATION_NAMES : OPERATION_NAMES;
+}
+
+/**
+ * Zod schema for operation arguments (standard mode)
  */
 export const spaceArgsSchema = z.object({
 	operation: z.enum(OPERATION_NAMES).optional().describe('Operation to execute.'),
@@ -26,6 +44,27 @@ export const spaceArgsSchema = z.object({
 		),
 	limit: z.number().optional().describe('For find operation: Maximum number of results to return (default: 10)'),
 });
+
+/**
+ * Zod schema for operation arguments (dynamic mode with DYNAMIC_SPACE_DATA)
+ */
+export const dynamicSpaceArgsSchema = z.object({
+	operation: z.enum(DYNAMIC_OPERATION_NAMES).optional().describe('Operation to execute.'),
+	space_name: z
+		.string()
+		.optional()
+		.describe(
+			'The Hugging Face space ID (format: "username/space-name"). Required for view_parameters and invoke operations.'
+		),
+	parameters: z.string().optional().describe('For invoke operation: JSON object string of parameters'),
+});
+
+/**
+ * Get the appropriate schema based on mode
+ */
+export function getSpaceArgsSchema(): z.ZodObject<z.ZodRawShape> {
+	return isDynamicSpaceMode() ? dynamicSpaceArgsSchema : spaceArgsSchema;
+}
 
 export type SpaceArgs = z.infer<typeof spaceArgsSchema>;
 
