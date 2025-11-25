@@ -3,6 +3,7 @@ import {
 	isGradioTool,
 	createGradioToolName,
 	parseGradioSpaceIds,
+	shouldRegisterGradioFilesTool,
 } from '../../../src/server/utils/gradio-utils.js';
 
 describe('isGradioTool', () => {
@@ -441,6 +442,97 @@ describe('parseGradioSpaceIds', () => {
 			const result = parseGradioSpaceIds('user/my_model');
 			expect(result[0].name).toBe('user/my_model');
 			expect(result[0].name).toContain('_');
+		});
+	});
+});
+
+describe('shouldRegisterGradioFilesTool', () => {
+	const DYNAMIC_SPACE_TOOL_ID = 'dynamic_space';
+
+	describe('should register when conditions are met', () => {
+		it('should register when Gradio spaces configured and dataset exists', () => {
+			expect(shouldRegisterGradioFilesTool({
+				gradioSpaceCount: 2,
+				builtInTools: [],
+				dynamicSpaceToolId: DYNAMIC_SPACE_TOOL_ID,
+				datasetExists: true,
+			})).toBe(true);
+		});
+
+		it('should register when dynamic_space enabled and dataset exists', () => {
+			expect(shouldRegisterGradioFilesTool({
+				gradioSpaceCount: 0,
+				builtInTools: [DYNAMIC_SPACE_TOOL_ID],
+				dynamicSpaceToolId: DYNAMIC_SPACE_TOOL_ID,
+				datasetExists: true,
+			})).toBe(true);
+		});
+
+		it('should register when both Gradio spaces and dynamic_space enabled', () => {
+			expect(shouldRegisterGradioFilesTool({
+				gradioSpaceCount: 3,
+				builtInTools: [DYNAMIC_SPACE_TOOL_ID, 'other_tool'],
+				dynamicSpaceToolId: DYNAMIC_SPACE_TOOL_ID,
+				datasetExists: true,
+			})).toBe(true);
+		});
+	});
+
+	describe('should NOT register when conditions are not met', () => {
+		it('should NOT register when dataset does not exist', () => {
+			expect(shouldRegisterGradioFilesTool({
+				gradioSpaceCount: 2,
+				builtInTools: [DYNAMIC_SPACE_TOOL_ID],
+				dynamicSpaceToolId: DYNAMIC_SPACE_TOOL_ID,
+				datasetExists: false,
+			})).toBe(false);
+		});
+
+		it('should NOT register when no Gradio spaces and dynamic_space not enabled', () => {
+			expect(shouldRegisterGradioFilesTool({
+				gradioSpaceCount: 0,
+				builtInTools: ['other_tool', 'another_tool'],
+				dynamicSpaceToolId: DYNAMIC_SPACE_TOOL_ID,
+				datasetExists: true,
+			})).toBe(false);
+		});
+
+		it('should NOT register with empty builtInTools and no spaces', () => {
+			expect(shouldRegisterGradioFilesTool({
+				gradioSpaceCount: 0,
+				builtInTools: [],
+				dynamicSpaceToolId: DYNAMIC_SPACE_TOOL_ID,
+				datasetExists: true,
+			})).toBe(false);
+		});
+	});
+
+	describe('edge cases', () => {
+		it('should handle gradioSpaceCount of 1', () => {
+			expect(shouldRegisterGradioFilesTool({
+				gradioSpaceCount: 1,
+				builtInTools: [],
+				dynamicSpaceToolId: DYNAMIC_SPACE_TOOL_ID,
+				datasetExists: true,
+			})).toBe(true);
+		});
+
+		it('should handle dynamic_space among many tools', () => {
+			expect(shouldRegisterGradioFilesTool({
+				gradioSpaceCount: 0,
+				builtInTools: ['tool1', 'tool2', DYNAMIC_SPACE_TOOL_ID, 'tool3'],
+				dynamicSpaceToolId: DYNAMIC_SPACE_TOOL_ID,
+				datasetExists: true,
+			})).toBe(true);
+		});
+
+		it('should be case-sensitive for tool ID matching', () => {
+			expect(shouldRegisterGradioFilesTool({
+				gradioSpaceCount: 0,
+				builtInTools: ['DYNAMIC_SPACE', 'Dynamic_Space'],
+				dynamicSpaceToolId: DYNAMIC_SPACE_TOOL_ID,
+				datasetExists: true,
+			})).toBe(false);
 		});
 	});
 });
