@@ -61,6 +61,7 @@ import {
 	type SpaceArgs,
 	type InvokeResult,
 	type ToolResult,
+	VIEW_PARAMETERS,
 } from '@llmindset/hf-mcp';
 
 import type { ServerFactory, ServerFactoryResult } from './transport/base-transport.js';
@@ -834,7 +835,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					const errorMessage =
 						'The invoke operation is disabled because gradio=none is set. ' +
 						'To use invoke, remove gradio=none from your headers or set gradio to a space ID. ' +
-						'You can still use operation=view_parameters to inspect the tool schema.';
+						`You can still use operation=${VIEW_PARAMETERS} to inspect the tool schema.`;
 					return {
 						content: [{ type: 'text', text: errorMessage }],
 						isError: true,
