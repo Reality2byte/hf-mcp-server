@@ -5,8 +5,10 @@ import { z } from 'zod';
  * Standard mode: find, view_parameters, invoke
  * Dynamic mode (DYNAMIC_SPACE_DATA): discover, view_parameters, invoke
  */
-export const OPERATION_NAMES = ['find', 'view_parameters', 'invoke'] as const;
-export const DYNAMIC_OPERATION_NAMES = ['discover', 'view_parameters', 'invoke'] as const;
+
+export const VIEW_PARAMETERS = 'view_parameters';
+export const OPERATION_NAMES = ['find', VIEW_PARAMETERS, 'invoke'] as const;
+export const DYNAMIC_OPERATION_NAMES = ['discover', VIEW_PARAMETERS, 'invoke'] as const;
 export type OperationName = (typeof OPERATION_NAMES)[number];
 export type DynamicOperationName = (typeof DYNAMIC_OPERATION_NAMES)[number];
 
@@ -33,7 +35,7 @@ export const spaceArgsSchema = z.object({
 		.string()
 		.optional()
 		.describe(
-			'The Hugging Face space ID (format: "username/space-name"). Required for view_parameters and invoke operations.'
+			`The Hugging Face space ID (format: "username/space-name"). Required for ${VIEW_PARAMETERS} and invoke operations.`
 		),
 	parameters: z.string().optional().describe('For invoke operation: JSON object string of parameters'),
 	search_query: z
@@ -49,14 +51,12 @@ export const spaceArgsSchema = z.object({
  * Zod schema for operation arguments (dynamic mode with DYNAMIC_SPACE_DATA)
  */
 export const dynamicSpaceArgsSchema = z.object({
-	operation: z.enum(DYNAMIC_OPERATION_NAMES).optional().describe('Operation to execute.'),
+	operation: z.enum(DYNAMIC_OPERATION_NAMES).optional().describe('Operation to perform.'),
 	space_name: z
 		.string()
 		.optional()
-		.describe(
-			'The Hugging Face space ID (format: "username/space-name"). Required for view_parameters and invoke operations.'
-		),
-	parameters: z.string().optional().describe('For invoke operation: JSON object string of parameters'),
+		.describe(`Space ID (format: "username/space-name"). Required for "${VIEW_PARAMETERS}" and "invoke" operations.`),
+	parameters: z.string().optional().describe('JSON object string of parameters. Only required for "invoke" operation.'),
 });
 
 /**

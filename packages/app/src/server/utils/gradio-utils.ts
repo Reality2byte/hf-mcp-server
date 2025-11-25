@@ -206,3 +206,64 @@ export async function parseAndFetchGradioEndpoints(gradioParam: string, hfToken?
 
 	return fetchGradioSubdomains(parsedSpaces, hfToken);
 }
+
+/**
+ * Input parameters for determining if gradio_files tool should be registered
+ */
+export interface GradioFilesEligibilityParams {
+	/** Number of configured Gradio spaces */
+	gradioSpaceCount: number;
+	/** List of enabled built-in tool IDs */
+	builtInTools: string[];
+	/** The tool ID that represents dynamic_space */
+	dynamicSpaceToolId: string;
+	/** Whether the user's gradio-files dataset exists */
+	datasetExists: boolean;
+}
+
+/**
+ * Pure function to determine if the gradio_files tool should be registered.
+ *
+ * The tool should be registered when:
+ * 1. The user's gradio-files dataset exists, AND
+ * 2. Either Gradio spaces are configured OR dynamic_space tool is enabled
+ *
+ * @param params - The eligibility parameters
+ * @returns true if gradio_files tool should be registered
+ *
+ * @example
+ * shouldRegisterGradioFilesTool({
+ *   gradioSpaceCount: 0,
+ *   builtInTools: ['dynamic_space'],
+ *   dynamicSpaceToolId: 'dynamic_space',
+ *   datasetExists: true,
+ * }) // true - dynamic_space enabled with existing dataset
+ *
+ * @example
+ * shouldRegisterGradioFilesTool({
+ *   gradioSpaceCount: 2,
+ *   builtInTools: [],
+ *   dynamicSpaceToolId: 'dynamic_space',
+ *   datasetExists: true,
+ * }) // true - Gradio spaces configured with existing dataset
+ *
+ * @example
+ * shouldRegisterGradioFilesTool({
+ *   gradioSpaceCount: 0,
+ *   builtInTools: [],
+ *   dynamicSpaceToolId: 'dynamic_space',
+ *   datasetExists: true,
+ * }) // false - no Gradio spaces and dynamic_space not enabled
+ */
+export function shouldRegisterGradioFilesTool(params: GradioFilesEligibilityParams): boolean {
+	const { gradioSpaceCount, builtInTools, dynamicSpaceToolId, datasetExists } = params;
+
+	if (!datasetExists) {
+		return false;
+	}
+
+	const hasGradioSpaces = gradioSpaceCount > 0;
+	const isDynamicSpaceEnabled = builtInTools.includes(dynamicSpaceToolId);
+
+	return hasGradioSpaces || isDynamicSpaceEnabled;
+}

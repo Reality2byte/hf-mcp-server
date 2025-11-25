@@ -1,6 +1,7 @@
 import type { ToolResult } from '../../types/tool-result.js';
 import { SpaceSearchTool, type SpaceSearchResult } from '../../space-search.js';
 import { escapeMarkdown } from '../../utilities.js';
+import { VIEW_PARAMETERS } from '../dynamic-space-tool.js';
 
 // Default number of results to return
 const DEFAULT_RESULTS_LIMIT = 10;
@@ -51,7 +52,7 @@ To find MCP-enabled Spaces for a specific task, call this operation with a searc
 		return `# MCP Space Find Results for "${query}" (${showingText})
 
 These MCP-enabled Spaces can be invoked using the \`dynamic_space\` tool.
-Use \`"operation": "view_parameters"\` to inspect a space's parameters before invoking.
+Use \`"operation": "${VIEW_PARAMETERS}"\` to inspect a space's parameters before invoking.
 
 `;
 	},

@@ -9,6 +9,7 @@ import {
 	isDynamicSpaceMode,
 	getOperationNames,
 	getSpaceArgsSchema,
+	VIEW_PARAMETERS,
 } from './types.js';
 import { findSpaces } from './commands/dynamic-find.js';
 import { discoverSpaces } from './commands/discover.js';
@@ -50,13 +51,13 @@ Find MCP-enabled Spaces for available for invocation based on task-focused or se
 }
 \`\`\`
 
-### view_parameters
+### ${VIEW_PARAMETERS}
 Display the parameter schema for a space's first tool.
 
 **Example:**
 \`\`\`json
 {
-  "operation": "view_parameters",
+  "operation": "${VIEW_PARAMETERS}",
   "space_name": "evalstate/FLUX1_schnell"
 }
 \`\`\`
@@ -76,7 +77,7 @@ Execute a space's first tool with provided parameters.
 ## Workflow
 
 1. **Find Spaces** - Use \`find\` to find MCP-enabled spaces for your task
-2. **Inspect Parameters** - Use \`view_parameters\` to see what a space accepts
+2. **Inspect Parameters** - Use \`${VIEW_PARAMETERS}\` to see what a space accepts
 3. **Invoke the Space** - Use \`invoke\` with the required parameters
 
 ## File Handling
@@ -91,17 +92,16 @@ For parameters that accept files (FileData types):
 - Focus searches on specific tasks (e.g., "video generation", "object detection")
 - The tool automatically applies default values for optional parameters
 - Unknown parameters generate warnings but are still passed through (permissive inputs)
-- Enum parameters show all allowed values in view_parameters
+- Enum parameters show all allowed values in ${VIEW_PARAMETERS} output
 - Required parameters are clearly marked and validated
 `;
 
 /**
  * Usage instructions for dynamic mode (when DYNAMIC_SPACE_DATA is set)
- * Simplified instructions focusing on discover/view_parameters/invoke workflow
  */
 const DYNAMIC_USAGE_INSTRUCTIONS = `# Gradio Space Interaction
 
-Dynamically use Gradio MCP Spaces. Discover available spaces, view their parameter schemas, and invoke them. Use "discover" to find recommended spaces for tasks.
+Use Hugging Face. Discover available spaces, view their parameter schemas, and invoke them. Use "discover" to find recommended spaces for tasks.
 
 ## Available Operations
 
@@ -115,13 +115,13 @@ List recommended spaces and their categories.
 }
 \`\`\`
 
-### view_parameters
+### ${VIEW_PARAMETERS}
 Display the parameter schema for a space's first tool.
 
 **Example:**
 \`\`\`json
 {
-  "operation": "view_parameters",
+  "operation": "${VIEW_PARAMETERS}",
   "space_name": "evalstate/FLUX1_schnell"
 }
 \`\`\`
@@ -141,7 +141,7 @@ Execute a space's first tool with provided parameters.
 ## Workflow
 
 1. **Discover Spaces** - Use \`discover\` to see available spaces
-2. **Inspect Parameters** - Use \`view_parameters\` to see what a space accepts
+2. **Inspect Parameters** - Use \`${VIEW_PARAMETERS}\` to see what a space accepts
 3. **Invoke the Space** - Use \`invoke\` with the required parameters
 
 ## File Handling
@@ -173,13 +173,13 @@ export function getDynamicSpaceToolConfig(): {
 	return {
 		name: 'dynamic_space',
 		description: dynamicMode
-			? 'Discover, inspect (view parameter schema) and dynamically invoke Gradio MCP Spaces to conduct ML Tasks including Image Generation, Background Removal, Text to Speech and more ' +
+			? 'Perform tasks with Hugging Face Spaces. Use "discover" to find available tasks for the User. Task types include Image Generation, Background Removal, Text to Speech, OCR and more ' +
 				'Call with no operation for full usage instructions.'
-			: 'Find (semantic/task search), inspect (view parameter schema) and dynamically invoke Gradio MCP Spaces. ' +
+			: 'Find (semantic/task search), inspect (view parameter schema) and dynamically invoke Hugging Face Spaces. ' +
 				'Call with no operation for full usage instructions.',
 		schema: getSpaceArgsSchema(),
 		annotations: {
-			title: 'Dynamically use Gradio Applications',
+			title: 'Dynamically use Hugging Face Spaces',
 			readOnlyHint: false,
 			openWorldHint: true,
 		},
@@ -192,11 +192,11 @@ export function getDynamicSpaceToolConfig(): {
 export const DYNAMIC_SPACE_TOOL_CONFIG = {
 	name: 'dynamic_space',
 	description:
-		'Find (semantic/task search), inspect (view parameter schema) and dynamically invoke Gradio MCP Spaces. ' +
+		'Find (semantic/task search), inspect (view parameter schema) and dynamically invoke Hugging Face Spaces. ' +
 		'Call with no operation for full usage instructions.',
 	schema: spaceArgsSchema,
 	annotations: {
-		title: 'Dynamically use Gradio Applications',
+		title: 'Dynamically use Hugging Face Spaces',
 		readOnlyHint: false,
 		openWorldHint: true,
 	},
@@ -306,7 +306,7 @@ Call this tool with no operation for full usage instructions.`,
 Example:
 \`\`\`json
 {
-  "operation": "view_parameters",
+  "operation": "${VIEW_PARAMETERS}",
   "space_name": "username/space-name"
 }
 \`\`\``,
@@ -361,7 +361,7 @@ Example:
 }
 \`\`\`
 
-Use "view_parameters" to see what parameters this space accepts.`,
+Use "${VIEW_PARAMETERS}" to see what parameters this space accepts.`,
 				totalResults: 0,
 				resultsShared: 0,
 				isError: true,

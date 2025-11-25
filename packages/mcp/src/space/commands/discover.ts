@@ -1,5 +1,6 @@
 import type { ToolResult } from '../../types/tool-result.js';
 import { escapeMarkdown } from '../../utilities.js';
+import { VIEW_PARAMETERS } from '../dynamic-space-tool.js';
 
 /**
  * Prompt configuration for discover operation (from DYNAMIC_SPACE_DATA)
@@ -10,7 +11,7 @@ export const DISCOVER_PROMPTS = {
 	RESULTS_HEADER: `**Available Spaces:**
 
 These spaces can be invoked using the \`dynamic_space\` tool.
-Use \`"operation": "view_parameters"\` to inspect a space's parameters before invoking.
+Use \`"operation": "${VIEW_PARAMETERS}"\` to inspect a space's parameters before invoking.
 
 `,
 

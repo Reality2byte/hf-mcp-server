@@ -1,5 +1,5 @@
 import type { SchemaComplexityResult, ParameterInfo } from '../types.js';
-import { FILE_INPUT_HELP_MESSAGE } from '../types.js';
+import { FILE_INPUT_HELP_MESSAGE, VIEW_PARAMETERS } from '../types.js';
 
 /**
  * Formats parameter schema for display to users
@@ -194,7 +194,7 @@ export function formatValidationError(errors: string[], spaceName: string): stri
 		output += `- ${error}\n`;
 	}
 
-	output += `\nUse the view_parameters operation to see all required parameters and their types.`;
+	output += `\nUse the ${VIEW_PARAMETERS} operation to see all required parameters and their types.`;
 
 	return output;
 }

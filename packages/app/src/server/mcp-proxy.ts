@@ -7,11 +7,11 @@ import { GRADIO_IMAGE_FILTER_FLAG } from '../shared/behavior-flags.js';
 import { logger } from './utils/logger.js';
 import { registerRemoteTools } from './gradio-endpoint-connector.js';
 import { extractAuthBouquetAndMix } from './utils/auth-utils.js';
-import { parseGradioSpaceIds } from './utils/gradio-utils.js';
+import { parseGradioSpaceIds, shouldRegisterGradioFilesTool } from './utils/gradio-utils.js';
 import { getGradioSpaces } from './utils/gradio-discovery.js';
 import { repoExists } from '@huggingface/hub';
 import type { GradioFilesParams } from '@llmindset/hf-mcp';
-import { GRADIO_FILES_TOOL_CONFIG, GradioFilesTool } from '@llmindset/hf-mcp';
+import { GRADIO_FILES_TOOL_CONFIG, GradioFilesTool, DYNAMIC_SPACE_TOOL_ID } from '@llmindset/hf-mcp';
 import { logSearchQuery } from './utils/query-logger.js';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -159,6 +159,55 @@ export const createProxyServerFactory = (
 			gradioParam: gradio,
 		}, 'Collected Gradio space names');
 
+		// Register gradio_files tool if eligible
+		// This is needed when Gradio spaces are configured OR when dynamic_space is enabled
+		if (sessionInfo?.isAuthenticated && userDetails?.name && hfToken) {
+			const username = userDetails.name;
+			const token = hfToken;
+			const datasetExists = await repoExists({
+				repo: { type: 'dataset', name: `${username}/gradio-files` },
+				accessToken: token,
+			});
+
+			const shouldRegister = shouldRegisterGradioFilesTool({
+				gradioSpaceCount: allSpaceNames.length,
+				builtInTools: settings?.builtInTools ?? [],
+				dynamicSpaceToolId: DYNAMIC_SPACE_TOOL_ID,
+				datasetExists,
+			});
+
+			if (shouldRegister) {
+				server.tool(
+					GRADIO_FILES_TOOL_CONFIG.name,
+					GRADIO_FILES_TOOL_CONFIG.description,
+					GRADIO_FILES_TOOL_CONFIG.schema.shape,
+					GRADIO_FILES_TOOL_CONFIG.annotations,
+					async (params: GradioFilesParams) => {
+						const tool = new GradioFilesTool(token, username);
+						const markdown = await tool.generateDetailedMarkdown(params.fileType);
+
+						// Log the tool usage
+						logSearchQuery(
+							GRADIO_FILES_TOOL_CONFIG.name,
+							`${username}/gradio-files`,
+							{ fileType: params.fileType },
+							{
+								clientSessionId: sessionInfo?.clientSessionId,
+								isAuthenticated: sessionInfo?.isAuthenticated ?? true,
+								clientName: sessionInfo?.clientInfo?.name,
+								clientVersion: sessionInfo?.clientInfo?.version,
+								responseCharCount: markdown.length,
+							}
+						);
+
+						return {
+							content: [{ type: 'text', text: markdown }],
+						};
+					}
+				);
+			}
+		}
+
 		if (allSpaceNames.length === 0) {
 			logger.debug('No Gradio spaces configured, using local tools only');
 			return result;
@@ -210,64 +259,6 @@ export const createProxyServerFactory = (
 			if (space.name?.toLowerCase() === 'mcp-tools/qwen-image') {
 				registerQwenImagePrompt(server);
 			}
-		}
-
-		if (sessionInfo?.isAuthenticated && userDetails?.name && hfToken) {
-			const username = userDetails.name; // Capture username for closure
-			const token = hfToken; // Capture token for closure
-			const exists = await repoExists({
-				repo: { type: 'dataset', name: `${username}/gradio-files` },
-			});
-			if (exists)
-				server.tool(
-					GRADIO_FILES_TOOL_CONFIG.name,
-					GRADIO_FILES_TOOL_CONFIG.description,
-					GRADIO_FILES_TOOL_CONFIG.schema.shape,
-					GRADIO_FILES_TOOL_CONFIG.annotations,
-					async (params: GradioFilesParams) => {
-						const tool = new GradioFilesTool(token, username);
-						const markdown = await tool.generateDetailedMarkdown(params.fileType);
-
-						// Log the tool usage
-						logSearchQuery(
-							GRADIO_FILES_TOOL_CONFIG.name,
-							`${username}/gradio-files`,
-							{ fileType: params.fileType },
-							{
-								clientSessionId: sessionInfo?.clientSessionId,
-								isAuthenticated: sessionInfo?.isAuthenticated ?? true,
-								clientName: sessionInfo?.clientInfo?.name,
-								clientVersion: sessionInfo?.clientInfo?.version,
-								responseCharCount: markdown.length,
-							}
-						);
-
-						return {
-							content: [{ type: 'text', text: markdown }],
-						};
-					}
-				);
-			/* TODO -- reinstate once method handling is improved; 
-			server.prompt(
-				GRADIO_FILES_PROMPT_CONFIG.name,
-				GRADIO_FILES_PROMPT_CONFIG.description,
-				GRADIO_FILES_PROMPT_CONFIG.schema.shape,
-				async () => {
-					return {
-						description: `Gradio Files summary for ${username}`,
-						messages: [
-							{
-								role: 'user' as const,
-								content: {
-									type: 'text' as const,
-									text: await new GradioFilesTool(token, username).generateDetailedMarkdown('all'),
-								},
-							},
-						],
-					};
-				}
-			);
-			*/
 		}
 
 		logger.debug('Server ready with local and remote tools');
