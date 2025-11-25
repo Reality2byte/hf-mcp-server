@@ -29,6 +29,22 @@ export interface QueryLogEntry {
 	resultsShared?: number;
 	responseCharCount?: number;
 	requestJson?: string; // Full JSON of the request
+	durationMs?: number;
+	success?: boolean;
+	errorMessage?: string | null;
+}
+
+export interface QueryLoggerOptions {
+	clientSessionId?: string;
+	isAuthenticated?: boolean;
+	clientName?: string;
+	clientVersion?: string;
+	totalResults?: number;
+	resultsShared?: number;
+	responseCharCount?: number;
+	durationMs?: number;
+	success?: boolean;
+	error?: unknown;
 }
 
 function createQueryLogger(): Logger | null {
@@ -188,24 +204,26 @@ export function logSearchQuery(
 	methodName: string,
 	query: string,
 	data: Record<string, unknown>,
-	options?: {
-		clientSessionId?: string;
-		isAuthenticated?: boolean;
-		clientName?: string;
-		clientVersion?: string;
-		totalResults?: number;
-		resultsShared?: number;
-		responseCharCount?: number;
-	}
+	options?: QueryLoggerOptions
 ): void {
 	// Use a stable mcpServerSessionId per process/transport instance
 	const mcpServerSessionId = getMcpServerSessionId();
+	const normalizedDurationMs =
+		options?.durationMs !== undefined ? Math.round(options.durationMs) : undefined;
+	const serializedParameters = JSON.stringify(data);
+	const requestPayload = {
+		methodName,
+		query,
+		parameters: data,
+	};
+	const normalizedError =
+		options?.error !== undefined && options?.error !== null ? normalizeError(options.error) : null;
 
 	logQuery({
 		query,
 		methodName,
-		parameters: JSON.stringify(data),
-		requestJson: JSON.stringify({ methodName, query, ...data }),
+		parameters: serializedParameters,
+		requestJson: JSON.stringify(requestPayload),
 		mcpServerSessionId,
 		clientSessionId: options?.clientSessionId || null,
 		isAuthenticated: options?.isAuthenticated ?? false,
@@ -214,6 +232,9 @@ export function logSearchQuery(
 		totalResults: options?.totalResults,
 		resultsShared: options?.resultsShared,
 		responseCharCount: options?.responseCharCount,
+		durationMs: normalizedDurationMs,
+		success: options?.success ?? true,
+		errorMessage: normalizedError,
 	});
 }
 
@@ -224,24 +245,26 @@ export function logPromptQuery(
 	methodName: string,
 	query: string,
 	data: Record<string, unknown>,
-	options?: {
-		clientSessionId?: string;
-		isAuthenticated?: boolean;
-		clientName?: string;
-		clientVersion?: string;
-		totalResults?: number;
-		resultsShared?: number;
-		responseCharCount?: number;
-	}
+	options?: QueryLoggerOptions
 ): void {
 	// Use a stable mcpServerSessionId per process/transport instance
 	const mcpServerSessionId = getMcpServerSessionId();
+	const normalizedDurationMs =
+		options?.durationMs !== undefined ? Math.round(options.durationMs) : undefined;
+	const serializedParameters = JSON.stringify(data);
+	const requestPayload = {
+		methodName,
+		query,
+		parameters: data,
+	};
+	const normalizedError =
+		options?.error !== undefined && options?.error !== null ? normalizeError(options.error) : null;
 
 	logQuery({
 		query,
 		methodName,
-		parameters: JSON.stringify(data),
-		requestJson: JSON.stringify({ methodName, query, ...data }),
+		parameters: serializedParameters,
+		requestJson: JSON.stringify(requestPayload),
 		mcpServerSessionId,
 		clientSessionId: options?.clientSessionId || null,
 		isAuthenticated: options?.isAuthenticated ?? false,
@@ -250,6 +273,9 @@ export function logPromptQuery(
 		totalResults: options?.totalResults,
 		resultsShared: options?.resultsShared,
 		responseCharCount: options?.responseCharCount,
+		durationMs: normalizedDurationMs,
+		success: options?.success ?? true,
+		errorMessage: normalizedError,
 	});
 }
 
@@ -266,6 +292,7 @@ export function logSystemEvent(
 		clientVersion?: string;
 		requestJson?: unknown;
 		capabilities?: unknown;
+		ipAddress?: string;
 	}
 ): void {
 	if (!systemLogger) {
@@ -298,6 +325,9 @@ export function logSystemEvent(
 			name: options?.clientName || capabilitiesName || null,
 			version: options?.clientVersion || capabilitiesVersion || null,
 			authorized: options?.isAuthenticated ?? false, // renamed from isAuthenticated
+
+			// IP address for session tracking
+			ipAddress: options?.ipAddress || null,
 
 			// Full request data for context
 			capabilities: options?.capabilities ? JSON.stringify(options.capabilities) : null,
@@ -371,3 +401,17 @@ export function logGradioEvent(
 }
 
 export { queryLogger };
+
+function normalizeError(error: unknown): string {
+	if (error instanceof Error) {
+		return `${error.name}: ${error.message}`;
+	}
+	if (typeof error === 'string') {
+		return error;
+	}
+	try {
+		return JSON.stringify(error);
+	} catch {
+		return String(error);
+	}
+}

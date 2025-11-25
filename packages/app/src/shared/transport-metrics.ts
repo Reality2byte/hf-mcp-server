@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { TransportType } from './constants.js';
 
 /**
@@ -15,6 +16,7 @@ export interface TransportMetrics {
 		anonymous: number;
 		unauthorized?: number; // 401 errors
 		cleaned?: number; // Only for stateful transports
+		uniqueIps?: number; // Unique IP addresses that have connected
 	};
 
 	// Session lifecycle metrics (only for stateful transports)
@@ -75,6 +77,10 @@ export interface ClientMetrics {
 	isConnected: boolean;
 	activeConnections: number;
 	totalConnections: number;
+	toolCallCount: number;
+	newIpCount: number;
+	anonCount: number;
+	uniqueAuthCount: number;
 }
 
 /**
@@ -154,6 +160,7 @@ export interface SessionData {
 	connectionStatus?: 'Connected' | 'Distressed' | 'Disconnected';
 	pingFailures?: number;
 	lastPingAttempt?: string; // ISO date string
+	ipAddress?: string;
 }
 
 export interface TransportMetricsResponse {
@@ -224,6 +231,10 @@ export interface TransportMetricsResponse {
 		isConnected: boolean;
 		activeConnections: number;
 		totalConnections: number;
+		toolCallCount: number;
+		newIpCount: number;
+		anonCount: number;
+		uniqueAuthCount: number;
 	}>;
 
 	sessions: SessionData[];
@@ -406,6 +417,13 @@ class RollingWindowCounter {
 }
 
 /**
+ * Hash auth tokens before counting them to avoid storing raw secrets.
+ */
+function hashToken(token: string): string {
+	return createHash('sha256').update(token).digest('hex');
+}
+
+/**
  * Centralized metrics counter for transport operations
  */
 export class MetricsCounter {
@@ -413,12 +431,18 @@ export class MetricsCounter {
 	private rollingMinute: RollingWindowCounter;
 	private rollingHour: RollingWindowCounter;
 	private rolling3Hours: RollingWindowCounter;
+	private uniqueIps: Set<string>;
+	private clientIps: Map<string, Set<string>>; // Map of clientKey -> Set of IPs
+	private clientAuthHashes: Map<string, Set<string>>; // Map of clientKey -> Set of auth token hashes
 
 	constructor() {
 		this.metrics = createEmptyMetrics();
 		this.rollingMinute = new RollingWindowCounter(1);
 		this.rollingHour = new RollingWindowCounter(60);
 		this.rolling3Hours = new RollingWindowCounter(180);
+		this.uniqueIps = new Set();
+		this.clientIps = new Map();
+		this.clientAuthHashes = new Map();
 	}
 
 	/**
@@ -428,15 +452,18 @@ export class MetricsCounter {
 		// Calculate rates (requests per minute) for each window
 		// Note: All values represent "requests per minute" calculated over their respective windows
 		this.metrics.requests.lastMinute = this.rollingMinute.getCount(); // Requests in last 1 minute (already per minute)
-		
+
 		// For longer windows, divide total count by window size to get per-minute rate
 		const hourCount = this.rollingHour.getCount();
 		const threeHourCount = this.rolling3Hours.getCount();
-		
+
 		// Calculate per-minute rates for the longer windows
 		this.metrics.requests.lastHour = Math.round((hourCount / 60) * 100) / 100; // Requests per minute over last hour
 		this.metrics.requests.last3Hours = Math.round((threeHourCount / 180) * 100) / 100; // Requests per minute over last 3 hours
-			
+
+		// Update unique IPs count
+		this.metrics.connections.uniqueIps = this.uniqueIps.size;
+
 		return this.metrics;
 	}
 
@@ -492,6 +519,79 @@ export class MetricsCounter {
 	}
 
 	/**
+	 * Track an IP address
+	 */
+	trackIpAddress(ipAddress: string | undefined): void {
+		if (ipAddress) {
+			this.uniqueIps.add(ipAddress);
+		}
+	}
+
+	/**
+	 * Track an IP address for a specific client
+	 */
+	trackClientIpAddress(ipAddress: string | undefined, clientInfo?: { name: string; version: string }): void {
+		// Always track globally
+		this.trackIpAddress(ipAddress);
+
+		// Track per-client if client info is available
+		if (ipAddress && clientInfo) {
+			const clientKey = getClientKey(clientInfo.name, clientInfo.version);
+			const clientMetrics = this.metrics.clients.get(clientKey);
+
+			if (clientMetrics) {
+				// Get or create the IP set for this client
+				let clientIpSet = this.clientIps.get(clientKey);
+				if (!clientIpSet) {
+					clientIpSet = new Set();
+					this.clientIps.set(clientKey, clientIpSet);
+				}
+
+				// Check if this is a new IP for this client
+				const isNewIp = !clientIpSet.has(ipAddress);
+				if (isNewIp) {
+					clientIpSet.add(ipAddress);
+					clientMetrics.newIpCount++;
+				}
+			}
+		}
+	}
+
+	/**
+	 * Track auth status for a specific client
+	 */
+	trackClientAuth(authToken: string | undefined, clientInfo?: { name: string; version: string }): void {
+		if (!clientInfo) return;
+
+		const clientKey = getClientKey(clientInfo.name, clientInfo.version);
+		const clientMetrics = this.metrics.clients.get(clientKey);
+
+		if (clientMetrics) {
+			if (!authToken) {
+				// Anonymous request
+				clientMetrics.anonCount++;
+			} else {
+				// Authenticated request - hash the token for privacy
+				const tokenHash = hashToken(authToken);
+
+				// Get or create the auth hash set for this client
+				let clientAuthSet = this.clientAuthHashes.get(clientKey);
+				if (!clientAuthSet) {
+					clientAuthSet = new Set();
+					this.clientAuthHashes.set(clientKey, clientAuthSet);
+				}
+
+				// Check if this is a new auth token for this client
+				const isNewAuth = !clientAuthSet.has(tokenHash);
+				if (isNewAuth) {
+					clientAuthSet.add(tokenHash);
+					clientMetrics.uniqueAuthCount++;
+				}
+			}
+		}
+	}
+
+	/**
 	 * Update active connection count
 	 */
 	updateActiveConnections(count: number): void {
@@ -525,6 +625,10 @@ export class MetricsCounter {
 				isConnected: true,
 				activeConnections: 1,
 				totalConnections: 1,
+				toolCallCount: 0,
+				newIpCount: 0,
+				anonCount: 0,
+				uniqueAuthCount: 0,
 			};
 			this.metrics.clients.set(clientKey, clientMetrics);
 		} else {
@@ -608,6 +712,15 @@ export class MetricsCounter {
 			}
 
 			clientMethodMetrics.count++;
+
+			// If this is a tool call, increment the client's tool call count
+			if (method.startsWith('tools/call:')) {
+				const clientKey = getClientKey(clientInfo.name, clientInfo.version);
+				const clientMetrics = this.metrics.clients.get(clientKey);
+				if (clientMetrics) {
+					clientMetrics.toolCallCount++;
+				}
+			}
 		}
 
 		if (isError) {

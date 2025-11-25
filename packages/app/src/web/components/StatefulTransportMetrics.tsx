@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Badge } from './ui/badge';
 import { Separator } from './ui/separator';
 import { Table, TableBody, TableCell, TableRow } from './ui/table';
-import { Wifi, WifiOff, AlertTriangle } from 'lucide-react';
+import { Wifi, WifiOff, AlertTriangle, Activity, Clock } from 'lucide-react';
 import { DataTable } from './data-table';
 import { createSortableHeader } from './data-table-utils';
 import { useSessionCache } from '../hooks/useSessionCache';
@@ -22,6 +22,22 @@ type SessionData = {
 	connectionStatus?: 'Connected' | 'Distressed' | 'Disconnected';
 	pingFailures?: number;
 	lastPingAttempt?: string;
+	ipAddress?: string;
+};
+
+type ClientData = {
+	name: string;
+	version: string;
+	requestCount: number;
+	activeConnections: number;
+	totalConnections: number;
+	isConnected: boolean;
+	lastSeen: string;
+	firstSeen: string;
+	toolCallCount: number;
+	newIpCount: number;
+	anonCount: number;
+	uniqueAuthCount: number;
 };
 
 /**
@@ -81,6 +97,17 @@ function truncateSessionId(id: string): string {
 function truncateClientName(name: string): string {
 	if (name.length <= 42) return name;
 	return `${name.slice(0, 35)}.....${name.slice(-5)}`;
+}
+
+/**
+ * Check if a client was recently active (within last 5 minutes)
+ */
+function isRecentlyActive(lastSeen: string): boolean {
+	const now = new Date();
+	const lastSeenTime = new Date(lastSeen);
+	const diffMs = now.getTime() - lastSeenTime.getTime();
+	const diffMinutes = Math.floor(diffMs / 60000);
+	return diffMinutes < 5;
 }
 
 interface StatefulTransportMetricsProps {
@@ -171,7 +198,94 @@ export function StatefulTransportMetrics({ metrics }: StatefulTransportMetricsPr
 			header: createSortableHeader('Last Activity'),
 			cell: ({ row }) => <div className="text-sm">{formatRelativeTime(row.getValue<string>('lastActivity'))}</div>,
 		},
+		{
+			accessorKey: 'ipAddress',
+			header: createSortableHeader('IP Address'),
+			cell: ({ row }) => (
+				<div className="font-mono text-sm" title={row.getValue<string>('ipAddress') || 'Unknown'}>
+					{row.getValue<string>('ipAddress') || '-'}
+				</div>
+			),
+		},
 	];
+
+	// Define columns for the client identities table
+	const createClientColumns = (): ColumnDef<ClientData>[] => [
+		{
+			accessorKey: 'name',
+			header: createSortableHeader('Client'),
+			cell: ({ row }) => {
+				const client = row.original;
+				const clientDisplay = `${truncateClientName(client.name)}@${client.version}`;
+				return (
+					<div>
+						<p className="font-medium font-mono text-sm" title={`${client.name}@${client.version}`}>
+							{clientDisplay}
+						</p>
+						<p className="text-xs text-muted-foreground">First seen {formatRelativeTime(client.firstSeen)}</p>
+					</div>
+				);
+			},
+		},
+		{
+			accessorKey: 'requestCount',
+			header: createSortableHeader('Initializations', 'right'),
+			cell: ({ row }) => <div className="text-right font-mono text-sm">{row.getValue<number>('requestCount')}</div>,
+		},
+		{
+			accessorKey: 'toolCallCount',
+			header: createSortableHeader('Tool Calls', 'right'),
+			cell: ({ row }) => <div className="text-right font-mono text-sm">{row.getValue<number>('toolCallCount')}</div>,
+		},
+		{
+			accessorKey: 'newIpCount',
+			header: createSortableHeader('New IPs', 'right'),
+			cell: ({ row }) => <div className="text-right font-mono text-sm">{row.getValue<number>('newIpCount')}</div>,
+		},
+		{
+			accessorKey: 'anonCount',
+			header: createSortableHeader('Anon/Auth', 'right'),
+			cell: ({ row }) => {
+				const client = row.original;
+				return (
+					<div className="text-right font-mono text-sm">
+						{client.anonCount}/{client.uniqueAuthCount}
+					</div>
+				);
+			},
+		},
+		{
+			accessorKey: 'isConnected',
+			header: createSortableHeader('Status'),
+			cell: ({ row }) => {
+				const client = row.original;
+				return (
+					<div>
+						{isRecentlyActive(client.lastSeen) ? (
+							<Badge variant="success" className="gap-1">
+								<Activity className="h-3 w-3" />
+								Recent
+							</Badge>
+						) : (
+							<Badge variant="secondary" className="gap-1">
+								<Clock className="h-3 w-3" />
+								Idle
+							</Badge>
+						)}
+					</div>
+				);
+			},
+		},
+		{
+			accessorKey: 'lastSeen',
+			header: createSortableHeader('Last Seen', 'right'),
+			cell: ({ row }) => (
+				<div className="text-right text-sm">{formatRelativeTime(row.getValue<string>('lastSeen'))}</div>
+			),
+		},
+	];
+
+	const clientData = metrics.clients;
 
 	return (
 		<Card>
@@ -250,6 +364,14 @@ export function StatefulTransportMetrics({ metrics }: StatefulTransportMetricsPr
 									{metrics.requests.averagePerMinute}/{metrics.requests.last3Hours}/{metrics.requests.lastHour}
 								</TableCell>
 							</TableRow>
+							<TableRow>
+								<TableCell className="font-medium text-sm">Unique IPs</TableCell>
+								<TableCell className="text-sm font-mono">{metrics.connections.uniqueIps ?? 0}</TableCell>
+								<TableCell className="font-medium text-sm">Client/Server Errors (4xx/5xx)</TableCell>
+								<TableCell className="text-sm font-mono">
+									{metrics.errors.expected}/{metrics.errors.unexpected}
+								</TableCell>
+							</TableRow>
 							{metrics.sessionLifecycle && (
 								<TableRow>
 									<TableCell className="font-medium text-sm">Sessions New/Res-fail/Del</TableCell>
@@ -258,12 +380,6 @@ export function StatefulTransportMetrics({ metrics }: StatefulTransportMetricsPr
 									</TableCell>
 								</TableRow>
 							)}
-							<TableRow>
-								<TableCell className="font-medium text-sm">Client Errors (4xx)</TableCell>
-								<TableCell className="text-sm font-mono">{metrics.errors.expected}</TableCell>
-								<TableCell className="font-medium text-sm">Server Errors (5xx)</TableCell>
-								<TableCell className="text-sm font-mono">{metrics.errors.unexpected}</TableCell>
-							</TableRow>
 							{metrics.pings && (
 								<TableRow>
 									<TableCell className="font-medium text-sm">Pings Sent</TableCell>
@@ -324,6 +440,22 @@ export function StatefulTransportMetrics({ metrics }: StatefulTransportMetricsPr
 							searchPlaceholder="Filter sessions..."
 							pageSize={10}
 							defaultSorting={[{ id: 'lastActivity', desc: true }]}
+						/>
+					</div>
+				</>
+
+				{/* Client Identities */}
+				<>
+					<Separator />
+					<div>
+						<h3 className="text-sm font-semibold text-foreground mb-3">Client Identities</h3>
+						<DataTable
+							columns={createClientColumns()}
+							data={clientData}
+							searchColumn="name"
+							searchPlaceholder="Filter clients..."
+							pageSize={50}
+							defaultSorting={[{ id: 'lastSeen', desc: true }]}
 						/>
 					</div>
 				</>

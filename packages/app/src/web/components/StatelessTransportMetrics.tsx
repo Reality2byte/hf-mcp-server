@@ -17,6 +17,10 @@ type ClientData = {
 	isConnected: boolean;
 	lastSeen: string;
 	firstSeen: string;
+	toolCallCount: number;
+	newIpCount: number;
+	anonCount: number;
+	uniqueAuthCount: number;
 };
 
 /**
@@ -103,6 +107,28 @@ export function StatelessTransportMetrics({ metrics }: StatelessTransportMetrics
 			cell: ({ row }) => <div className="text-right font-mono text-sm">{row.getValue<number>('requestCount')}</div>,
 		},
 		{
+			accessorKey: 'toolCallCount',
+			header: createSortableHeader('Tool Calls', 'right'),
+			cell: ({ row }) => <div className="text-right font-mono text-sm">{row.getValue<number>('toolCallCount')}</div>,
+		},
+		{
+			accessorKey: 'newIpCount',
+			header: createSortableHeader('New IPs', 'right'),
+			cell: ({ row }) => <div className="text-right font-mono text-sm">{row.getValue<number>('newIpCount')}</div>,
+		},
+		{
+			accessorKey: 'anonCount',
+			header: createSortableHeader('Anon/Auth', 'right'),
+			cell: ({ row }) => {
+				const client = row.original;
+				return (
+					<div className="text-right font-mono text-sm">
+						{client.anonCount}/{client.uniqueAuthCount}
+					</div>
+				);
+			},
+		},
+		{
 			accessorKey: 'isConnected',
 			header: createSortableHeader('Status'),
 			cell: ({ row }) => {
@@ -174,10 +200,12 @@ export function StatelessTransportMetrics({ metrics }: StatelessTransportMetrics
 								</TableCell>
 							</TableRow>
 							<TableRow>
-								<TableCell className="font-medium text-sm">Client Errors (4xx)</TableCell>
-								<TableCell className="text-sm font-mono">{metrics.errors.expected}</TableCell>
-								<TableCell className="font-medium text-sm">Server Errors (5xx)</TableCell>
-								<TableCell className="text-sm font-mono">{metrics.errors.unexpected}</TableCell>
+								<TableCell className="font-medium text-sm">Unique IPs</TableCell>
+								<TableCell className="text-sm font-mono">{metrics.connections.uniqueIps ?? 0}</TableCell>
+								<TableCell className="font-medium text-sm">Client/Server Errors (4xx/5xx)</TableCell>
+								<TableCell className="text-sm font-mono">
+									{metrics.errors.expected}/{metrics.errors.unexpected}
+								</TableCell>
 							</TableRow>
 							{(metrics.staticPageHits200 !== undefined || metrics.staticPageHits405 !== undefined) && (
 								<TableRow>

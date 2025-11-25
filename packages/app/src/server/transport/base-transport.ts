@@ -59,6 +59,8 @@ export interface SessionMetadata {
 	};
 	pingFailures?: number;
 	lastPingAttempt?: Date;
+	ipAddress?: string;
+	authToken?: string;
 }
 
 /**
@@ -162,6 +164,53 @@ export abstract class BaseTransport {
 	 */
 	protected trackNewConnection(): void {
 		this.metrics.trackNewConnection();
+	}
+
+	/**
+	 * Track an IP address for unique IP metrics
+	 */
+	protected trackIpAddress(ipAddress: string | undefined): void {
+		this.metrics.trackIpAddress(ipAddress);
+	}
+
+	/**
+	 * Track an IP address for a specific client
+	 */
+	protected trackClientIpAddress(ipAddress: string | undefined, clientInfo?: { name: string; version: string }): void {
+		this.metrics.trackClientIpAddress(ipAddress, clientInfo);
+	}
+
+	/**
+	 * Track auth status for a specific client
+	 */
+	protected trackClientAuth(authToken: string | undefined, clientInfo?: { name: string; version: string }): void {
+		this.metrics.trackClientAuth(authToken, clientInfo);
+	}
+
+	/**
+	 * Extract IP address from request headers
+	 * Handles x-forwarded-for, x-real-ip, and direct IP
+	 */
+	protected extractIpAddress(
+		headers: Record<string, string | string[] | undefined>,
+		directIp?: string
+	): string | undefined {
+		// Try x-forwarded-for first (most reliable for proxied traffic)
+		const forwardedFor = headers['x-forwarded-for'];
+		if (forwardedFor) {
+			// x-forwarded-for can be a comma-separated list, take the first one (original client)
+			const ip = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
+			return ip?.split(',')[0]?.trim();
+		}
+
+		// Try x-real-ip (nginx)
+		const realIp = headers['x-real-ip'];
+		if (realIp) {
+			return Array.isArray(realIp) ? realIp[0] : realIp;
+		}
+
+		// Fallback to direct IP (no proxy scenario)
+		return directIp;
 	}
 
 	/**
@@ -420,6 +469,14 @@ export abstract class StatefulTransport<TSession extends BaseSession = BaseSessi
 					session.metadata.clientInfo = clientInfo;
 					// Associate session with real client for metrics tracking
 					this.metrics.associateSessionWithClient(clientInfo);
+
+					// Track IP address for this client if available
+					if (session.metadata.ipAddress) {
+						this.trackClientIpAddress(session.metadata.ipAddress, clientInfo);
+					}
+
+					// Track auth status for this client
+					this.trackClientAuth(session.metadata.authToken, clientInfo);
 				}
 
 				if (clientCapabilities) {

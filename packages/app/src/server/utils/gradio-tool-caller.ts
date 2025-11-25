@@ -115,7 +115,6 @@ export async function callGradioTool(
 			logger.debug({ tool: toolName, progressToken }, 'Progress notifications requested');
 
 			// Set up progress relay from remote tool to our client
-			 
 			requestOptions.onprogress = async (progress) => {
 				logger.trace({ tool: toolName, progressToken, progress }, 'Relaying progress notification');
 
@@ -130,6 +129,9 @@ export async function callGradioTool(
 					},
 				});
 			};
+
+			// Keep long-running tool calls alive while progress is flowing
+			requestOptions.resetTimeoutOnProgress = true;
 		}
 
 		// Call the remote tool and return raw result

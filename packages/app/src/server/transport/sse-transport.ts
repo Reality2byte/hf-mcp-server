@@ -78,6 +78,10 @@ export class SseTransport extends StatefulTransport<SSEConnection> {
 			const headers = req.headers as Record<string, string>;
 			extractQueryParamsToHeaders(req, headers);
 
+			// Extract IP address for tracking
+			const ipAddress = this.extractIpAddress(req.headers, req.ip);
+			this.trackIpAddress(ipAddress);
+
 			// Validate auth and track metrics
 			const authResult = await this.validateAuthAndTrackMetrics(headers);
 			if (!authResult.shouldContinue) {
@@ -107,12 +111,14 @@ export class SseTransport extends StatefulTransport<SSEConnection> {
 				isAuthenticated,
 				requestJson: req.body ?? {},
 				capabilities: requestBody?.params?.capabilities,
+				ipAddress,
 			});
 
 			// Create comprehensive cleanup function
 			const cleanup = this.createCleanupFunction(sessionId);
 
 			// Store connection with metadata
+			const authToken = headers['authorization']?.replace(/^Bearer\s+/i, '');
 			const connection: SSEConnection = {
 				transport,
 				server,
@@ -124,6 +130,8 @@ export class SseTransport extends StatefulTransport<SSEConnection> {
 					requestCount: 0,
 					isAuthenticated: authResult.shouldContinue && !!headers['authorization'],
 					capabilities: {},
+					ipAddress,
+					authToken,
 				},
 				cleaningUp: false,
 			};

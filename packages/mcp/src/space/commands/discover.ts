@@ -1,156 +1,120 @@
 import type { ToolResult } from '../../types/tool-result.js';
-import { SpaceSearchTool, type SpaceSearchResult } from '../../space-search.js';
 import { escapeMarkdown } from '../../utilities.js';
 
-// Default number of results to return
-const DEFAULT_RESULTS_LIMIT = 10;
-
 /**
- * Prompt configuration for discover operation
- * These prompts can be easily tweaked to adjust the search behavior
+ * Prompt configuration for discover operation (from DYNAMIC_SPACE_DATA)
+ * These prompts can be easily tweaked to adjust behavior
  */
-const DISCOVER_PROMPTS = {
-	// Task hints shown when called with blank query
-	TASK_HINTS: `Here are some examples of tasks that dynamic spaces can perform:
+export const DISCOVER_PROMPTS = {
+	// Header for results
+	RESULTS_HEADER: `**Available Spaces:**
 
-- Image Generation
-- Video Generation
-- Text Generation
-- Visual QA
-- Language Translation
-- Speech Synthesis
-- 3D Modeling
-- Object Detection
-- Text Analysis
-- Image Editing
-- Code Generation
-- Question Answering
-- Data Visualization
-- Voice Cloning
-- Background Removal
-- OCR
-- Image Captioning
-- Sentiment Analysis
-- Music Generation
-- Style Transfer
-
-To discover MCP-enabled Spaces for a specific task, call this operation with a search query:
-
-**Example:**
-\`\`\`json
-{
-  "operation": "discover",
-  "search_query": "image generation",
-  "limit": 10
-}
-\`\`\``,
-
-	// Header for search results
-	RESULTS_HEADER: (query: string, showing: number, total: number) => {
-		const showingText = showing < total ? `Showing ${showing} of ${total} results` : `All ${showing} results`;
-		return `# MCP Space Discovery Results for "${query}" (${showingText})
-
-These MCP-enabled Spaces can be invoked using the \`dynamic_space\` tool.
+These spaces can be invoked using the \`dynamic_space\` tool.
 Use \`"operation": "view_parameters"\` to inspect a space's parameters before invoking.
 
-`;
-	},
+`,
 
 	// No results message
-	NO_RESULTS: (query: string) =>
-		`No MCP-enabled Spaces found for "${query}".
+	NO_RESULTS: `No spaces available in the configured list.`,
 
-Try:
-- Broader search terms (e.g., "image generation" instead of specific model names)
-- Task-focused queries (e.g., "text generation", "object detection")
-- Different task categories (e.g., "video generation", "image classification")`,
+	// Error fetching
+	FETCH_ERROR: (url: string, error: string): string => `Error fetching space list from ${url}: ${error}`,
 };
 
 /**
- * Discovers MCP-enabled Spaces based on search criteria
- *
- * @param searchQuery - The search query or task category
- * @param limit - Maximum number of results to return
- * @param hfToken - Optional HuggingFace API token
- * @returns Formatted search results
+ * Parse CSV content into space entries
+ * Expected format: space_id,category,description
  */
-export async function discoverSpaces(
-	searchQuery?: string,
-	limit: number = DEFAULT_RESULTS_LIMIT,
-	hfToken?: string
-): Promise<ToolResult> {
-	// Return task hints when called with blank query
-	if (!searchQuery || searchQuery.trim() === '') {
-		return {
-			formatted: DISCOVER_PROMPTS.TASK_HINTS,
-			totalResults: 0,
-			resultsShared: 0,
-		};
+function parseCsvContent(content: string): Array<{ id: string; category: string; description: string }> {
+	const lines = content.trim().split('\n');
+	const results: Array<{ id: string; category: string; description: string }> = [];
+
+	for (const line of lines) {
+		if (!line.trim()) continue;
+
+		// Parse CSV with quoted fields
+		const match = line.match(/^([^,]+),([^,]+),"([^"]*)"$/) || line.match(/^([^,]+),([^,]+),(.*)$/);
+
+		if (match && match[1] && match[2] && match[3]) {
+			results.push({
+				id: match[1].trim(),
+				category: match[2].trim(),
+				description: match[3].trim(),
+			});
+		}
 	}
 
-	try {
-		// Use SpaceSearchTool to search for MCP-enabled spaces only
-		const searchTool = new SpaceSearchTool(hfToken);
-		const { results, totalCount } = await searchTool.search(
-			searchQuery,
-			limit,
-			true // mcp = true (only MCP-enabled spaces)
-		);
+	return results;
+}
 
-		// Format and return results
-		return formatDiscoverResults(searchQuery, results, totalCount);
-	} catch (error) {
-		const errorMessage = error instanceof Error ? error.message : String(error);
+/**
+ * Format results as a markdown table
+ */
+function formatDiscoverResults(results: Array<{ id: string; category: string; description: string }>): string {
+	if (results.length === 0) {
+		return DISCOVER_PROMPTS.NO_RESULTS;
+	}
+
+	let markdown = DISCOVER_PROMPTS.RESULTS_HEADER;
+
+	// Table header
+	markdown += '| Space ID | Category | Description |\n';
+	markdown += '|----------|----------|-------------|\n';
+
+	// Table rows
+	for (const result of results) {
+		markdown +=
+			`| \`${escapeMarkdown(result.id)}\` ` +
+			`| ${escapeMarkdown(result.category)} ` +
+			`| ${escapeMarkdown(result.description)} |\n`;
+	}
+
+	return markdown;
+}
+
+/**
+ * Discover spaces from a configured URL (DYNAMIC_SPACE_DATA)
+ * Fetches CSV content and returns as markdown table
+ */
+export async function discoverSpaces(): Promise<ToolResult> {
+	const url = process.env.DYNAMIC_SPACE_DATA;
+
+	if (!url) {
 		return {
-			formatted: `Error discovering spaces: ${errorMessage}`,
+			formatted: 'Error: DYNAMIC_SPACE_DATA environment variable is not set.',
 			totalResults: 0,
 			resultsShared: 0,
 			isError: true,
 		};
 	}
-}
 
-/**
- * Formats discover results as a markdown table
- * Note: Author column is omitted as it's superfluous for invocation purposes
- * Duplication is OK for the mean time; space_search will be rolled in to a general tool
- */
-function formatDiscoverResults(query: string, results: SpaceSearchResult[], totalCount: number): ToolResult {
-	if (results.length === 0) {
+	try {
+		const response = await fetch(url);
+
+		if (!response.ok) {
+			return {
+				formatted: DISCOVER_PROMPTS.FETCH_ERROR(url, `HTTP ${response.status}`),
+				totalResults: 0,
+				resultsShared: 0,
+				isError: true,
+			};
+		}
+
+		const content = await response.text();
+		const results = parseCsvContent(content);
+
 		return {
-			formatted: DISCOVER_PROMPTS.NO_RESULTS(query),
+			formatted: formatDiscoverResults(results),
+			totalResults: results.length,
+			resultsShared: results.length,
+		};
+	} catch (error) {
+		const errorMessage = error instanceof Error ? error.message : String(error);
+		return {
+			formatted: DISCOVER_PROMPTS.FETCH_ERROR(url, errorMessage),
 			totalResults: 0,
 			resultsShared: 0,
+			isError: true,
 		};
 	}
-
-	let markdown = DISCOVER_PROMPTS.RESULTS_HEADER(query, results.length, totalCount);
-
-	// Table header (without Author column)
-	markdown += '| Space | Description | Space ID | Category | Likes | Trending | Relevance |\n';
-	markdown += '|-------|-------------|----------|----------|-------|----------|----------|\n';
-
-	// Table rows
-	for (const result of results) {
-		const title = result.title || 'Untitled';
-		const description = result.shortDescription || result.ai_short_description || 'No description';
-		const id = result.id || '';
-		const emoji = result.emoji ? escapeMarkdown(result.emoji) + ' ' : '';
-		const relevance = result.semanticRelevancyScore ? (result.semanticRelevancyScore * 100).toFixed(1) + '%' : 'N/A';
-
-		markdown +=
-			`| ${emoji}[${escapeMarkdown(title)}](https://hf.co/spaces/${id}) ` +
-			`| ${escapeMarkdown(description)} ` +
-			`| \`${escapeMarkdown(id)}\` ` +
-			`| \`${escapeMarkdown(result.ai_category ?? '-')}\` ` +
-			`| ${escapeMarkdown(result.likes?.toString() ?? '-')} ` +
-			`| ${escapeMarkdown(result.trendingScore?.toString() ?? '-')} ` +
-			`| ${relevance} |\n`;
-	}
-
-	return {
-		formatted: markdown,
-		totalResults: totalCount,
-		resultsShared: results.length,
-	};
 }
