@@ -47,7 +47,7 @@ describe('rewriteReplicaUrlsInResult', () => {
 		const rewritten = rewriteReplicaUrlsInResult(result, 'oyerizs4-dspr4');
 
 		expect((rewritten.content[0] as { text: string }).text).toContain(rewrittenUrl);
-		expect(rewritten.content[1]).toContain(rewrittenUrl);
+		expect((rewritten.content[1] as { text: string }).text).toContain(rewrittenUrl);
 		// Non-text blocks untouched
 		expect(rewritten.content[2]).toEqual(result.content[2]);
 	});

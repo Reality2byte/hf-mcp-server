@@ -22,7 +22,8 @@ export interface GradioCallOptions {
 export function extractReplicaId(headerValue: string | undefined): string | null {
 	if (!headerValue) return null;
 	const parts = headerValue.split('-');
-	const replicaId = parts.pop();
+	if (parts.length < 2) return null;
+	const replicaId = parts[parts.length - 1];
 	if (!replicaId || replicaId.trim() === '') return null;
 	return replicaId;
 }
@@ -49,6 +50,15 @@ export function rewriteReplicaUrlsInResult(
 
 	let changed = false;
 	const newContent = result.content.map((item) => {
+		if (typeof item === 'string') {
+			const rewritten = rewriteText(item);
+			if (rewritten !== item) {
+				changed = true;
+				return { type: 'text', text: rewritten } as (typeof result.content)[number];
+			}
+			return { type: 'text', text: item } as (typeof result.content)[number];
+		}
+
 		if (item && typeof item === 'object' && 'text' in item && typeof item.text === 'string') {
 			const rewritten = rewriteText(item.text);
 			if (rewritten !== item.text) {

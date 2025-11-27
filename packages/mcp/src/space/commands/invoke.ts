@@ -5,6 +5,7 @@ import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/proto
 import { analyzeSchemaComplexity, validateParameters, applyDefaults } from '../utils/schema-validator.js';
 import { formatComplexSchemaError, formatValidationError } from '../utils/parameter-formatter.js';
 import { callGradioToolWithHeaders } from '../utils/gradio-caller.js';
+import { parseGradioSchemaResponse, normalizeParsedTools } from '../utils/gradio-schema.js';
 
 /**
  * Invokes a Gradio space with provided parameters
@@ -191,58 +192,10 @@ async function fetchGradioSchema(subdomain: string, isPrivate: boolean, hfToken?
 
 		const schemaResponse = (await response.json()) as unknown;
 
-		// Parse schema response (handle both array and object formats)
-		return parseSchemaResponse(schemaResponse);
-	} finally {
-		clearTimeout(timeoutId);
-	}
-}
-
-/**
- * Parses schema response and extracts tools
- */
-function parseSchemaResponse(schemaResponse: unknown): Tool[] {
-	const tools: Tool[] = [];
-
-	if (Array.isArray(schemaResponse)) {
-		// Array format: [{ name: "toolName", description: "...", inputSchema: {...} }, ...]
-		for (const item of schemaResponse) {
-			if (
-				typeof item === 'object' &&
-				item !== null &&
-				'name' in item &&
-				'inputSchema' in item
-			) {
-				const itemRecord = item as Record<string, unknown>;
-				if (typeof itemRecord.name === 'string') {
-					const tool = itemRecord as { name: string; description?: string; inputSchema: unknown };
-					tools.push({
-						name: tool.name,
-						description: tool.description || `${tool.name} tool`,
-						inputSchema: {
-							type: 'object',
-							...(tool.inputSchema as Record<string, unknown>),
-						},
-					});
-				}
-			}
-		}
-	} else if (typeof schemaResponse === 'object' && schemaResponse !== null) {
-		// Object format: { "toolName": { properties: {...}, required: [...] }, ... }
-		for (const [name, toolSchema] of Object.entries(schemaResponse)) {
-			if (typeof toolSchema === 'object' && toolSchema !== null) {
-				const schema = toolSchema as { description?: string };
-				tools.push({
-					name,
-					description: schema.description || `${name} tool`,
-					inputSchema: {
-						type: 'object',
-						...(toolSchema as Record<string, unknown>),
-					},
-				});
-			}
+			// Parse schema response (handle both array and object formats)
+			const parsed = parseGradioSchemaResponse(schemaResponse);
+			return normalizeParsedTools(parsed);
+		} finally {
+			clearTimeout(timeoutId);
 		}
 	}
-
-	return tools.filter((tool) => !tool.name.toLowerCase().includes('<lambda'));
-}

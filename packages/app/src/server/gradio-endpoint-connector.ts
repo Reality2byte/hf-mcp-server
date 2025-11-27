@@ -13,6 +13,7 @@ import { createGradioToolName } from './utils/gradio-utils.js';
 import { createAudioPlayerUIResource } from './utils/ui/audio-player.js';
 import { spaceMetadataCache, CACHE_CONFIG } from './utils/gradio-cache.js';
 import { callGradioTool, applyResultPostProcessing, type GradioToolCallOptions } from './utils/gradio-tool-caller.js';
+import { parseGradioSchemaResponse } from '@llmindset/hf-mcp';
 
 // Define types for JSON Schema
 interface JsonSchemaProperty {
@@ -31,12 +32,6 @@ interface JsonSchema {
 }
 
 // Define type for array format schema
-interface ArrayFormatTool {
-	name: string;
-	description?: string;
-	inputSchema: JsonSchema;
-}
-
 interface EndpointConnection {
 	endpointId: string;
 	originalIndex: number;
@@ -78,62 +73,38 @@ function createTimeout(ms: number): Promise<never> {
 	});
 }
 
-/**
- * Parses schema response and extracts tools based on format (array or object)
- */
+// Kept export for callers; now delegates to shared helper and tracks metrics.
 export function parseSchemaResponse(
 	schemaResponse: unknown,
 	endpointId: string,
 	subdomain: string
-): Array<{ name: string; description?: string; inputSchema: JsonSchema }> {
-	// Handle both array and object schema formats
-	let tools: Array<{ name: string; description?: string; inputSchema: JsonSchema }> = [];
+	): Array<{ name: string; description?: string; inputSchema: JsonSchema }> {
+	try {
+		const parsed = parseGradioSchemaResponse(schemaResponse);
+		gradioMetrics.recordSchemaFormat(parsed.format);
 
-	if (Array.isArray(schemaResponse)) {
-		// NEW-- Array format: [{ name: "toolName", description: "...", inputSchema: {...} }, ...]
-		tools = (schemaResponse as ArrayFormatTool[]).filter(
-			(tool): tool is ArrayFormatTool =>
-				typeof tool === 'object' &&
-				tool !== null &&
-				'name' in tool &&
-				typeof tool.name === 'string' &&
-				'inputSchema' in tool
-		);
 		logger.debug(
 			{
 				endpointId,
-				toolCount: tools.length,
-				tools: tools.map((t) => t.name),
+				toolCount: parsed.tools.length,
+				tools: parsed.tools.map((t) => t.name),
+				format: parsed.format,
 			},
-			'Retrieved schema (array format)'
+			'Retrieved schema'
 		);
-	} else if (typeof schemaResponse === 'object' && schemaResponse !== null) {
-		// Object format: { "toolName": { properties: {...}, required: [...] }, ... }
-		const schema = schemaResponse as Record<string, JsonSchema>;
-		tools = Object.entries(schema).map(([name, toolSchema]) => ({
-			name,
-			description: typeof toolSchema.description === 'string' ? toolSchema.description : undefined,
-			inputSchema: toolSchema,
-		}));
-		logger.debug(
-			{
-				endpointId,
-				toolCount: tools.length,
-				tools: tools.map((t) => t.name),
-			},
-			'Retrieved schema (object format)'
+
+		return parsed.tools as Array<{ name: string; description?: string; inputSchema: JsonSchema }>;
+	} catch (error) {
+		if (error instanceof Error && error.message.includes('no tools found')) {
+			// Preserve legacy error wording expected by tests/callers
+			throw new Error('No tools found in schema');
+		}
+		logger.error(
+			{ endpointId, subdomain, schemaType: typeof schemaResponse, error: error instanceof Error ? error.message : String(error) },
+			'Invalid schema format'
 		);
-	} else {
-		logger.error({ endpointId, subdomain, schemaType: typeof schemaResponse }, 'Invalid schema format');
-		throw new Error('Invalid schema format: expected array or object');
+		throw error;
 	}
-
-	if (tools.length === 0) {
-		logger.error({ endpointId, subdomain }, 'No tools found in schema');
-		throw new Error('No tools found in schema');
-	}
-
-	return tools;
 }
 
 /**

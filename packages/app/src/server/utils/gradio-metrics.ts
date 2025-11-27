@@ -16,6 +16,11 @@ export interface GradioToolMetrics {
 	failure: number;
 	/** Breakdown by tool name */
 	byTool: Record<string, { success: number; failure: number }>;
+	/** Count of schema formats seen */
+	schemaFormats: {
+		array: number;
+		object: number;
+	};
 }
 
 export class GradioMetricsCollector {
@@ -24,6 +29,10 @@ export class GradioMetricsCollector {
 		success: 0,
 		failure: 0,
 		byTool: {},
+		schemaFormats: {
+			array: 0,
+			object: 0,
+		},
 	};
 	schemaFetchErrors: Set<string> = new Set();
 
@@ -85,6 +94,10 @@ export class GradioMetricsCollector {
 			success: 0,
 			failure: 0,
 			byTool: {},
+			schemaFormats: {
+				array: 0,
+				object: 0,
+			},
 		};
 	}
 
@@ -104,6 +117,15 @@ export class GradioMetricsCollector {
 		}
 		this.schemaFetchErrors.add(toolName);
 		return true;
+	}
+
+	/** track whether schema was array or object */
+	public recordSchemaFormat(format: 'array' | 'object'): void {
+		if (format === 'array') {
+			this.metrics.schemaFormats.array++;
+		} else if (format === 'object') {
+			this.metrics.schemaFormats.object++;
+		}
 	}
 }
 

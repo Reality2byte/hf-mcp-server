@@ -312,16 +312,23 @@ async function fetchSchema(
 			// Convert to Tool format
 			const tools: Tool[] = parsed
 				.filter((parsedTool) => !parsedTool.name.toLowerCase().includes('<lambda'))
-				.map((parsedTool) => ({
-					name: parsedTool.name,
-					description: parsedTool.description || `${parsedTool.name} tool`,
-					inputSchema: {
-						type: 'object',
-						properties: parsedTool.inputSchema.properties || {},
-						required: parsedTool.inputSchema.required || [],
-						description: parsedTool.inputSchema.description,
-					},
-				}));
+				.map((parsedTool) => {
+					const inputSchema = parsedTool.inputSchema as {
+						properties?: Record<string, object>;
+						required?: string[];
+						description?: string;
+					};
+					return {
+						name: parsedTool.name,
+						description: parsedTool.description || `${parsedTool.name} tool`,
+						inputSchema: {
+							type: 'object',
+							properties: inputSchema.properties || {},
+							required: inputSchema.required || [],
+							description: inputSchema.description,
+						},
+					};
+				});
 
 			// Create schema object
 			const schema: CachedSchema = {
