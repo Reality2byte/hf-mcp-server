@@ -10,6 +10,7 @@ import {
 	getOperationNames,
 	getSpaceArgsSchema,
 	VIEW_PARAMETERS,
+	FILE_HANDLING_TEXT,
 } from './types.js';
 import { findSpaces } from './commands/dynamic-find.js';
 import { discoverSpaces } from './commands/discover.js';
@@ -25,11 +26,6 @@ export * from './types.js';
 const USAGE_INSTRUCTIONS = `# Gradio Space Interaction
 
 Dynamically interact with any Gradio MCP Space. Find spaces, view space parameter schemas, and invoke spaces.
-
-## Supported Schema Types
-
-✅ **Simple types** (supported):
-- Strings, numbers, booleans
 - Enums (predefined value sets)
 - Arrays of primitives
 - Shallow objects (one level deep)
@@ -79,17 +75,9 @@ Execute a space's first tool with provided parameters.
 1. **Find Spaces** - Use \`find\` to find MCP-enabled spaces for your task
 2. **Inspect Parameters** - Use \`${VIEW_PARAMETERS}\` to see what a space accepts
 3. **Invoke the Space** - Use \`invoke\` with the required parameters
-
-## File Handling
-
 For parameters that accept files (FileData types):
 - Provide a publicly accessible URL (http:// or https://)
 - Example: \`{"image": "https://example.com/photo.jpg"}\`
-- Outputs from one tool may be used as inputs to another
-
-## Tips
-
-- Focus searches on specific tasks (e.g., "video generation", "object detection")
 - The tool automatically applies default values for optional parameters
 - Unknown parameters generate warnings but are still passed through (permissive inputs)
 - Enum parameters show all allowed values in ${VIEW_PARAMETERS} output
@@ -99,9 +87,17 @@ For parameters that accept files (FileData types):
 /**
  * Usage instructions for dynamic mode (when DYNAMIC_SPACE_DATA is set)
  */
-const DYNAMIC_USAGE_INSTRUCTIONS = `# Gradio Space Interaction
+const DYNAMIC_USAGE_INSTRUCTIONS = `# Hugging Face Space Dynamic Use
 
-Use Hugging Face. Discover available spaces, view their parameter schemas, and invoke them. Use "discover" to find recommended spaces for tasks.
+Perform Tasks using Hugging Face Spaces. 
+
+## Workflow
+
+1. **Discover Taks and Spaces** - Use \`discover\` operation to see available spaces
+2. **View Parameters** - Use \`${VIEW_PARAMETERS}\` operation to inspect parameter schema
+3. **Invoke the Space** - Use \`invoke\` operation with the necessary parameters
+
+${FILE_HANDLING_TEXT}
 
 ## Available Operations
 
@@ -116,7 +112,7 @@ List recommended spaces and their categories.
 \`\`\`
 
 ### ${VIEW_PARAMETERS}
-Display the parameter schema for a space's first tool.
+Display the parameter schema for the Space.
 
 **Example:**
 \`\`\`json
@@ -127,7 +123,7 @@ Display the parameter schema for a space's first tool.
 \`\`\`
 
 ### invoke
-Execute a space's first tool with provided parameters.
+Execute a Task on a Space.
 
 **Example:**
 \`\`\`json
@@ -138,18 +134,7 @@ Execute a space's first tool with provided parameters.
 }
 \`\`\`
 
-## Workflow
 
-1. **Discover Spaces** - Use \`discover\` to see available spaces
-2. **Inspect Parameters** - Use \`${VIEW_PARAMETERS}\` to see what a space accepts
-3. **Invoke the Space** - Use \`invoke\` with the required parameters
-
-## File Handling
-
-For parameters that accept files (FileData types):
-- Provide a publicly accessible URL (http:// or https://)
-- Example: \`{"image": "https://example.com/photo.jpg"}\`
-- Output url's from one tool may be used as inputs to another.
 `;
 
 /**
@@ -173,10 +158,10 @@ export function getDynamicSpaceToolConfig(): {
 	return {
 		name: 'dynamic_space',
 		description: dynamicMode
-			? 'Perform tasks with Hugging Face Spaces. Use "discover" to find available tasks for the User. Task types include Image Generation, Background Removal, Text to Speech, OCR and more ' +
-				'Call with no operation for full usage instructions.'
+			? 'Perform Tasks with Hugging Face Spaces. Use "discover" to view available Tasks. Examples are Image Generation/Editing, Background Removal, Text to Speech, OCR and many more. ' +
+				'Call with no arguments for full usage instructions.'
 			: 'Find (semantic/task search), inspect (view parameter schema) and dynamically invoke Hugging Face Spaces. ' +
-				'Call with no operation for full usage instructions.',
+				'Call with no arguments for full usage instructions.',
 		schema: getSpaceArgsSchema(),
 		annotations: {
 			title: 'Dynamically use Hugging Face Spaces',

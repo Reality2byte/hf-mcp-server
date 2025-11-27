@@ -1,6 +1,6 @@
 import type { ToolResult } from '../../types/tool-result.js';
 import { escapeMarkdown } from '../../utilities.js';
-import { VIEW_PARAMETERS } from '../dynamic-space-tool.js';
+import { VIEW_PARAMETERS } from '../types.js';
 
 /**
  * Prompt configuration for discover operation (from DYNAMIC_SPACE_DATA)
