@@ -21,6 +21,7 @@ export * from './readme-utils.js';
 export * from './use-space.js';
 export * from './jobs/jobs-tool.js';
 export * from './space/dynamic-space-tool.js';
+export * from './space/utils/gradio-caller.js';
 
 // Export shared types
 export * from './types/tool-result.js';

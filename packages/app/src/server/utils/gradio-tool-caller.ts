@@ -1,4 +1,5 @@
-import { CallToolResultSchema, type ServerNotification, type ServerRequest } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResultSchema} from '@modelcontextprotocol/sdk/types.js';
+import { type ServerNotification, type ServerRequest } from '@modelcontextprotocol/sdk/types.js';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import { callGradioToolWithHeaders } from '@llmindset/hf-mcp';
 import { logger } from './logger.js';

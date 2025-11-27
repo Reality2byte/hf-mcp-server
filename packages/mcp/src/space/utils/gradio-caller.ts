@@ -16,6 +16,58 @@ export interface GradioCallOptions {
 }
 
 /**
+ * Extract the replica ID from the X-Proxied-Replica header.
+ * Example: "oyerizs4-dspr4" => "dspr4"
+ */
+export function extractReplicaId(headerValue: string | undefined): string | null {
+	if (!headerValue) return null;
+	const parts = headerValue.split('-');
+	const replicaId = parts.pop();
+	if (!replicaId || replicaId.trim() === '') return null;
+	return replicaId;
+}
+
+/**
+ * Rewrites any Gradio API URLs in text content to include the replica path segment.
+ * Example: https://mcp-tools-qwen-image-fast.hf.space/gradio_api =>
+ *          https://mcp-tools-qwen-image-fast.hf.space/--replicas/<replica_id>/gradio_api
+ */
+export function rewriteReplicaUrlsInResult(
+	result: typeof CallToolResultSchema._type,
+	proxiedReplicaHeader: string | undefined
+): typeof CallToolResultSchema._type {
+	if (process.env.NO_REPLICA_REWRITE) return result;
+	const replicaId = extractReplicaId(proxiedReplicaHeader);
+	if (!replicaId) return result;
+
+	const urlPattern = /https:\/\/([^\s"']+)\/gradio_api(\S*)?/g;
+
+	const rewriteText = (text: string): string =>
+		text.replace(urlPattern, (_match, host, rest = '') => {
+			return `https://${host}/--replicas/${replicaId}/gradio_api${rest}`;
+		});
+
+	let changed = false;
+	const newContent = result.content.map((item) => {
+		if (item && typeof item === 'object' && 'text' in item && typeof item.text === 'string') {
+			const rewritten = rewriteText(item.text);
+			if (rewritten !== item.text) {
+				changed = true;
+				return { ...item, text: rewritten };
+			}
+		}
+
+		return item;
+	});
+
+	if (!changed) return result;
+	return {
+		...result,
+		content: newContent,
+	};
+}
+
+/**
  * Shared helper to call a Gradio MCP tool over SSE, capturing response headers (including X-Proxied-Replica).
  * This handles SSE setup, optional progress relay, and cleans up the client connection.
  */
@@ -36,7 +88,6 @@ export async function callGradioToolWithHeaders(
 			capturedHeaders['x-proxied-replica'] = proxiedReplica;
 		}
 		if (options.logProxiedReplica && !loggedHeader) {
-			console.error(`Gradio response header X-Proxied-Replica: ${proxiedReplica || 'none'}`);
 			loggedHeader = true;
 		}
 		options.onHeaders?.(headers);
@@ -133,7 +184,10 @@ export async function callGradioToolWithHeaders(
 			requestOptions
 		);
 
-		return { result, capturedHeaders };
+		const proxiedReplica = capturedHeaders['x-proxied-replica'];
+		const rewritten = rewriteReplicaUrlsInResult(result, proxiedReplica);
+
+		return { result: rewritten, capturedHeaders };
 	} finally {
 		await remoteClient.close();
 	}
