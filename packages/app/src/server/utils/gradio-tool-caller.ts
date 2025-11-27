@@ -1,11 +1,6 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { SSEClientTransport, type SSEClientTransportOptions } from '@modelcontextprotocol/sdk/client/sse.js';
-import {
-	CallToolResultSchema,
-	type ServerNotification,
-	type ServerRequest,
-} from '@modelcontextprotocol/sdk/types.js';
-import type { RequestHandlerExtra, RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
+import { CallToolResultSchema, type ServerNotification, type ServerRequest } from '@modelcontextprotocol/sdk/types.js';
+import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
+import { callGradioToolWithHeaders } from '@llmindset/hf-mcp';
 import { logger } from './logger.js';
 import { stripImageContentFromResult, extractUrlFromContent } from './gradio-result-processor.js';
 
@@ -32,58 +27,6 @@ export interface GradioToolCallOptions {
 }
 
 /**
- * Creates SSE connection to a Gradio endpoint
- */
-async function createGradioConnection(sseUrl: string, hfToken?: string): Promise<Client> {
-	logger.debug({ url: sseUrl }, 'Creating SSE connection to Gradio endpoint');
-
-	// Create MCP client
-	const remoteClient = new Client(
-		{
-			name: 'hf-mcp-gradio-client',
-			version: '1.0.0',
-		},
-		{
-			capabilities: {},
-		}
-	);
-
-	// Create SSE transport with HF token if available
-	const transportOptions: SSEClientTransportOptions = {};
-	if (hfToken) {
-		const headerName = 'X-HF-Authorization';
-		const customHeaders = {
-			[headerName]: `Bearer ${hfToken}`,
-		};
-		logger.trace('Creating Gradio connection with authorization header');
-
-		// Headers for POST requests
-		transportOptions.requestInit = {
-			headers: customHeaders,
-		};
-
-		// Headers for SSE connection
-		transportOptions.eventSourceInit = {
-			fetch: (url, init) => {
-				const headers = new Headers(init.headers);
-				Object.entries(customHeaders).forEach(([key, value]) => {
-					headers.set(key, value);
-				});
-				return fetch(url.toString(), { ...init, headers });
-			},
-		};
-	}
-
-	const transport = new SSEClientTransport(new URL(sseUrl), transportOptions);
-
-	// Connect the client to the transport
-	await remoteClient.connect(transport);
-	logger.debug('SSE connection established');
-
-	return remoteClient;
-}
-
-/**
  * Unified Gradio tool caller that handles:
  * - SSE connection management
  * - MCP tool invocation
@@ -104,53 +47,33 @@ export async function callGradioTool(
 ): Promise<typeof CallToolResultSchema._type> {
 	logger.info({ tool: toolName, params: parameters }, 'Calling Gradio tool via unified caller');
 
-	const client = await createGradioConnection(sseUrl, hfToken);
+	// Call the remote tool via shared helper (handles SSE, progress relay, header capture)
+	const { result, capturedHeaders } = await callGradioToolWithHeaders(
+		sseUrl,
+		toolName,
+		parameters,
+		hfToken,
+		extra,
+		{ logProxiedReplica: true }
+	);
 
-	try {
-		// Check if the client is requesting progress notifications
-		const progressToken = extra?._meta?.progressToken;
-		const requestOptions: RequestOptions = {};
-
-		if (progressToken !== undefined && extra) {
-			logger.debug({ tool: toolName, progressToken }, 'Progress notifications requested');
-
-			// Set up progress relay from remote tool to our client
-			requestOptions.onprogress = async (progress) => {
-				logger.trace({ tool: toolName, progressToken, progress }, 'Relaying progress notification');
-
-				// Relay the progress notification to our client
-				await extra.sendNotification({
-					method: 'notifications/progress',
-					params: {
-						progressToken,
-						progress: progress.progress,
-						total: progress.total,
-						message: progress.message,
-					},
-				});
-			};
-
-			// Keep long-running tool calls alive while progress is flowing
-			requestOptions.resetTimeoutOnProgress = true;
-		}
-
-		// Call the remote tool and return raw result
-		return await client.request(
-			{
-				method: 'tools/call',
-				params: {
-					name: toolName,
-					arguments: parameters,
-					_meta: progressToken !== undefined ? { progressToken } : undefined,
+	// Attach captured headers (e.g., X-Proxied-Replica) to the result meta so callers can inspect them
+	const proxiedReplica = capturedHeaders['x-proxied-replica'];
+	if (proxiedReplica) {
+		logger.debug({ tool: toolName, proxiedReplica }, 'Captured Gradio response header');
+		return {
+			...result,
+			_meta: {
+				...(result as { _meta?: Record<string, unknown> })._meta,
+				responseHeaders: {
+					...(result as { _meta?: { responseHeaders?: Record<string, unknown> } })._meta?.responseHeaders,
+					'x-proxied-replica': proxiedReplica,
 				},
 			},
-			CallToolResultSchema,
-			requestOptions
-		);
-	} finally {
-		// Always clean up the connection
-		await client.close();
+		} as typeof CallToolResultSchema._type;
 	}
+
+	return result;
 }
 
 /**
