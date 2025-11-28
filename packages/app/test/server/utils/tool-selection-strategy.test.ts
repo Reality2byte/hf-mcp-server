@@ -22,7 +22,7 @@ describe('extractBouquetAndMix', () => {
 		const result = extractAuthBouquetAndMix(headers);
 
 		expect(result.bouquet).toBeUndefined();
-		expect(result.mix).toBe('hf_api');
+		expect(result.mix).toEqual(['hf_api']);
 	});
 
 	it('should extract both bouquet and mix from headers', () => {
@@ -33,7 +33,7 @@ describe('extractBouquetAndMix', () => {
 		const result = extractAuthBouquetAndMix(headers);
 
 		expect(result.bouquet).toBe('search');
-		expect(result.mix).toBe('hf_api');
+		expect(result.mix).toEqual(['hf_api']);
 	});
 
 	it('should handle null headers', () => {
@@ -48,6 +48,13 @@ describe('extractBouquetAndMix', () => {
 
 		expect(result.bouquet).toBeUndefined();
 		expect(result.mix).toBeUndefined();
+	});
+
+	it('should parse comma-separated mix list', () => {
+		const headers = { 'x-mcp-mix': 'hf_api, jobs ,hub_repo_details_readme' };
+		const result = extractAuthBouquetAndMix(headers);
+
+		expect(result.mix).toEqual(['hf_api', 'jobs', 'hub_repo_details_readme']);
 	});
 });
 
@@ -224,7 +231,7 @@ describe('ToolSelectionStrategy', () => {
 			expect(result.mode).toBe(ToolSelectionMode.MIX);
 			expect(result.reason).toBe('User settings + mix(hf_api)');
 			expect(result.baseSettings).toEqual(userSettings);
-			expect(result.mixedBouquet).toBe('hf_api');
+			expect(result.mixedBouquet).toEqual(['hf_api']);
 
 			// Should contain user tools + hf_api tools (deduplicated)
 			const expectedTools = [...new Set([...userSettings.builtInTools, ...TOOL_ID_GROUPS.hf_api])];
@@ -272,6 +279,30 @@ describe('ToolSelectionStrategy', () => {
 			const uniqueTools = [...new Set(result.enabledToolIds)];
 			expect(result.enabledToolIds).toEqual(uniqueTools);
 			expect(result.enabledToolIds.length).toBe(uniqueTools.length);
+		});
+
+		it('should mix multiple bouquets when comma separated', async () => {
+			const userSettings: AppSettings = {
+				builtInTools: ['hf_whoami'],
+				spaceTools: [],
+			};
+
+			const context: ToolSelectionContext = {
+				headers: { 'x-mcp-mix': 'hf_api,search' },
+				userSettings,
+				hfToken: 'test-token',
+			};
+
+			const result = await strategy.selectTools(context);
+
+			expect(result.mode).toBe(ToolSelectionMode.MIX);
+			expect(result.reason).toBe('User settings + mix(hf_api,search)');
+			expect(result.mixedBouquet).toEqual(['hf_api', 'search']);
+
+			const expectedTools = normalizeBuiltInTools([
+				...new Set([...userSettings.builtInTools, ...TOOL_ID_GROUPS.hf_api, ...TOOL_ID_GROUPS.search]),
+			]);
+			expect(result.enabledToolIds).toEqual(expectedTools);
 		});
 
 		it('should ignore mix when no user settings available', async () => {
@@ -431,7 +462,7 @@ describe('ToolSelectionStrategy', () => {
 
 			expect(result.mode).toBe(ToolSelectionMode.MIX);
 			expect(result.enabledToolIds).toEqual(TOOL_ID_GROUPS.search);
-			expect(result.mixedBouquet).toBe('search');
+			expect(result.mixedBouquet).toEqual(['search']);
 		});
 
 		it('should handle all possible tool types in mix', async () => {
@@ -451,7 +482,7 @@ describe('ToolSelectionStrategy', () => {
 				const result = await strategy.selectTools(context);
 
 				expect(result.mode).toBe(ToolSelectionMode.MIX);
-				expect(result.mixedBouquet).toBe(bouquetName);
+				expect(result.mixedBouquet).toEqual([bouquetName]);
 
 				const expectedTools = [...new Set([...userSettings.builtInTools, ...bouquetConfig.builtInTools])];
 				expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(expectedTools));
@@ -486,7 +517,7 @@ describe('ToolSelectionStrategy', () => {
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.MIX);
-			expect(result.mixedBouquet).toBe('all');
+			expect(result.mixedBouquet).toEqual(['all']);
 			expect(result.reason).toBe('User settings + mix(all)');
 
 			// Should get user's minimal tools + ALL built-in tools (deduplicated)

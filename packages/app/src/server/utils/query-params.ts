@@ -7,7 +7,7 @@ import type { Request } from 'express';
  */
 export function extractQueryParamsToHeaders(req: Request, headers: Record<string, string>): void {
 	const bouquet = req.query.bouquet as string | undefined;
-	const mix = req.query.mix as string | undefined;
+	const mix = Array.isArray(req.query.mix) ? req.query.mix.join(',') : (req.query.mix as string | undefined);
 	const gradio = req.query.gradio as string | undefined;
 	const forceauth = req.query.forceauth as string | undefined;
 	const login = req.query.login;

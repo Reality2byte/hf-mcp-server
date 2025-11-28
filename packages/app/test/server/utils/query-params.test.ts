@@ -27,6 +27,17 @@ describe('extractQueryParamsToHeaders', () => {
 		expect(headers['x-mcp-bouquet']).toBeUndefined();
 	});
 
+	it('should join multiple mix query parameters', () => {
+		const req = {
+			query: { mix: ['hf_api', 'jobs'] },
+		} as unknown as Request;
+
+		const headers: Record<string, string> = {};
+		extractQueryParamsToHeaders(req, headers);
+
+		expect(headers['x-mcp-mix']).toBe('hf_api,jobs');
+	});
+
 	it('should extract both bouquet and mix query parameters', () => {
 		const req = {
 			query: { bouquet: 'search', mix: 'hf_api' },

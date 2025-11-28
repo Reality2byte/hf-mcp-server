@@ -5,6 +5,9 @@ import {
 	USE_SPACE_TOOL_ID,
 	HF_JOBS_TOOL_ID,
 	DYNAMIC_SPACE_TOOL_ID,
+	MODEL_SEARCH_TOOL_ID,
+	DATASET_SEARCH_TOOL_ID,
+	DOCS_SEMANTIC_SEARCH_TOOL_ID,
 } from '@llmindset/hf-mcp';
 import type { AppSettings } from './settings.js';
 import { README_INCLUDE_FLAG, GRADIO_IMAGE_FILTER_FLAG } from './behavior-flags.js';
@@ -24,6 +27,17 @@ export const BOUQUETS: Record<string, AppSettings> = {
 	},
 	docs: {
 		builtInTools: [...TOOL_ID_GROUPS.docs],
+		spaceTools: [],
+	},
+	skills: {
+		builtInTools: [
+			HUB_INSPECT_TOOL_ID,
+			README_INCLUDE_FLAG,
+			MODEL_SEARCH_TOOL_ID,
+			DATASET_SEARCH_TOOL_ID,
+			DOCS_SEMANTIC_SEARCH_TOOL_ID,
+			HF_JOBS_TOOL_ID,
+		],
 		spaceTools: [],
 	},
 	all: {

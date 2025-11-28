@@ -3,15 +3,24 @@ import { logger } from '../utils/logger.js';
 /**
  * Extracts HF token, bouquet, mix, and gradio from headers and environment
  */
+function parseListParam(value: string | undefined): string[] | undefined {
+	if (!value) return undefined;
+	const parts = value
+		.split(',')
+		.map((part) => part.trim())
+		.filter(Boolean);
+	return parts.length > 0 ? parts : undefined;
+}
+
 export function extractAuthBouquetAndMix(headers: Record<string, string> | null): {
 	hfToken: string | undefined;
 	bouquet: string | undefined;
-	mix: string | undefined;
+	mix: string[] | undefined;
 	gradio: string | undefined;
 } {
 	let tokenFromHeader: string | undefined;
 	let bouquet: string | undefined;
-	let mix: string | undefined;
+	let mix: string[] | undefined;
 	let gradio: string | undefined;
 
 	if (headers) {
@@ -31,7 +40,7 @@ export function extractAuthBouquetAndMix(headers: Record<string, string> | null)
 
 		// Extract mix from custom header
 		if ('x-mcp-mix' in headers) {
-			mix = headers['x-mcp-mix'];
+			mix = parseListParam(headers['x-mcp-mix']);
 			logger.trace({ mix }, 'Mix parameter received');
 		}
 

@@ -26,7 +26,7 @@ export interface ToolSelectionResult {
 	enabledToolIds: string[];
 	reason: string;
 	baseSettings?: AppSettings;
-	mixedBouquet?: string;
+	mixedBouquet?: string[];
 	gradioSpaceTools?: SpaceTool[];
 }
 
@@ -128,6 +128,7 @@ export class ToolSelectionStrategy {
 	 */
 	async selectTools(context: ToolSelectionContext): Promise<ToolSelectionResult> {
 		const { bouquet, mix, gradio } = extractAuthBouquetAndMix(context.headers);
+		const mixList = mix ?? [];
 
 		// Parse gradio endpoints if provided (independent of bouquet selection)
 		// These endpoints will be registered in mcp-proxy.ts unless gradio="none"
@@ -151,30 +152,41 @@ export class ToolSelectionStrategy {
 		const baseSettings = await this.getUserSettings(context);
 
 		// 3. Apply mix if specified and we have base settings
-		if (mix && BOUQUETS[mix] && baseSettings) {
-			const mixedTools = [...baseSettings.builtInTools, ...BOUQUETS[mix].builtInTools];
-			const enabledToolIds = normalizeBuiltInTools(
-				this.applySearchEnablesFetch([...new Set(mixedTools)])
-			);
+		if (mixList.length > 0 && baseSettings) {
+			const validMixes = mixList.filter((mixName) => {
+				const isValid = Boolean(BOUQUETS[mixName]);
+				if (!isValid) {
+					logger.warn({ mixName }, 'Ignoring invalid mix bouquet name');
+				}
+				return isValid;
+			});
 
-			logger.debug(
-				{
-					mix,
-					baseToolCount: baseSettings.builtInTools.length,
-					mixToolCount: BOUQUETS[mix].builtInTools.length,
-					finalToolCount: enabledToolIds.length,
-				},
-				'Applying mix to user settings'
-			);
+				if (validMixes.length > 0) {
+					const mixedTools = validMixes.flatMap((mixName) => BOUQUETS[mixName]?.builtInTools ?? []);
+				const combinedTools = [...new Set([...baseSettings.builtInTools, ...mixedTools])];
+				const enabledToolIds = normalizeBuiltInTools(
+					this.applySearchEnablesFetch(combinedTools)
+				);
 
-			return {
-				mode: ToolSelectionMode.MIX,
-				enabledToolIds,
-				reason: `User settings + mix(${mix})${gradioSpaceTools.length > 0 ? ` + ${gradioSpaceTools.length} gradio endpoints` : ''}`,
-				baseSettings,
-				mixedBouquet: mix,
-				gradioSpaceTools: gradioSpaceTools.length > 0 ? gradioSpaceTools : undefined,
-			};
+				logger.debug(
+					{
+						mix: validMixes,
+						baseToolCount: baseSettings.builtInTools.length,
+						mixToolCount: mixedTools.length,
+						finalToolCount: enabledToolIds.length,
+					},
+					'Applying mix to user settings'
+				);
+
+				return {
+					mode: ToolSelectionMode.MIX,
+					enabledToolIds,
+					reason: `User settings + mix(${validMixes.join(',')})${gradioSpaceTools.length > 0 ? ` + ${gradioSpaceTools.length} gradio endpoints` : ''}`,
+					baseSettings,
+					mixedBouquet: validMixes,
+					gradioSpaceTools: gradioSpaceTools.length > 0 ? gradioSpaceTools : undefined,
+				};
+			}
 		}
 
 		// 4. Use base settings if available
