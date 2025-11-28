@@ -989,7 +989,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					reason: toolSelection.reason,
 					enabledCount: toolSelection.enabledToolIds.length,
 					totalTools: Object.keys(toolInstances).length,
-					mixedBouquet: toolSelection.mixedBouquet,
+					mixedBouquet: toolSelection.mixedBouquet?.join(','),
 				},
 				'Tool selection strategy applied'
 			);
