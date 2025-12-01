@@ -13,6 +13,8 @@ export interface GradioCallOptions {
 	onHeaders?: (headers: Headers) => void;
 	/** Log the X-Proxied-Replica header to stderr once */
 	logProxiedReplica?: boolean;
+	/** Optional hook for when progress relay fails (e.g., client disconnected) */
+	onProgressRelayFailure?: () => void;
 }
 
 /**
@@ -163,20 +165,49 @@ export async function callGradioToolWithHeaders(
 	try {
 		// Check if the client is requesting progress notifications
 		const progressToken = extra?._meta?.progressToken;
+
+		// Track whether we've seen a transport closure to avoid noisy retries
+		let progressRelayDisabled = false;
+
+		const sendProgressNotification = async (progress: { progress?: number; total?: number; message?: string }) => {
+			if (!extra || progressRelayDisabled) return;
+			if (extra.signal?.aborted) {
+				progressRelayDisabled = true;
+				return;
+			}
+			try {
+				const params: {
+					progressToken: number;
+					progress: number;
+					total?: number;
+					message?: string;
+				} = {
+					progressToken: progressToken as number,
+					progress: progress.progress ?? 0,
+				};
+				if (progress.total !== undefined) {
+					params.total = progress.total;
+				}
+				if (progress.message !== undefined) {
+					params.message = progress.message;
+				}
+				await extra.sendNotification({
+					method: 'notifications/progress',
+					params,
+				});
+			} catch {
+				// The underlying transport has likely closed (e.g., client disconnected); disable further relays.
+				progressRelayDisabled = true;
+				options.onProgressRelayFailure?.();
+			}
+		};
+
 		const requestOptions: RequestOptions = {};
 
 		if (progressToken !== undefined && extra) {
 			// Fire-and-forget; best-effort relay
 			requestOptions.onprogress = (progress) => {
-				void extra.sendNotification({
-					method: 'notifications/progress',
-					params: {
-						progressToken,
-						progress: progress.progress,
-						total: progress.total,
-						message: progress.message,
-					},
-				});
+				void sendProgressNotification(progress);
 			};
 			requestOptions.resetTimeoutOnProgress = true;
 		}
