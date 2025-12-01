@@ -4,6 +4,7 @@ import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/proto
 import { callGradioToolWithHeaders } from '@llmindset/hf-mcp';
 import { logger } from './logger.js';
 import { stripImageContentFromResult, extractUrlFromContent } from './gradio-result-processor.js';
+import { gradioMetrics, getMetricsSafeName } from './gradio-metrics.js';
 
 /**
  * Options for calling a Gradio tool
@@ -48,6 +49,8 @@ export async function callGradioTool(
 ): Promise<typeof CallToolResultSchema._type> {
 	logger.info({ tool: toolName, params: parameters }, 'Calling Gradio tool via unified caller');
 
+	const metricsToolName = getMetricsSafeName(toolName);
+
 	// Call the remote tool via shared helper (handles SSE, progress relay, header capture)
 	const { result, capturedHeaders } = await callGradioToolWithHeaders(
 		sseUrl,
@@ -55,7 +58,10 @@ export async function callGradioTool(
 		parameters,
 		hfToken,
 		extra,
-		{ logProxiedReplica: true }
+		{
+			logProxiedReplica: true,
+			onProgressRelayFailure: () => gradioMetrics.recordProgressRelayFailure(metricsToolName),
+		}
 	);
 
 	// Attach captured headers (e.g., X-Proxied-Replica) to the result meta so callers can inspect them

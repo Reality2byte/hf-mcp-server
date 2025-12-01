@@ -92,6 +92,14 @@ export interface BouquetPreset {
 
 const PRESET_META: Array<Omit<BouquetPreset, 'builtInTools'>> = [
 	{
+		key: 'skills',
+		label: 'Skills Toolkit',
+		description: 'Tools that work well with Hugging Face Skills (https://github.com/huggingface/skills).',
+		category: 'core',
+		supportsBouquet: true,
+		supportsMix: true,
+	},
+	{
 		key: 'spaces',
 		label: 'Spaces Toolkit',
 		description: 'Launch, inspect, and manage Spaces from your assistant.',
