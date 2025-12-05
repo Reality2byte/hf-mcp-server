@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { rewriteReplicaUrlsInResult, extractReplicaId } from '../src/space/utils/gradio-caller.js';
-import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
-const baseResult: typeof CallToolResultSchema._type = {
+const baseResult: CallToolResult = {
 	content: [],
 	isError: false,
 };
@@ -35,7 +35,7 @@ describe('rewriteReplicaUrlsInResult', () => {
 	});
 
 	it('rewrites URLs in text content when header is present', () => {
-		const result: typeof CallToolResultSchema._type = {
+		const result: CallToolResult = {
 			...baseResult,
 			content: [
 				{ type: 'text', text: `prefix ${matchUrl} suffix` },
@@ -53,7 +53,7 @@ describe('rewriteReplicaUrlsInResult', () => {
 	});
 
 	it('does nothing when header is missing', () => {
-		const result: typeof CallToolResultSchema._type = {
+		const result: CallToolResult = {
 			...baseResult,
 			content: [{ type: 'text', text: `prefix ${matchUrl} suffix` }],
 		};
@@ -65,7 +65,7 @@ describe('rewriteReplicaUrlsInResult', () => {
 
 	it('respects NO_REPLICA_REWRITE env', () => {
 		process.env.NO_REPLICA_REWRITE = '1';
-		const result: typeof CallToolResultSchema._type = {
+		const result: CallToolResult = {
 			...baseResult,
 			content: [{ type: 'text', text: matchUrl }],
 		};

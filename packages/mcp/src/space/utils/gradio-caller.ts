@@ -1,10 +1,10 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport, type SSEClientTransportOptions } from '@modelcontextprotocol/sdk/client/sse.js';
-import { CallToolResultSchema, type ServerNotification, type ServerRequest } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolResultSchema, type CallToolResult, type ServerNotification, type ServerRequest } from '@modelcontextprotocol/sdk/types.js';
 import type { RequestHandlerExtra, RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
 
 export interface GradioCallResult {
-	result: typeof CallToolResultSchema._type;
+	result: CallToolResult;
 	capturedHeaders: Record<string, string>;
 }
 
@@ -36,9 +36,9 @@ export function extractReplicaId(headerValue: string | undefined): string | null
  *          https://mcp-tools-qwen-image-fast.hf.space/--replicas/<replica_id>/gradio_api
  */
 export function rewriteReplicaUrlsInResult(
-	result: typeof CallToolResultSchema._type,
+	result: CallToolResult,
 	proxiedReplicaHeader: string | undefined
-): typeof CallToolResultSchema._type {
+): CallToolResult {
 	if (process.env.NO_REPLICA_REWRITE) return result;
 	const replicaId = extractReplicaId(proxiedReplicaHeader);
 	if (!replicaId) return result;
