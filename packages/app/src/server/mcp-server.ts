@@ -1,5 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { z } from 'zod';
 import { createRequire } from 'module';
 import { performance } from 'node:perf_hooks';
@@ -864,10 +864,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 								spaceName: params.space_name,
 							};
 
-							const processedResult = applyResultPostProcessing(
-								invokeResult.result as typeof CallToolResultSchema._type,
-								postProcessOptions
-							);
+								const processedResult = applyResultPostProcessing(invokeResult.result as CallToolResult, postProcessOptions);
 
 							const warningsContent =
 								invokeResult.warnings.length > 0
@@ -898,7 +895,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 							return {
 								content: responseContent,
 								...(invokeResult.isError && { isError: true }),
-							} as typeof CallToolResultSchema._type;
+							} as CallToolResult;
 						}
 
 						const toolResult = result as ToolResult;

@@ -1,5 +1,5 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import type { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { type ServerNotification, type ServerRequest, type Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
@@ -336,7 +336,7 @@ function createToolHandler(
 ): (
 	params: Record<string, unknown>,
 	extra: RequestHandlerExtra<ServerRequest, ServerNotification>
-) => Promise<typeof CallToolResultSchema._type> {
+) => Promise<CallToolResult> {
 	return async (params: Record<string, unknown>, extra) => {
 		logger.info({ tool: tool.name, params }, 'Calling remote tool');
 
@@ -453,7 +453,7 @@ function createToolHandler(
 						const decoratedResult = {
 							isError: false,
 							content: [result.content[0], uiResource],
-						} as typeof CallToolResultSchema._type;
+						} as CallToolResult;
 
 						// Apply post-processing to the decorated result
 						return applyResultPostProcessing(decoratedResult, postProcessOptions);

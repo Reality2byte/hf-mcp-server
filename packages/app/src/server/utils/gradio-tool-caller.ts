@@ -1,4 +1,4 @@
-import type { CallToolResultSchema} from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { type ServerNotification, type ServerRequest } from '@modelcontextprotocol/sdk/types.js';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import { callGradioToolWithHeaders } from '@llmindset/hf-mcp';
@@ -46,7 +46,7 @@ export async function callGradioTool(
 	parameters: Record<string, unknown>,
 	hfToken: string | undefined,
 	extra: RequestHandlerExtra<ServerRequest, ServerNotification> | undefined
-): Promise<typeof CallToolResultSchema._type> {
+): Promise<CallToolResult> {
 	logger.info({ tool: toolName, params: parameters }, 'Calling Gradio tool via unified caller');
 
 	const metricsToolName = getMetricsSafeName(toolName);
@@ -77,7 +77,7 @@ export async function callGradioTool(
 					'x-proxied-replica': proxiedReplica,
 				},
 			},
-		} as typeof CallToolResultSchema._type;
+		} as CallToolResult;
 	}
 
 	return result;
@@ -92,9 +92,9 @@ export async function callGradioTool(
  * to ensure consistent behavior across all Gradio tools.
  */
 export function applyResultPostProcessing(
-	result: typeof CallToolResultSchema._type,
+	result: CallToolResult,
 	options: GradioToolCallOptions
-): typeof CallToolResultSchema._type {
+): CallToolResult {
 	// Strip image content if requested
 	const filteredResult = stripImageContentFromResult(result, {
 		enabled: !!options.stripImageContent,
@@ -107,11 +107,9 @@ export function applyResultPostProcessing(
 		const extractedUrl = extractUrlFromContent(filteredResult.content);
 		if (extractedUrl) {
 			logger.debug({ tool: options.toolName, url: extractedUrl }, 'Setting structuredContent with extracted URL');
-			(
-				filteredResult as typeof CallToolResultSchema._type & {
-					structuredContent?: { url: string; spaceName?: string };
-				}
-			).structuredContent = {
+			(filteredResult as CallToolResult & {
+				structuredContent?: { url: string; spaceName?: string };
+			}).structuredContent = {
 				url: extractedUrl,
 				spaceName: options.spaceName,
 			};

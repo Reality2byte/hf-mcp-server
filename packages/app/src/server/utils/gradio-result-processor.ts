@@ -1,4 +1,4 @@
-import type { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { logger } from './logger.js';
 
 /**
@@ -17,9 +17,9 @@ export interface ImageFilterOptions {
  * to conditionally remove image content blocks based on user configuration.
  */
 export function stripImageContentFromResult(
-	callResult: typeof CallToolResultSchema._type,
+	callResult: CallToolResult,
 	{ enabled, toolName, outwardFacingName }: ImageFilterOptions
-): typeof CallToolResultSchema._type {
+): CallToolResult {
 	if (!enabled) {
 		return callResult;
 	}

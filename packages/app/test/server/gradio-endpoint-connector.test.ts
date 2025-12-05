@@ -5,7 +5,7 @@ import {
 } from '../../src/server/gradio-endpoint-connector.js';
 import { stripImageContentFromResult } from '../../src/server/utils/gradio-result-processor.js';
 import { z } from 'zod';
-import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 describe('parseSchemaResponse', () => {
 	const endpointId = 'endpoint1';
@@ -285,7 +285,7 @@ describe('stripImageContentFromResult', () => {
 		const result = {
 			isError: false,
 			content: [{ type: 'text', text: 'hello' }],
-		} as typeof CallToolResultSchema._type;
+		} as CallToolResult;
 
 		const filtered = stripImageContentFromResult(result, { ...baseOptions, enabled: false });
 
@@ -302,7 +302,7 @@ describe('stripImageContentFromResult', () => {
 					data: 'base64data',
 				},
 			],
-		} as typeof CallToolResultSchema._type;
+		} as CallToolResult;
 
 		const filtered = stripImageContentFromResult(result, { ...baseOptions, enabled: true });
 
@@ -321,7 +321,7 @@ describe('stripImageContentFromResult', () => {
 				{ type: 'text', text: 'keep me' },
 				{ type: 'image', mimeType: 'image/png', data: 'base64data' },
 			],
-		} as typeof CallToolResultSchema._type;
+		} as CallToolResult;
 
 		const filtered = stripImageContentFromResult(result, { ...baseOptions, enabled: true });
 
@@ -339,7 +339,7 @@ describe('stripImageContentFromResult', () => {
 				{ type: 'image', mimeType: 'image/png', data: 'base64data' },
 			],
 			structuredContent: { url: 'https://example.com/result' },
-		} as typeof CallToolResultSchema._type;
+		} as CallToolResult;
 
 		const filtered = stripImageContentFromResult(result, { ...baseOptions, enabled: true });
 

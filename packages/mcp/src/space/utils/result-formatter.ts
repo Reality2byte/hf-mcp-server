@@ -1,4 +1,4 @@
-import type { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 /**
  * Formats tool result for user-friendly display
@@ -8,7 +8,7 @@ import type { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
  * - Resource content (with URIs)
  * - Error results
  */
-export function formatToolResult(result: typeof CallToolResultSchema._type): string {
+export function formatToolResult(result: CallToolResult): string {
 	// Handle error results
 	if (result.isError) {
 		return formatErrorResult(result);
@@ -26,7 +26,7 @@ export function formatToolResult(result: typeof CallToolResultSchema._type): str
 /**
  * Formats error results
  */
-function formatErrorResult(result: typeof CallToolResultSchema._type): string {
+function formatErrorResult(result: CallToolResult): string {
 	if (!Array.isArray(result.content) || result.content.length === 0) {
 		return 'Error: Tool execution failed (no error details provided).';
 	}
