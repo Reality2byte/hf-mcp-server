@@ -3,6 +3,7 @@ import {
 	HfDatasetLogger,
 	type HfDatasetTransportOptions,
 	type LogEntry,
+	redactHfTokens,
 } from '../../../src/server/utils/hf-dataset-transport.js';
 import type { CommitOutput } from '@huggingface/hub';
 import { tmpdir } from 'node:os';
@@ -153,10 +154,10 @@ describe('HfDatasetLogger', () => {
 				};
 			};
 
-			logger = createTestLogger({ 
-				uploadFunction: conflictThenSuccessUpload, 
+			logger = createTestLogger({
+				uploadFunction: conflictThenSuccessUpload,
 				batchSize: 10, // Prevent auto-flush
-				flushInterval: 60000 // Prevent timer flush
+				flushInterval: 60000, // Prevent timer flush
 			});
 
 			// Add logs
@@ -341,6 +342,53 @@ describe('HfDatasetLogger', () => {
 
 			const status = logger.getStatus();
 			expect(status.bufferSize).toBe(1);
+		});
+	});
+
+	describe('Token redaction', () => {
+		it('redacts strings that look like HF tokens', () => {
+			const tokenLikeString = 'hf_xzzzzzz';
+			const withContext = `Bearer ${tokenLikeString} extra`;
+			const notToken = 'hf_short';
+
+			expect(redactHfTokens(tokenLikeString)).toBe('REDACTED_TOKEN');
+			expect(redactHfTokens(withContext)).toBe('Bearer REDACTED_TOKEN extra');
+			expect(redactHfTokens(notToken)).toBe('hf_short');
+		});
+
+		it('redacts tokens before upload', async () => {
+			const uploadCalls: unknown[] = [];
+			const uploadStub = async (params: unknown): Promise<CommitOutput> => {
+				uploadCalls.push(params);
+				return {
+					commit: { url: 'test-url', oid: 'test-oid' },
+					hookOutput: 'test-hook-output',
+				};
+			};
+
+			logger = new HfDatasetLogger({
+				loggingToken: 'test-token',
+				datasetId: 'test/dataset',
+				batchSize: 10,
+				flushInterval: 60000,
+				uploadFunction: uploadStub,
+			});
+
+			logger.processLog({
+				level: 30,
+				time: Date.now(),
+				msg: 'Contains hf_xzzzzzz in message',
+			});
+
+			await (logger as unknown as { flush: () => Promise<void> }).flush();
+
+			const blobContent = uploadCalls[0] as {
+				file: { content: Blob };
+			};
+			const uploaded = await blobContent.file.content.text();
+
+			expect(uploaded).toContain('REDACTED_TOKEN');
+			expect(uploaded).not.toMatch(/hf_[A-Za-z0-9]{7,}[A-Za-z0-9-]*/);
 		});
 	});
 });
