@@ -5,6 +5,9 @@ import { randomUUID } from 'node:crypto';
 import type { Transform } from 'node:stream';
 import safeStringify from 'fast-safe-stringify';
 
+const HF_TOKEN_REGEX = /hf_[A-Za-z0-9]{7,}[A-Za-z0-9-]*/g;
+const REDACTED_TOKEN = 'REDACTED_TOKEN';
+
 export interface HfDatasetTransportOptions {
 	loggingToken: string;
 	datasetId: string;
@@ -228,6 +231,12 @@ function createNoOpTransport(reason: string, logType = 'Logs'): Transform {
 	});
 }
 
+// Replace any string that looks like a Hugging Face token to keep uploads clean
+export function redactHfTokens(value: string): string {
+	if (!value) return value;
+	return value.replace(HF_TOKEN_REGEX, REDACTED_TOKEN);
+}
+
 // Helper function to safely stringify log entries with consistent structure
 function safeStringifyLog(log: LogEntry, sessionId: string, logType: string): string {
 	if (!log) return ''; // Skip null/undefined logs
@@ -238,7 +247,7 @@ function safeStringifyLog(log: LogEntry, sessionId: string, logType: string): st
 		const { level: _level, pid: _pid, hostname: _hostname, msg: _msg, ...logEntry } = log;
 
 		// Return the log entry with pino's time field preserved
-		return safeStringify.default(logEntry);
+		return redactHfTokens(safeStringify.default(logEntry));
 	}
 
 	// For standard logs, preserve pino defaults while creating structured format
@@ -263,7 +272,7 @@ function safeStringifyLog(log: LogEntry, sessionId: string, logType: string): st
 		}
 	});
 
-	return safeStringify.default(standardizedLog);
+	return redactHfTokens(safeStringify.default(standardizedLog));
 }
 
 // Factory function for Pino transport using pino-abstract-transport
