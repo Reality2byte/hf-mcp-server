@@ -1,6 +1,5 @@
 {
 	"name": "hf-mcp",
-	"private": true,
 	"version": "0.2.70",
 	"type": "module",
 	"packageManager": "pnpm@10.26.0",
