@@ -19,6 +19,10 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -86,10 +90,10 @@ jobs:
         run: |
           # Publish the mcp package first (dependency)
           cd packages/mcp
-          pnpm publish --access public --no-git-checks
+          pnpm publish --access public --no-git-checks --provenance
 
           # Then publish the main app package  
           cd ../app
-          pnpm publish --access public --no-git-checks
+          pnpm publish --access public --no-git-checks --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
