@@ -3,7 +3,7 @@
 	"private": true,
 	"version": "0.2.59",
 	"type": "module",
-	"packageManager": "pnpm@10.15.1",
+	"packageManager": "pnpm@10.26.0",
 	"pnpm": {
 		"shamefullyHoist": true,
 		"strictPeerDependencies": false
@@ -38,5 +38,8 @@
 		"prettier": "^3.6.2",
 		"rimraf": "^6.0.1",
 		"typescript": "~5.9.2"
+	},
+	"dependencies": {
+		"npm": "^11.7.0"
 	}
 }
