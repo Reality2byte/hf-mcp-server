@@ -98,5 +98,3 @@ jobs:
           # Then publish the main app package  
           cd ../app
           pnpm publish --access public --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
