@@ -16,18 +16,9 @@ on:
         description: 'Create as prerelease'
         default: false
 
-permissions:
-  contents: write
-  packages: write
-  id-token: write
-
 jobs:
   release:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
-      id-token: write # Add this line
     steps:
       - uses: actions/checkout@v4
         with:
@@ -95,8 +86,10 @@ jobs:
         run: |
           # Publish the mcp package first (dependency)
           cd packages/mcp
-          pnpm publish --access public --no-git-checks --provenance
+          pnpm publish --access public --no-git-checks
 
           # Then publish the main app package  
           cd ../app
-          pnpm publish --access public --no-git-checks --provenance
+          pnpm publish --access public --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
