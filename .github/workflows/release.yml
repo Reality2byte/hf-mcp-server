@@ -17,8 +17,9 @@ on:
         default: false
 
 permissions:
-  id-token: write # Required for OIDC
-  contents: read
+  contents: write
+  packages: write
+  id-token: write
 
 jobs:
   release:
