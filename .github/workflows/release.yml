@@ -16,6 +16,10 @@ on:
         description: 'Create as prerelease'
         default: false
 
+permissions:
+  id-token: write # Required for OIDC
+  contents: read
+
 jobs:
   release:
     runs-on: ubuntu-latest
