@@ -245,3 +245,30 @@ The server respects the following environment variables:
 - `MCP_STRICT_COMPLIANCE`: set to True for GET 405 rejects in JSON Mode (default serves a welcome page).
 - `AUTHENTICATE_TOOL`: whether to include an `Authenticate` tool to issue an OAuth challenge when called
 - `SEARCH_ENABLES_FETCH`: When set to `true`, automatically enables the `hf_doc_fetch` tool whenever `hf_doc_search` is enabled
+- `PROXY_TOOLS_CSV`: Optional CSV that defines Streamable HTTP proxy tool sources (see below).
+
+### Proxy tools (Streamable HTTP via CSV)
+
+You can load proxy tool definitions at startup by setting `PROXY_TOOLS_CSV` to a **HTTPS URL** or a **local file path**.
+The server fetches each MCP endpoint once on startup, runs `initialize` + `tools/list` (10s timeout), and registers any tools returned.
+If a source fails or returns no tools, it is skipped (no startup failure).
+
+**CSV format**
+
+```
+proxy_id,url,response_type
+papers,https://evalstate-hf-papers.hf.space/mcp,SSE
+news,https://example.com/mcp,JSON
+```
+
+- `proxy_id`: identifier used to disambiguate tools.
+- `url`: Streamable HTTP MCP endpoint.
+- `response_type`: `SSE` (streamed response) or `JSON` (direct JSON-RPC response).
+
+**Tool naming**
+
+- Single source: tool names are **unchanged** (taken from the downstream server).
+- Multiple sources: tool names are **prefixed** with `proxy_id_` (e.g. `papers_hf-papers-search_send`).
+
+You can include these tool names in bouquets or mixes as needed.
+Use `bouquet=proxy` or `mix=proxy` to enable all proxy tools loaded from `PROXY_TOOLS_CSV` (in addition to the base built-in tools).

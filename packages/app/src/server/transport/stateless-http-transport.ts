@@ -88,7 +88,7 @@ export class StatelessHttpTransport extends BaseTransport {
 		return false;
 	}
 
-	initialize(_options: TransportOptions): Promise<void> {
+	override initialize(_options: TransportOptions): Promise<void> {
 		this.app.post('/mcp', (req: Request, res: Response) => {
 			this.trackRequest();
 			void this.handleJsonRpcRequest(req, res);
@@ -320,8 +320,8 @@ export class StatelessHttpTransport extends BaseTransport {
 				const result = await this.serverFactory(headers, undefined, skipGradio, sessionInfoForLogging);
 				server = result.server;
 
-				// For Gradio tool calls, disable direct response to enable streaming/progress notifications
-				directResponse = !this.isGradioToolCall(requestBody);
+				// For Gradio + Streamable HTTP tool calls, disable direct response to enable streaming/progress notifications
+				directResponse = !(this.isGradioToolCall(requestBody) || this.isStreamableHttpToolCall(requestBody));
 			} else {
 				// Create fresh stub responder for simple requests
 				server = new McpServer({ name: '@huggingface/internal-responder', version: '0.0.1' });
@@ -476,7 +476,7 @@ export class StatelessHttpTransport extends BaseTransport {
 	/**
 	 * Get the number of active connections - returns STATELESS_MODE for stateless transport
 	 */
-	getActiveConnectionCount(): number {
+	override getActiveConnectionCount(): number {
 		// In analytics mode, return the number of tracked sessions
 		if (this.analyticsMode) {
 			return this.analyticsSessions.size;
@@ -498,7 +498,7 @@ export class StatelessHttpTransport extends BaseTransport {
 	/**
 	 * Clean up resources
 	 */
-	async cleanup(): Promise<void> {
+	override async cleanup(): Promise<void> {
 		// Clear analytics sessions if needed
 		this.analyticsSessions.clear();
 		logger.info('HTTP JSON transport cleanup complete');

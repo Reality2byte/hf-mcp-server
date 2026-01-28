@@ -12,7 +12,7 @@ interface SSEConnection extends BaseSession<SSEServerTransport> {
 }
 
 export class SseTransport extends StatefulTransport<SSEConnection> {
-	async initialize(_options: TransportOptions): Promise<void> {
+	override async initialize(_options: TransportOptions): Promise<void> {
 		// SSE endpoint for client connections
 		this.app.get('/sse', (req: Request, res: Response) => {
 			this.trackRequest();
@@ -241,7 +241,7 @@ export class SseTransport extends StatefulTransport<SSEConnection> {
 	/**
 	 * Remove a stale session - implementation for StatefulTransport
 	 */
-	protected async removeStaleSession(sessionId: string): Promise<void> {
+	protected override async removeStaleSession(sessionId: string): Promise<void> {
 		logger.info({ sessionId }, 'Removing stale SSE connection');
 		await this.cleanupSession(sessionId);
 
@@ -251,7 +251,7 @@ export class SseTransport extends StatefulTransport<SSEConnection> {
 		});
 	}
 
-	async cleanup(): Promise<void> {
+	override async cleanup(): Promise<void> {
 		logger.info(
 			{
 				activeConnections: this.sessions.size,

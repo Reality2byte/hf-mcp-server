@@ -5,7 +5,7 @@ import type { WebServer } from './web-server.js';
 import type { AppSettings } from '../shared/settings.js';
 import { GRADIO_IMAGE_FILTER_FLAG } from '../shared/behavior-flags.js';
 import { logger } from './utils/logger.js';
-import { registerRemoteTools } from './gradio-endpoint-connector.js';
+import { convertJsonSchemaToZod, registerRemoteTools } from './gradio-endpoint-connector.js';
 import { extractAuthBouquetAndMix } from './utils/auth-utils.js';
 import { parseGradioSpaceIds, shouldRegisterGradioFilesTool } from './utils/gradio-utils.js';
 import { getGradioSpaces } from './utils/gradio-discovery.js';
@@ -17,6 +17,9 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { createRequire } from 'module';
 import { createGradioWidgetResourceConfig } from './resources/gradio-widget-resource.js';
+import { callStreamableHttpTool } from './utils/streamable-http-tool-caller.js';
+import type { ProxyToolDefinition, ProxyToolInputSchema } from './utils/proxy-tools-config.js';
+import { getProxyToolsConfig } from './utils/proxy-tools-config.js';
 
 // Define the Qwen Image prompt configuration
 const QWEN_IMAGE_PROMPT_CONFIG = {
@@ -26,6 +29,88 @@ const QWEN_IMAGE_PROMPT_CONFIG = {
 		prompt: z.string().max(200, 'Use fewer than 200 characters').describe('The prompt to enhance for image generation'),
 	}),
 };
+
+
+function registerProxyToolsFromConfig(
+	server: McpServer,
+	configs: ProxyToolDefinition[],
+	hfToken: string | undefined,
+	enabledToolIds?: string[]
+): void {
+	if (configs.length === 0) {
+		return;
+	}
+
+	const enabledSet = enabledToolIds ? new Set(enabledToolIds) : null;
+	const registered = new Set<string>();
+
+	configs.forEach((config) => {
+		if (enabledSet && !enabledSet.has(config.toolName)) {
+			return;
+		}
+		if (registered.has(config.toolName)) {
+			logger.warn({ toolName: config.toolName }, 'Skipping duplicate proxy tool registration');
+			return;
+		}
+		registered.add(config.toolName);
+
+		const description =
+			config.description ?? `Streamable HTTP proxy tool for ${config.upstreamToolName}.`;
+		const title = config.proxyId ? `${config.proxyId} - ${config.upstreamToolName}` : config.toolName;
+		const schemaShape = buildProxyToolSchemaShape(config.inputSchema);
+
+		server.tool(
+			config.toolName,
+			description,
+			schemaShape,
+			{
+				openWorldHint: true,
+				title,
+			},
+			async (params: Record<string, unknown>, extra) => {
+				logger.trace(
+					{
+						toolName: config.toolName,
+						serverUrl: config.url,
+						upstreamToolName: config.upstreamToolName,
+						progressToken: extra?._meta?.progressToken ?? null,
+						paramKeys: Object.keys(params ?? {}),
+					},
+					'Streamable proxy tool call received'
+				);
+
+				return await callStreamableHttpTool(
+					config.url,
+					config.upstreamToolName,
+					params,
+					hfToken,
+					extra
+				);
+			}
+		);
+	});
+}
+
+function buildProxyToolSchemaShape(
+	inputSchema?: ProxyToolInputSchema
+): Record<string, z.ZodTypeAny> {
+	const schemaShape: Record<string, z.ZodTypeAny> = {};
+	if (!inputSchema || !inputSchema.properties) {
+		return schemaShape;
+	}
+
+	const required = inputSchema.required ?? [];
+	for (const [key, jsonSchemaProperty] of Object.entries(inputSchema.properties)) {
+		const isRequired = required.includes(key);
+		let zodSchema = convertJsonSchemaToZod(jsonSchemaProperty, isRequired);
+		if (!isRequired) {
+			zodSchema = zodSchema.optional();
+		}
+		schemaShape[key] = zodSchema;
+	}
+
+	return schemaShape;
+}
 
 /**
  * Registers Qwen Image prompt enhancer
@@ -118,7 +203,11 @@ export const createProxyServerFactory = (
 
 		// Create the original server instance with user settings
 		const result = await originalServerFactory(headers, settings, skipGradio, sessionInfo);
-		const { server, userDetails } = result;
+		const { server, userDetails, enabledToolIds } = result;
+		const proxyTools = getProxyToolsConfig();
+
+		// Register Streamable HTTP MCP tools regardless of Gradio skipping
+		registerProxyToolsFromConfig(server, proxyTools, hfToken, enabledToolIds);
 
 		// Skip Gradio endpoint connection for requests that skip Gradio
 		if (skipGradio) {

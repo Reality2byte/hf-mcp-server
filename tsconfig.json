@@ -8,6 +8,8 @@
 	"compilerOptions": {
 		"composite": true,
 		"skipLibCheck": true,
-		"strict": true
+		"strict": true,
+		"noUncheckedIndexedAccess": true,
+		"noImplicitOverride": true
 	}
 }

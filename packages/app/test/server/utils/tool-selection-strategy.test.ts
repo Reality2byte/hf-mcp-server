@@ -484,8 +484,8 @@ describe('ToolSelectionStrategy', () => {
 				expect(result.mode).toBe(ToolSelectionMode.MIX);
 				expect(result.mixedBouquet).toEqual([bouquetName]);
 
-				const expectedTools = [...new Set([...userSettings.builtInTools, ...bouquetConfig.builtInTools])];
-				expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(expectedTools));
+			const expectedTools = [...new Set([...userSettings.builtInTools, ...bouquetConfig.builtInTools])];
+			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(expectedTools));
 			}
 		});
 

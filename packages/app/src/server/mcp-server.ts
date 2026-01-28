@@ -1034,6 +1034,6 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 				};
 			}
 		}
-		return { server, userDetails };
+		return { server, userDetails, enabledToolIds: toolSelection.enabledToolIds };
 	};
 };
