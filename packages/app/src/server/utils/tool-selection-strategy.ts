@@ -152,10 +152,13 @@ export class ToolSelectionStrategy {
 
 		// 1. Bouquet override (highest precedence)
 		if (bouquet && BOUQUETS[bouquet]) {
-			const baseTools = hasProxyBouquet ? proxyToolNames : BOUQUETS[bouquet].builtInTools;
-			let enabledToolIds = normalizeBuiltInTools(this.applySearchEnablesFetch(baseTools));
+			let enabledToolIds = normalizeBuiltInTools(
+				this.applySearchEnablesFetch(BOUQUETS[bouquet].builtInTools)
+			);
 			if (hasProxyBouquet && proxyToolNames.length > 0) {
-				enabledToolIds = normalizeBuiltInTools(proxyToolNames);
+				enabledToolIds = this.appendProxyTools(enabledToolIds);
+			} else if (hasProxyBouquet && proxyToolNames.length === 0) {
+				logger.warn('Proxy bouquet requested but no proxy tools are configured');
 			}
 			logger.debug({ bouquet, enabledToolIds, gradioCount: gradioSpaceTools.length }, 'Using bouquet override');
 			return {
@@ -181,14 +184,15 @@ export class ToolSelectionStrategy {
 
 				if (validMixes.length > 0) {
 					const includesProxyMix = validMixes.includes('proxy');
-					const nonProxyMixes = validMixes.filter((mixName) => mixName !== 'proxy');
-					const mixedTools = nonProxyMixes.flatMap((mixName) => BOUQUETS[mixName]?.builtInTools ?? []);
+					const mixedTools = validMixes.flatMap((mixName) => BOUQUETS[mixName]?.builtInTools ?? []);
 					const combinedTools = [...new Set([...baseSettings.builtInTools, ...mixedTools])];
 					let enabledToolIds = normalizeBuiltInTools(
 						this.applySearchEnablesFetch(combinedTools)
 					);
 					if (includesProxyMix && proxyToolNames.length > 0) {
 						enabledToolIds = this.appendProxyTools(enabledToolIds);
+					} else if (includesProxyMix && proxyToolNames.length === 0) {
+						logger.warn('Proxy mix requested but no proxy tools are configured');
 					}
 
 					logger.debug(

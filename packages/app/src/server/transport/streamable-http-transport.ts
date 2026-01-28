@@ -16,7 +16,7 @@ interface StreamableHttpConnection extends BaseSession<StreamableHTTPServerTrans
 type Session = StreamableHttpConnection;
 
 export class StreamableHttpTransport extends StatefulTransport<Session> {
-	initialize(_options: TransportOptions): Promise<void> {
+	override initialize(_options: TransportOptions): Promise<void> {
 		this.setupRoutes();
 		this.startStaleConnectionCheck();
 		this.startPingKeepAlive();
@@ -306,11 +306,11 @@ export class StreamableHttpTransport extends StatefulTransport<Session> {
 	/**
 	 * Remove a stale session - implementation for StatefulTransport
 	 */
-	protected async removeStaleSession(sessionId: string): Promise<void> {
+	protected override async removeStaleSession(sessionId: string): Promise<void> {
 		await this.cleanupSession(sessionId);
 	}
 
-	async cleanup(): Promise<void> {
+	override async cleanup(): Promise<void> {
 		// Stop stale checker using base class helper
 		this.stopStaleConnectionCheck();
 

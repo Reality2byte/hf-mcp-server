@@ -70,7 +70,7 @@ export const BOUQUETS: Record<string, AppSettings> = {
 		spaceTools: [],
 	},
 	proxy: {
-		builtInTools: [],
+		builtInTools: [...TOOL_ID_GROUPS.hf_api],
 		spaceTools: [],
 	},
 };

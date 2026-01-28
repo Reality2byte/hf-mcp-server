@@ -10,7 +10,7 @@ type StdioSession = BaseSession<StdioServerTransport>;
 export class StdioTransport extends StatefulTransport<StdioSession> {
 	private readonly SESSION_ID = 'STDIO';
 
-	async initialize(_options: TransportOptions): Promise<void> {
+	override async initialize(_options: TransportOptions): Promise<void> {
 		const transport = new StdioServerTransport();
 
 		// Create server instance using factory (null headers for STDIO)
@@ -77,13 +77,13 @@ export class StdioTransport extends StatefulTransport<StdioSession> {
 	/**
 	 * STDIO doesn't need stale session removal since there's only one persistent session
 	 */
-	protected removeStaleSession(sessionId: string): Promise<void> {
+	protected override removeStaleSession(sessionId: string): Promise<void> {
 		// STDIO has only one session and it's not subject to staleness
 		logger.debug({ sessionId }, 'STDIO session staleness check (no-op)');
 		return Promise.resolve();
 	}
 
-	async cleanup(): Promise<void> {
+	override async cleanup(): Promise<void> {
 		const session = this.sessions.get(this.SESSION_ID);
 		if (session) {
 			try {
