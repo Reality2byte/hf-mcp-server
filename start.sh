@@ -35,9 +35,6 @@ case "$TRANSPORT" in
   stdio)
     node $DIST_PATH/stdio.js --port "$PORT"
     ;;
-  sse)
-    node $DIST_PATH/sse.js --port "$PORT"
-    ;;
   streamablehttp)
     # Check if JSON mode is enabled
     if [ "$JSON_MODE" = "true" ]; then
@@ -52,7 +49,7 @@ case "$TRANSPORT" in
     node $DIST_PATH/streamableHttp.js --port "$PORT" --json
     ;;
   *)
-    echo "Error: Invalid transport type '$TRANSPORT'. Valid options are: stdio, sse, streamableHttp, streamableHttpJson"
+    echo "Error: Invalid transport type '$TRANSPORT'. Valid options are: stdio, streamableHttp, streamableHttpJson"
     exit 1
     ;;
 esac

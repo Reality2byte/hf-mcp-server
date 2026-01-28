@@ -13,8 +13,6 @@ export function ConnectionFooter({ isLoading, error, transportInfo }: Connection
 		switch (transportInfo.transport) {
 			case 'stdio':
 				return 'STDIO';
-			case 'sse':
-				return 'SSE';
 			case 'streamableHttp':
 			case 'streamableHttpJson':
 				return 'Streamable HTTP';
@@ -26,8 +24,6 @@ export function ConnectionFooter({ isLoading, error, transportInfo }: Connection
 	// Get the endpoint path for the transport
 	const getEndpointPath = () => {
 		switch (transportInfo.transport) {
-			case 'sse':
-				return '/sse';
 			case 'streamableHttp':
 			case 'streamableHttpJson':
 				return '/mcp';
@@ -60,13 +56,6 @@ export function ConnectionFooter({ isLoading, error, transportInfo }: Connection
 			return (
 				<span className="ml-1.5 px-1.5 py-0.5 bg-blue-100 text-blue-800 text-[10px] rounded-sm whitespace-nowrap">
 					Session Based
-				</span>
-			);
-		} else if (transportInfo.transport === 'sse') {
-			// For SSE - purple badge
-			return (
-				<span className="ml-1.5 px-1.5 py-0.5 bg-purple-100 text-purple-800 text-[10px] rounded-sm whitespace-nowrap">
-					Event Stream
 				</span>
 			);
 		}

@@ -33,4 +33,4 @@
 
 ## Security & Configuration Tips
 - Provide auth via environment variables (`DEFAULT_HF_TOKEN`, `HF_TOKEN`); do not commit secrets.
-- `TRANSPORT` controls server mode (`stdio`, `sse`, `streamableHttp`, `streamableHttpJson`). Document any new env vars in `README.md`.
+- `TRANSPORT` controls server mode (`stdio`, `streamableHttp`, `streamableHttpJson`). Document any new env vars in `README.md`.
