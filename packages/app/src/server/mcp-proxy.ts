@@ -335,7 +335,7 @@ export const createProxyServerFactory = (
 				tools: space.tools,
 				name: space.name,
 				emoji: space.emoji,
-				sseUrl: `https://${space.subdomain}.hf.space/gradio_api/mcp/sse`,
+				mcpUrl: `https://${space.subdomain}.hf.space/gradio_api/mcp/`,
 				isPrivate: space.private,
 			};
 

@@ -1,7 +1,11 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { SSEClientTransport, type SSEClientTransportOptions } from '@modelcontextprotocol/sdk/client/sse.js';
+import {
+	StreamableHTTPClientTransport,
+	type StreamableHTTPClientTransportOptions,
+} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { CallToolResultSchema, type CallToolResult, type ServerNotification, type ServerRequest } from '@modelcontextprotocol/sdk/types.js';
 import type { RequestHandlerExtra, RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
+import { logger } from '../../logger.js';
 
 export interface GradioCallResult {
 	result: CallToolResult;
@@ -80,11 +84,11 @@ export function rewriteReplicaUrlsInResult(
 }
 
 /**
- * Shared helper to call a Gradio MCP tool over SSE, capturing response headers (including X-Proxied-Replica).
- * This handles SSE setup, optional progress relay, and cleans up the client connection.
+ * Shared helper to call a Gradio MCP tool over Streamable HTTP, capturing response headers (including X-Proxied-Replica).
+ * This handles Streamable HTTP setup, optional progress relay, and cleans up the client connection.
  */
 export async function callGradioToolWithHeaders(
-	sseUrl: string,
+	mcpUrl: string,
 	toolName: string,
 	parameters: Record<string, unknown>,
 	hfToken: string | undefined,
@@ -105,23 +109,55 @@ export async function callGradioToolWithHeaders(
 		options.onHeaders?.(headers);
 	};
 
-	const captureHeadersFetch: SSEClientTransportOptions['fetch'] = async (url, init) => {
+	const captureHeadersFetch: StreamableHTTPClientTransportOptions['fetch'] = async (url, init) => {
+		const method = init?.method ?? 'GET';
+		let requestSummary: {
+			method?: unknown;
+			id?: unknown;
+			progressToken?: unknown;
+			isBatch?: boolean;
+		} | null = null;
+		if (typeof init?.body === 'string') {
+			try {
+				const parsed = JSON.parse(init.body) as
+					| { method?: unknown; id?: unknown; params?: { _meta?: { progressToken?: unknown } } }
+					| Array<{ method?: unknown; id?: unknown; params?: { _meta?: { progressToken?: unknown } } }>;
+				if (Array.isArray(parsed)) {
+					requestSummary = {
+						isBatch: true,
+						method: parsed[0]?.method,
+						id: parsed[0]?.id,
+						progressToken: parsed[0]?.params?._meta?.progressToken,
+					};
+				} else if (parsed && typeof parsed === 'object') {
+					requestSummary = {
+						isBatch: false,
+						method: parsed.method,
+						id: parsed.id,
+						progressToken: parsed.params?._meta?.progressToken,
+					};
+				}
+			} catch {
+				requestSummary = null;
+			}
+		}
+		logger.trace('[gradio] upstream fetch', {
+			method,
+			url: url.toString(),
+			hasBody: Boolean(init?.body),
+			requestSummary,
+		});
 		const response = await fetch(url, init);
+		logger.trace('[gradio] upstream response', {
+			method,
+			url: url.toString(),
+			status: response.status,
+			contentType: response.headers.get('content-type') ?? null,
+			mcpSessionId: response.headers.get('mcp-session-id') ?? null,
+		});
 		handleHeaders(response.headers);
 		return response;
 	};
-
-	type EventSourceFetch = NonNullable<SSEClientTransportOptions['eventSourceInit']>['fetch'];
-	const buildEventSourceFetch =
-		(extraHeaders?: Record<string, string>): EventSourceFetch =>
-		(url, init) => {
-			const headers = new Headers(init?.headers);
-			if (extraHeaders) {
-				Object.entries(extraHeaders).forEach(([key, value]) => headers.set(key, value));
-			}
-			const requestInit: RequestInit = { ...(init as RequestInit), headers };
-			return captureHeadersFetch(url.toString(), requestInit);
-		};
 
 	// Create MCP client
 	const remoteClient = new Client(
@@ -134,37 +170,66 @@ export async function callGradioToolWithHeaders(
 		}
 	);
 
-	// Create SSE transport with HF token if available
-	const transportOptions: SSEClientTransportOptions = {
+	// Create Streamable HTTP transport with HF token if available
+	const transportOptions: StreamableHTTPClientTransportOptions = {
 		fetch: captureHeadersFetch,
 	};
 	if (hfToken) {
-		const headerName = 'X-HF-Authorization';
 		const customHeaders = {
-			[headerName]: `Bearer ${hfToken}`,
+			'X-HF-Authorization': `Bearer ${hfToken}`,
 		};
 
-		// Headers for POST requests
+		// Headers for Streamable HTTP requests
 		transportOptions.requestInit = {
 			headers: customHeaders,
 		};
-
-		// Headers for SSE connection
-		transportOptions.eventSourceInit = {
-			fetch: buildEventSourceFetch(customHeaders),
-		};
-	} else {
-		transportOptions.eventSourceInit = {
-			fetch: buildEventSourceFetch(),
-		};
 	}
 
-	const transport = new SSEClientTransport(new URL(sseUrl), transportOptions);
+	logger.trace('[gradio] connecting streamable client', { mcpUrl, hasToken: Boolean(hfToken) });
+	const transport = new StreamableHTTPClientTransport(new URL(mcpUrl), transportOptions);
+	let isClosing = false;
+	transport.onmessage = (message) => {
+		const messageInfo =
+			message && typeof message === 'object'
+				? {
+					hasId: 'id' in message,
+					id: (message as { id?: unknown }).id ?? null,
+					method: 'method' in message ? (message as { method?: unknown }).method : null,
+					isResult: 'result' in message,
+					isError: 'error' in message,
+				}
+				: { messageType: typeof message };
+		logger.trace('[gradio] transport message', messageInfo);
+	};
+	transport.onerror = (error) => {
+		if (isClosing && error instanceof Error && error.message.includes('AbortError')) {
+			logger.trace('[gradio] transport aborted after close', { message: error.message });
+			return;
+		}
+		logger.trace('[gradio] transport error', { error });
+	};
+	transport.onclose = () => {
+		logger.trace('[gradio] transport closed');
+	};
+	let connectCompleted = false;
+	const connectWatchdog = setTimeout(() => {
+		if (!connectCompleted) {
+			logger.trace('[gradio] connect still pending', { mcpUrl });
+		}
+	}, 15000);
 	await remoteClient.connect(transport);
+	connectCompleted = true;
+	clearTimeout(connectWatchdog);
+	logger.trace('[gradio] connected streamable client', { mcpUrl });
 
 	try {
 		// Check if the client is requesting progress notifications
 		const progressToken = extra?._meta?.progressToken;
+		logger.trace('[gradio] progress setup', {
+			hasExtra: Boolean(extra),
+			progressToken: progressToken ?? null,
+			hasSignal: Boolean(extra?.signal),
+		});
 
 		// Track whether we've seen a transport closure to avoid noisy retries
 		let progressRelayDisabled = false;
@@ -173,9 +238,16 @@ export async function callGradioToolWithHeaders(
 			if (!extra || progressRelayDisabled) return;
 			if (extra.signal?.aborted) {
 				progressRelayDisabled = true;
+				logger.trace('[gradio] progress relay aborted', {
+					progressToken: progressToken ?? null,
+				});
 				return;
 			}
 			try {
+				logger.trace('[gradio] relaying progress', {
+					progressToken: progressToken ?? null,
+					progress,
+				});
 				const params: {
 					progressToken: number;
 					progress: number;
@@ -198,6 +270,9 @@ export async function callGradioToolWithHeaders(
 			} catch {
 				// The underlying transport has likely closed (e.g., client disconnected); disable further relays.
 				progressRelayDisabled = true;
+				logger.trace('[gradio] progress relay failed', {
+					progressToken: progressToken ?? null,
+				});
 				options.onProgressRelayFailure?.();
 			}
 		};
@@ -207,11 +282,21 @@ export async function callGradioToolWithHeaders(
 		if (progressToken !== undefined && extra) {
 			// Fire-and-forget; best-effort relay
 			requestOptions.onprogress = (progress) => {
+				logger.trace('[gradio] upstream progress event', {
+					progressToken: progressToken ?? null,
+					progress,
+				});
 				void sendProgressNotification(progress);
 			};
 			requestOptions.resetTimeoutOnProgress = true;
+		} else {
+			logger.trace('[gradio] progress relay disabled', {
+				progressToken: progressToken ?? null,
+				hasExtra: Boolean(extra),
+			});
 		}
 
+		logger.trace('[gradio] sending tool request', { toolName, hasProgressToken: progressToken !== undefined });
 		const result = await remoteClient.request(
 			{
 				method: 'tools/call',
@@ -224,12 +309,14 @@ export async function callGradioToolWithHeaders(
 			CallToolResultSchema,
 			requestOptions
 		);
+		logger.trace('[gradio] tool request completed', { toolName, isError: result.isError });
 
 		const proxiedReplica = capturedHeaders['x-proxied-replica'];
 		const rewritten = rewriteReplicaUrlsInResult(result, proxiedReplica);
 
 		return { result: rewritten, capturedHeaders };
 	} finally {
+		isClosing = true;
 		await remoteClient.close();
 	}
 }

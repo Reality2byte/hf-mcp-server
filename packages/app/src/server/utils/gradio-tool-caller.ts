@@ -30,7 +30,7 @@ export interface GradioToolCallOptions {
 
 /**
  * Unified Gradio tool caller that handles:
- * - SSE connection management
+ * - Streamable HTTP connection management
  * - MCP tool invocation
  * - Progress notification relay
  *
@@ -41,7 +41,7 @@ export interface GradioToolCallOptions {
  * behave identically.
  */
 export async function callGradioTool(
-	sseUrl: string,
+	mcpUrl: string,
 	toolName: string,
 	parameters: Record<string, unknown>,
 	hfToken: string | undefined,
@@ -51,9 +51,9 @@ export async function callGradioTool(
 
 	const metricsToolName = getMetricsSafeName(toolName);
 
-	// Call the remote tool via shared helper (handles SSE, progress relay, header capture)
+	// Call the remote tool via shared helper (handles Streamable HTTP, progress relay, header capture)
 	const { result, capturedHeaders } = await callGradioToolWithHeaders(
-		sseUrl,
+		mcpUrl,
 		toolName,
 		parameters,
 		hfToken,

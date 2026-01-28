@@ -149,22 +149,27 @@ export class ToolSelectionStrategy {
 
 		const proxyToolNames = this.getProxyToolNames();
 		const hasProxyBouquet = bouquet === 'proxy';
+		const includesProxyMix = mixList.includes('proxy');
 
 		// 1. Bouquet override (highest precedence)
 		if (bouquet && BOUQUETS[bouquet]) {
 			let enabledToolIds = normalizeBuiltInTools(
 				this.applySearchEnablesFetch(BOUQUETS[bouquet].builtInTools)
 			);
-			if (hasProxyBouquet && proxyToolNames.length > 0) {
+			const wantsProxyTools = hasProxyBouquet || includesProxyMix;
+			if (wantsProxyTools && proxyToolNames.length > 0) {
 				enabledToolIds = this.appendProxyTools(enabledToolIds);
-			} else if (hasProxyBouquet && proxyToolNames.length === 0) {
-				logger.warn('Proxy bouquet requested but no proxy tools are configured');
+			} else if (wantsProxyTools && proxyToolNames.length === 0) {
+				logger.warn('Proxy tools requested but no proxy tools are configured');
 			}
-			logger.debug({ bouquet, enabledToolIds, gradioCount: gradioSpaceTools.length }, 'Using bouquet override');
+			logger.debug(
+				{ bouquet, mix: includesProxyMix ? ['proxy'] : [], enabledToolIds, gradioCount: gradioSpaceTools.length },
+				'Using bouquet override'
+			);
 			return {
 				mode: ToolSelectionMode.BOUQUET_OVERRIDE,
 				enabledToolIds,
-				reason: `Bouquet override: ${bouquet}${gradioSpaceTools.length > 0 ? ` + ${gradioSpaceTools.length} gradio endpoints` : ''}`,
+				reason: `Bouquet override: ${bouquet}${includesProxyMix ? ' + proxy mix' : ''}${gradioSpaceTools.length > 0 ? ` + ${gradioSpaceTools.length} gradio endpoints` : ''}`,
 				gradioSpaceTools: gradioSpaceTools.length > 0 ? gradioSpaceTools : undefined,
 			};
 		}
