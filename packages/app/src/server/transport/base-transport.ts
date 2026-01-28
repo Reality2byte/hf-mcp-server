@@ -10,6 +10,7 @@ import { extractAuthBouquetAndMix } from '../utils/auth-utils.js';
 import { getMetricsSafeName } from '../utils/gradio-metrics.js';
 import { isGradioTool } from '../utils/gradio-utils.js';
 import { GRADIO_FILES_TOOL_CONFIG } from '@llmindset/hf-mcp';
+import { getProxyToolDefinition, type ProxyToolResponseType } from '../utils/proxy-tools-config.js';
 
 /**
  * Result returned by ServerFactory containing the server instance and optional user details
@@ -17,6 +18,7 @@ import { GRADIO_FILES_TOOL_CONFIG } from '@llmindset/hf-mcp';
 export interface ServerFactoryResult {
 	server: McpServer;
 	userDetails?: WhoAmI;
+	enabledToolIds?: string[];
 }
 
 /**
@@ -305,6 +307,34 @@ export abstract class BaseTransport {
 		}
 
 		return false;
+	}
+
+	/**
+	 * Determines if a request is a tools/call targeting a Streamable HTTP proxy tool
+	 * that should respond over SSE (response_type=SSE).
+	 */
+	protected isStreamableHttpToolCall(requestBody: unknown): boolean {
+		const body = requestBody as { method?: string; params?: { name?: string } } | undefined;
+		const methodName = body?.method || 'unknown';
+
+		if (methodName === 'tools/call' && body?.params && typeof body.params === 'object' && 'name' in body.params) {
+			const toolName = body.params.name;
+			if (typeof toolName === 'string') {
+				const responseType = this.getStreamableHttpResponseType(toolName);
+				return responseType === 'SSE';
+			}
+		}
+
+		return false;
+	}
+
+	private getStreamableHttpResponseType(toolName: string): ProxyToolResponseType | undefined {
+		const config = getProxyToolDefinition(toolName);
+		if (config) {
+			return config.responseType;
+		}
+
+		return undefined;
 	}
 
 	protected skipGradioSetup(requestBody: unknown): boolean {

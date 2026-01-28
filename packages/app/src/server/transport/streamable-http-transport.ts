@@ -176,6 +176,8 @@ export class StreamableHttpTransport extends StatefulTransport<Session> {
 			return;
 		}
 
+		logger.trace({ sessionId }, 'Streamable proxy client SSE connected');
+
 		const session = this.sessions.get(sessionId);
 		if (!session) {
 			this.trackError(404);

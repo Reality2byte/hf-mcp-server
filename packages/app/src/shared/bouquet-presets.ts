@@ -69,6 +69,10 @@ export const BOUQUETS: Record<string, AppSettings> = {
 		builtInTools: [DYNAMIC_SPACE_TOOL_ID],
 		spaceTools: [],
 	},
+	proxy: {
+		builtInTools: [],
+		spaceTools: [],
+	},
 };
 
 export type BouquetKey = keyof typeof BOUQUETS;
@@ -184,6 +188,14 @@ const PRESET_META: Array<Omit<BouquetPreset, 'builtInTools'>> = [
 		key: 'jobs',
 		label: 'Run and Manage Jobs',
 		description: 'Run, monitor and schedule jobs on Hugging Face infrastructure.',
+		category: 'advanced',
+		supportsBouquet: true,
+		supportsMix: true,
+	},
+	{
+		key: 'proxy',
+		label: 'Proxy Tools',
+		description: 'Streamable HTTP proxy tools configured via PROXY_TOOLS_CSV.',
 		category: 'advanced',
 		supportsBouquet: true,
 		supportsMix: true,

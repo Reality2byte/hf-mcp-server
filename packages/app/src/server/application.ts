@@ -9,6 +9,7 @@ import { createServerFactory } from './mcp-server.js';
 import { createProxyServerFactory } from './mcp-proxy.js';
 import { McpApiClient, type ApiClientConfig, type GradioEndpoint } from './utils/mcp-api-client.js';
 import { DEFAULT_SPACE_TOOLS, type SpaceTool } from '../shared/settings.js';
+import { loadProxyToolsConfig } from './utils/proxy-tools-config.js';
 
 export interface ApplicationOptions {
 	transportType: TransportType;
@@ -97,6 +98,8 @@ export class Application {
 	}
 
 	async start(): Promise<void> {
+		await loadProxyToolsConfig();
+
 		// Set transport info (already created in constructor)
 		const transportInfo = this.apiClient.getTransportInfo();
 		if (transportInfo) {

@@ -6,6 +6,7 @@ import { extractAuthBouquetAndMix } from '../utils/auth-utils.js';
 import { normalizeBuiltInTools } from '../../shared/tool-normalizer.js';
 import { BOUQUETS } from '../../shared/bouquet-presets.js';
 import { parseGradioSpaceIds } from './gradio-utils.js';
+import { getProxyToolsConfig } from './proxy-tools-config.js';
 
 export enum ToolSelectionMode {
 	BOUQUET_OVERRIDE = 'bouquet_override',
@@ -115,6 +116,18 @@ export class ToolSelectionStrategy {
 		return enabledToolIds;
 	}
 
+	private getProxyToolNames(): string[] {
+		return getProxyToolsConfig().map((tool) => tool.toolName);
+	}
+
+	private appendProxyTools(enabledToolIds: string[]): string[] {
+		const proxyToolNames = this.getProxyToolNames();
+		if (proxyToolNames.length === 0) {
+			return enabledToolIds;
+		}
+		return normalizeBuiltInTools([...enabledToolIds, ...proxyToolNames]);
+	}
+
 	/**
 	 * Selects tools based on clear precedence rules:
 	 * 1. Bouquet override (highest precedence)
@@ -134,11 +147,16 @@ export class ToolSelectionStrategy {
 		// These endpoints will be registered in mcp-proxy.ts unless gradio="none"
 		const gradioSpaceTools = gradio ? this.parseGradioEndpoints(gradio) : [];
 
+		const proxyToolNames = this.getProxyToolNames();
+		const hasProxyBouquet = bouquet === 'proxy';
+
 		// 1. Bouquet override (highest precedence)
 		if (bouquet && BOUQUETS[bouquet]) {
-			const enabledToolIds = normalizeBuiltInTools(
-				this.applySearchEnablesFetch(BOUQUETS[bouquet].builtInTools)
-			);
+			const baseTools = hasProxyBouquet ? proxyToolNames : BOUQUETS[bouquet].builtInTools;
+			let enabledToolIds = normalizeBuiltInTools(this.applySearchEnablesFetch(baseTools));
+			if (hasProxyBouquet && proxyToolNames.length > 0) {
+				enabledToolIds = normalizeBuiltInTools(proxyToolNames);
+			}
 			logger.debug({ bouquet, enabledToolIds, gradioCount: gradioSpaceTools.length }, 'Using bouquet override');
 			return {
 				mode: ToolSelectionMode.BOUQUET_OVERRIDE,
@@ -162,26 +180,31 @@ export class ToolSelectionStrategy {
 			});
 
 				if (validMixes.length > 0) {
-					const mixedTools = validMixes.flatMap((mixName) => BOUQUETS[mixName]?.builtInTools ?? []);
-				const combinedTools = [...new Set([...baseSettings.builtInTools, ...mixedTools])];
-				const enabledToolIds = normalizeBuiltInTools(
-					this.applySearchEnablesFetch(combinedTools)
-				);
+					const includesProxyMix = validMixes.includes('proxy');
+					const nonProxyMixes = validMixes.filter((mixName) => mixName !== 'proxy');
+					const mixedTools = nonProxyMixes.flatMap((mixName) => BOUQUETS[mixName]?.builtInTools ?? []);
+					const combinedTools = [...new Set([...baseSettings.builtInTools, ...mixedTools])];
+					let enabledToolIds = normalizeBuiltInTools(
+						this.applySearchEnablesFetch(combinedTools)
+					);
+					if (includesProxyMix && proxyToolNames.length > 0) {
+						enabledToolIds = this.appendProxyTools(enabledToolIds);
+					}
 
-				logger.debug(
-					{
-						mix: validMixes,
-						baseToolCount: baseSettings.builtInTools.length,
-						mixToolCount: mixedTools.length,
-						finalToolCount: enabledToolIds.length,
-					},
-					'Applying mix to user settings'
-				);
+					logger.debug(
+						{
+							mix: validMixes,
+							baseToolCount: baseSettings.builtInTools.length,
+							mixToolCount: mixedTools.length,
+							finalToolCount: enabledToolIds.length,
+						},
+						'Applying mix to user settings'
+					);
 
-				return {
-					mode: ToolSelectionMode.MIX,
-					enabledToolIds,
-					reason: `User settings + mix(${validMixes.join(',')})${gradioSpaceTools.length > 0 ? ` + ${gradioSpaceTools.length} gradio endpoints` : ''}`,
+					return {
+						mode: ToolSelectionMode.MIX,
+						enabledToolIds,
+						reason: `User settings + mix(${validMixes.join(',')})${gradioSpaceTools.length > 0 ? ` + ${gradioSpaceTools.length} gradio endpoints` : ''}`,
 					baseSettings,
 					mixedBouquet: validMixes,
 					gradioSpaceTools: gradioSpaceTools.length > 0 ? gradioSpaceTools : undefined,

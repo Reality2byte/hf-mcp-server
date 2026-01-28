@@ -9,6 +9,7 @@ export function extractQueryParamsToHeaders(req: Request, headers: Record<string
 	const bouquet = req.query.bouquet as string | undefined;
 	const mix = Array.isArray(req.query.mix) ? req.query.mix.join(',') : (req.query.mix as string | undefined);
 	const gradio = req.query.gradio as string | undefined;
+	const streamable = req.query.streamable as string | undefined;
 	const forceauth = req.query.forceauth as string | undefined;
 	const login = req.query.login;
 	const auth = req.query.auth;
@@ -24,6 +25,9 @@ export function extractQueryParamsToHeaders(req: Request, headers: Record<string
 	}
 	if (gradio) {
 		headers['x-mcp-gradio'] = gradio;
+	}
+	if (streamable) {
+		headers['x-mcp-streamable'] = streamable;
 	}
 
 	if (typeof noImageContent === 'string') {
