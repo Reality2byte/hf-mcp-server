@@ -119,7 +119,6 @@ export function StatefulTransportMetrics({ metrics }: StatefulTransportMetricsPr
 	const sessionData = useSessionCache(apiSessions);
 
 	const transportTypeDisplay = {
-		sse: 'Server-Sent Events',
 		streamableHttp: 'Streamable HTTP',
 	} as const;
 
@@ -330,10 +329,10 @@ export function StatefulTransportMetrics({ metrics }: StatefulTransportMetricsPr
 									</div>
 								)}
 							</div>
-							<p className="text-xs text-muted-foreground mt-2">
-								SSE connections checked every {formatMilliseconds(metrics.configuration.heartbeatInterval || 30000)},
-								sessions swept every {formatMilliseconds(metrics.configuration.staleCheckInterval)}, removed after{' '}
-								{formatMilliseconds(metrics.configuration.staleTimeout)} inactive
+						<p className="text-xs text-muted-foreground mt-2">
+							Connections checked every {formatMilliseconds(metrics.configuration.heartbeatInterval || 30000)},
+							sessions swept every {formatMilliseconds(metrics.configuration.staleCheckInterval)}, removed after{' '}
+							{formatMilliseconds(metrics.configuration.staleTimeout)} inactive
 								{metrics.configuration.pingEnabled &&
 									metrics.configuration.pingInterval &&
 									`, pings sent every ${formatMilliseconds(metrics.configuration.pingInterval)}`}

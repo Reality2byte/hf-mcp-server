@@ -87,21 +87,21 @@ export async function invokeSpace(
 		// Step 7: Apply default values for missing optional parameters
 		const finalParameters = applyDefaults(inputParameters, schemaResult);
 
-			// Step 8: Create SSE connection and invoke tool (shared helper)
-			const sseUrl = `https://${metadata.subdomain}.hf.space/gradio_api/mcp/sse`;
-			const { result } = await callGradioToolWithHeaders(sseUrl, tool.name, finalParameters, hfToken, extra, {
-				logProxiedReplica: true,
-			});
+		// Step 8: Create Streamable HTTP connection and invoke tool (shared helper)
+		const mcpUrl = `https://${metadata.subdomain}.hf.space/gradio_api/mcp/`;
+		const { result } = await callGradioToolWithHeaders(mcpUrl, tool.name, finalParameters, hfToken, extra, {
+			logProxiedReplica: true,
+		});
 
-			// Return raw MCP result with warnings if any
-			// This ensures the space tool behaves identically to proxied gr_* tools
-			return {
-				result,
-				warnings,
-				totalResults: 1,
-				resultsShared: 1,
-				isError: result.isError,
-			};
+		// Return raw MCP result with warnings if any
+		// This ensures the space tool behaves identically to proxied gr_* tools
+		return {
+			result,
+			warnings,
+			totalResults: 1,
+			resultsShared: 1,
+			isError: result.isError,
+		};
 	} catch (error) {
 		const errorMessage = error instanceof Error ? error.message : String(error);
 		return {

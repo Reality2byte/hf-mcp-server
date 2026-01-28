@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 
-// Stub out the SSE transport to simulate progress + response without network.
-vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => {
-	class FakeSSEClientTransport {
+// Stub out the Streamable HTTP transport to simulate progress + response without network.
+vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => {
+	class FakeStreamableHTTPClientTransport {
 		onmessage?: (msg: unknown) => void;
 		onclose?: () => void;
 		onerror?: (err: unknown) => void;
@@ -41,7 +41,7 @@ vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => {
 		}
 	}
 
-	return { SSEClientTransport: FakeSSEClientTransport };
+	return { StreamableHTTPClientTransport: FakeStreamableHTTPClientTransport };
 });
 
 let callGradioToolWithHeaders: typeof import('../src/space/utils/gradio-caller.js').callGradioToolWithHeaders;
@@ -63,7 +63,7 @@ describe('callGradioToolWithHeaders progress relay', () => {
 		};
 
 		const { result } = await callGradioToolWithHeaders(
-			'http://fake-sse.local/gradio_api/mcp/sse',
+			'http://fake-mcp.local/gradio_api/mcp/',
 			'tools/call',
 			{},
 			undefined,

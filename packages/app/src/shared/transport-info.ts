@@ -31,7 +31,7 @@ export function getTokenDisplayText(info: TransportInfo): { text: string; isWarn
 			return { text: 'Warning: No token set', isWarning: true };
 		}
 	} else {
-		// Other modes (SSE, HTTP): different logic
+		// Other modes (HTTP): different logic
 		if (!info.defaultHfTokenSet) {
 			return { text: 'Using Authorization Headers', isWarning: false };
 		} else {

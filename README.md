@@ -125,16 +125,15 @@ This repo contains:
 The following transports are supported:
 
 - STDIO 
-- SSE (To be deprecated, but still commonly deployed).
 - StreamableHTTP
 - StreamableHTTP in Stateless JSON Mode (**StreamableHTTPJson**)
 
-The Web Application and HTTP Transports start by default on Port 3000. 
+The Web Application and HTTP Transports start by default on Port 3000.
 
-SSE and StreamableHTTP services are available at `/sse` and `/mcp` respectively. Although though not strictly enforced by the specification this is common convention.
+The StreamableHTTP service is available at `/mcp`. Although though not strictly enforced by the specification this is common convention.
 
 > [!TIP]
-> The Web Application allows you to switch tools on and off. For STDIO, SSE and StreamableHTTP this will send a ToolListChangedNotification to the MCP Client. In StreamableHTTPJSON mode the tool will not be listed when the client next requests the tool lists.
+> The Web Application allows you to switch tools on and off. For STDIO and StreamableHTTP this will send a ToolListChangedNotification to the MCP Client. In StreamableHTTPJSON mode the tool will not be listed when the client next requests the tool lists.
 
 ### Running Locally
 
@@ -212,22 +211,21 @@ Run STDIO MCP Server:
 docker run -i --rm -e TRANSPORT=stdio -p 3000:3000 -e DEFAULT_HF_TOKEN=hf_xxx hf-mcp-server
 ```
 
-`TRANSPORT` can be `stdio`, `sse`, `streamingHttp` or `streamingHttpJson` (default).
+`TRANSPORT` can be `stdio`, `streamableHttp` or `streamableHttpJson` (default).
 
 ### Transport Endpoints
 
 The different transport types use the following endpoints:
-- SSE: `/sse` (with message endpoint at `/message`)
 - Streamable HTTP: `/mcp` (regular or JSON mode)
 - STDIO: Uses stdin/stdout directly, no HTTP endpoint
 
 ### Stateful Connection Management
 
-The `sse` and `streamingHttp` transports are both _stateful_ - they maintain a connection with the MCP Client through an SSE connection. When using these transports, the following configuration options take effect:
+The `streamableHttp` transport is _stateful_ - it maintains a connection with the MCP Client through an SSE connection. When using this transport, the following configuration options take effect:
 
 | Environment Variable              | Default | Description |
 |-----------------------------------|---------|-------------|
-| `MCP_CLIENT_HEARTBEAT_INTERVAL`   | 30000ms | How often to check SSE connection health |
+| `MCP_CLIENT_HEARTBEAT_INTERVAL`   | 30000ms | How often to check connection health |
 | `MCP_CLIENT_CONNECTION_CHECK`     | 90000ms | How often to check for stale sessions |
 | `MCP_CLIENT_CONNECTION_TIMEOUT`   | 300000ms | Remove sessions inactive for this duration |
 | `MCP_PING_ENABLED`                | true    | Enable ping keep-alive for sessions |
@@ -237,7 +235,7 @@ The `sse` and `streamingHttp` transports are both _stateful_ - they maintain a c
 ### Environment Variables
 
 The server respects the following environment variables:
-- `TRANSPORT`: The transport type to use (stdio, sse, streamableHttp, or streamableHttpJson)
+- `TRANSPORT`: The transport type to use (stdio, streamableHttp, or streamableHttpJson)
 - `DEFAULT_HF_TOKEN`: ⚠️ Requests are serviced with the HF_TOKEN received in the Authorization: Bearer header. The DEFAULT_HF_TOKEN is used if no header was sent. Only set this in Development / Test environments or for local STDIO Deployments. ⚠️
 - If running with `stdio` transport, `HF_TOKEN` is used if `DEFAULT_HF_TOKEN` is not set.
 - `HF_API_TIMEOUT`: Timeout for Hugging Face API requests in milliseconds (default: 12500ms / 12.5 seconds)
@@ -246,6 +244,7 @@ The server respects the following environment variables:
 - `AUTHENTICATE_TOOL`: whether to include an `Authenticate` tool to issue an OAuth challenge when called
 - `SEARCH_ENABLES_FETCH`: When set to `true`, automatically enables the `hf_doc_fetch` tool whenever `hf_doc_search` is enabled
 - `PROXY_TOOLS_CSV`: Optional CSV that defines Streamable HTTP proxy tool sources (see below).
+- `GRADIO_SKIP_INITIALIZE`: When set to `true`, Gradio MCP calls skip the `initialize` handshake and issue `tools/call` directly.
 
 ### Proxy tools (Streamable HTTP via CSV)
 

@@ -39,7 +39,7 @@ interface EndpointConnection {
 	tools: Tool[];
 	name?: string;
 	emoji?: string;
-	sseUrl?: string; // Store the SSE URL for lazy connection during tool calls
+	mcpUrl?: string; // Store the MCP URL for lazy connection during tool calls
 	isPrivate?: boolean;
 }
 
@@ -167,7 +167,7 @@ async function isSpacePrivate(spaceName: string, hfToken?: string): Promise<bool
 }
 
 /**
- * Fetches schema from a single Gradio endpoint without establishing SSE connection
+ * Fetches schema from a single Gradio endpoint without establishing a Streamable HTTP connection
  */
 async function fetchEndpointSchema(
 	endpoint: GradioEndpoint,
@@ -232,14 +232,14 @@ async function fetchEndpointSchema(
 		tools: tools,
 		name: endpoint.name,
 		emoji: endpoint.emoji,
-		sseUrl: `https://${endpoint.subdomain}.hf.space/gradio_api/mcp/sse`, // Store SSE URL for later
+		mcpUrl: `https://${endpoint.subdomain}.hf.space/gradio_api/mcp/`, // Store MCP URL for later
 		isPrivate: isPrivateSpace,
 	};
 }
 
 /**
  * Fetches schemas from multiple Gradio endpoints in parallel with timeout
- * Uses efficient /mcp/schema endpoint instead of SSE connections
+ * Uses efficient /mcp/schema endpoint instead of opening streaming connections
  */
 export async function connectToGradioEndpoints(
 	gradioEndpoints: GradioEndpoint[],
@@ -348,13 +348,13 @@ function createToolHandler(
 		const notificationCount = 0;
 
 		try {
-			// Validate SSE URL
-			if (!connection.sseUrl) {
-				throw new Error('No SSE URL available for tool execution');
+			// Validate MCP URL
+			if (!connection.mcpUrl) {
+				throw new Error('No MCP URL available for tool execution');
 			}
 
-			// Use unified Gradio tool caller for SSE connection, MCP call, and progress relay
-			const result = await callGradioTool(connection.sseUrl, tool.name, params, hfToken, extra);
+			// Use unified Gradio tool caller for Streamable HTTP connection, MCP call, and progress relay
+			const result = await callGradioTool(connection.mcpUrl, tool.name, params, hfToken, extra);
 
 			// Calculate response size (rough estimate based on JSON serialization)
 			try {
