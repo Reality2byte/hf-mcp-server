@@ -4,8 +4,15 @@ import {
 	type StreamableHTTPClientTransportOptions,
 } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { CallToolResultSchema, type CallToolResult, type ServerNotification, type ServerRequest } from '@modelcontextprotocol/sdk/types.js';
-import type { RequestHandlerExtra, RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
+import { Protocol, type RequestHandlerExtra, type RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { logger } from '../../logger.js';
+
+class GradioClient extends Client {
+	override async connect(transport: Transport, _options?: RequestOptions): Promise<void> {
+		await Protocol.prototype.connect.call(this, transport);
+	}
+}
 
 export interface GradioCallResult {
 	result: CallToolResult;
@@ -159,16 +166,19 @@ export async function callGradioToolWithHeaders(
 		return response;
 	};
 
+	const skipInitialize = process.env.GRADIO_SKIP_INITIALIZE === 'true';
+
 	// Create MCP client
-	const remoteClient = new Client(
-		{
-			name: 'hf-mcp-gradio-client',
-			version: '1.0.0',
-		},
-		{
-			capabilities: {},
-		}
-	);
+	const clientInfo = {
+		name: 'hf-mcp-gradio-client',
+		version: '1.0.0',
+	};
+	const clientOptions = {
+		capabilities: {},
+	};
+	const remoteClient = skipInitialize
+		? new GradioClient(clientInfo, clientOptions)
+		: new Client(clientInfo, clientOptions);
 
 	// Create Streamable HTTP transport with HF token if available
 	const transportOptions: StreamableHTTPClientTransportOptions = {
@@ -185,7 +195,11 @@ export async function callGradioToolWithHeaders(
 		};
 	}
 
-	logger.trace('[gradio] connecting streamable client', { mcpUrl, hasToken: Boolean(hfToken) });
+	logger.trace('[gradio] connecting streamable client', {
+		mcpUrl,
+		hasToken: Boolean(hfToken),
+		skipInitialize,
+	});
 	const transport = new StreamableHTTPClientTransport(new URL(mcpUrl), transportOptions);
 	let isClosing = false;
 	transport.onmessage = (message) => {
