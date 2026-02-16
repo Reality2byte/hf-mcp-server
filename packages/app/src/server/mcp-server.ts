@@ -26,7 +26,7 @@ import {
 	DATASET_DETAIL_TOOL_CONFIG,
 	DATASET_DETAIL_PROMPT_CONFIG,
 	type DatasetDetailParams,
-	HUB_INSPECT_TOOL_CONFIG,
+	HUB_REPO_DETAILS_TOOL_CONFIG,
 	HubInspectTool,
 	type HubInspectParams,
 	DuplicateSpaceTool,
@@ -658,9 +658,9 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 		// Compute README availability; adjust description and schema accordingly
 		const hubInspectReadmeAllowed = hasReadmeFlag(toolSelection.enabledToolIds);
 		const hubInspectDescription = hubInspectReadmeAllowed
-			? `${HUB_INSPECT_TOOL_CONFIG.description} README file may be requested from the external repository.`
-			: HUB_INSPECT_TOOL_CONFIG.description;
-		const hubInspectBaseShape = HUB_INSPECT_TOOL_CONFIG.schema.shape as z.ZodRawShape;
+			? `${HUB_REPO_DETAILS_TOOL_CONFIG.description} README file may be requested from the external repository.`
+			: HUB_REPO_DETAILS_TOOL_CONFIG.description;
+		const hubInspectBaseShape = HUB_REPO_DETAILS_TOOL_CONFIG.schema.shape as z.ZodRawShape;
 		const hubInspectSchemaShape: z.ZodRawShape = hubInspectReadmeAllowed
 			? hubInspectBaseShape
 			: (() => {
@@ -668,11 +668,11 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					return rest as unknown as z.ZodRawShape;
 				})();
 
-		toolInstances[HUB_INSPECT_TOOL_CONFIG.name] = server.tool(
-			HUB_INSPECT_TOOL_CONFIG.name,
+		toolInstances[HUB_REPO_DETAILS_TOOL_CONFIG.name] = server.tool(
+			HUB_REPO_DETAILS_TOOL_CONFIG.name,
 			hubInspectDescription,
 			hubInspectSchemaShape,
-			HUB_INSPECT_TOOL_CONFIG.annotations,
+			HUB_REPO_DETAILS_TOOL_CONFIG.annotations,
 			async (params: Record<string, unknown>) => {
 				// Re-evaluate flag dynamically to reflect UI changes without restarting server
 				const currentSelection = await toolSelectionStrategy.selectTools(toolSelectionContext);
@@ -691,7 +691,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 				const result = await runWithQueryLogging(
 					logPromptQuery,
 					{
-						methodName: HUB_INSPECT_TOOL_CONFIG.name,
+						methodName: HUB_REPO_DETAILS_TOOL_CONFIG.name,
 						query: firstRepoId,
 						parameters: { count: repoIds.length, repo_type: repoTypeSafe, include_readme: includeReadme },
 						baseOptions: getLoggingOptions(),
