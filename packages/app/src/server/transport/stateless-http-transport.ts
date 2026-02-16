@@ -18,6 +18,7 @@ import { isBrowser } from '../utils/browser-detection.js';
 import { buildOAuthResourceHeader } from '../utils/oauth-resource.js';
 import { randomUUID } from 'node:crypto';
 import { logSystemEvent } from '../utils/query-logger.js';
+import { rewriteLegacySearchToolCallRequest } from '../utils/repo-search-shim.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -362,7 +363,12 @@ export class StatelessHttpTransport extends BaseTransport {
 			// Connect and handle
 			await server.connect(transport);
 
-			await transport.handleRequest(req, res, req.body);
+			const { rewrittenBody, legacyToolName, rewrittenToolName } = rewriteLegacySearchToolCallRequest(req.body);
+			if (legacyToolName && rewrittenToolName) {
+				logger.info({ legacyToolName, rewrittenToolName }, 'Rewriting legacy tool call');
+			}
+
+			await transport.handleRequest(req, res, rewrittenBody);
 
 			// Track successful method call with client info
 			this.trackMethodCall(trackingName, startTime, false, clientInfo);

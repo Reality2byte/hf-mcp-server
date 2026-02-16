@@ -7,11 +7,18 @@ import type { ToolResult } from '../types/tool-result.js';
 /** token estimation. initial results for "how to load a image to image model in transformers" returned
  * 121973 characters (36711 anthropic tokens) */
 
+const KNOWLEDGE_DATE = new Intl.DateTimeFormat('en-GB', {
+	day: 'numeric',
+	month: 'long',
+	year: 'numeric',
+	timeZone: 'UTC',
+}).format(new Date());
+
 export const DOCS_SEMANTIC_SEARCH_CONFIG = {
 	name: 'hf_doc_search',
 	description:
 		'Search and Discover Hugging Face Product and Library documentation. Send an empty query to discover structure and navigation instructions. ' +
-		'You MUST consult this tool for the most up-to-date information when using Hugging Face libraries. Combine with the Product filter to focus results.',
+		`Knowledge up-to-date as at ${KNOWLEDGE_DATE}. Combine with the Product filter to focus results.`,
 	schema: z.object({
 		query: z
 			.string()

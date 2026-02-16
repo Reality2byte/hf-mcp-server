@@ -17,19 +17,17 @@ import { GRADIO_IMAGE_FILTER_FLAG, README_INCLUDE_FLAG } from '../shared/behavio
 import { normalizeBuiltInTools } from '../shared/tool-normalizer.js';
 import {
 	SPACE_SEARCH_TOOL_ID,
-	MODEL_SEARCH_TOOL_ID,
+	REPO_SEARCH_TOOL_ID,
 	PAPER_SEARCH_TOOL_ID,
-	DATASET_SEARCH_TOOL_ID,
 	DUPLICATE_SPACE_TOOL_ID,
 	SPACE_FILES_TOOL_ID,
 	DOCS_SEMANTIC_SEARCH_TOOL_ID,
 	DOC_FETCH_TOOL_ID,
-	HUB_INSPECT_TOOL_ID,
+	HUB_REPO_DETAILS_TOOL_ID,
 	SEMANTIC_SEARCH_TOOL_CONFIG,
-	MODEL_SEARCH_TOOL_CONFIG,
+	REPO_SEARCH_TOOL_CONFIG,
 	PAPER_SEARCH_TOOL_CONFIG,
-	DATASET_SEARCH_TOOL_CONFIG,
-	HUB_INSPECT_TOOL_CONFIG,
+	HUB_REPO_DETAILS_TOOL_CONFIG,
 	DUPLICATE_SPACE_TOOL_CONFIG,
 	SPACE_FILES_TOOL_CONFIG,
 	DOCS_SEMANTIC_SEARCH_CONFIG,
@@ -247,23 +245,19 @@ function App() {
 			description: SEMANTIC_SEARCH_TOOL_CONFIG.description,
 			settings: { enabled: settings?.builtInTools?.includes(SPACE_SEARCH_TOOL_ID) ?? true },
 		},
-		model_search: {
-			id: MODEL_SEARCH_TOOL_ID,
-			label: MODEL_SEARCH_TOOL_CONFIG.annotations.title,
-			description: MODEL_SEARCH_TOOL_CONFIG.description,
-			settings: { enabled: settings?.builtInTools?.includes(MODEL_SEARCH_TOOL_ID) ?? true },
+
+		hub_repo_search: {
+			id: REPO_SEARCH_TOOL_ID,
+			label: REPO_SEARCH_TOOL_CONFIG.annotations.title,
+			description: REPO_SEARCH_TOOL_CONFIG.description,
+			settings: { enabled: settings?.builtInTools?.includes(REPO_SEARCH_TOOL_ID) ?? true },
 		},
-		dataset_search: {
-			id: DATASET_SEARCH_TOOL_ID,
-			label: DATASET_SEARCH_TOOL_CONFIG.annotations.title,
-			description: DATASET_SEARCH_TOOL_CONFIG.description,
-			settings: { enabled: settings?.builtInTools?.includes(DATASET_SEARCH_TOOL_ID) ?? true },
-		},
+
 		hub_repo_details: {
-			id: HUB_INSPECT_TOOL_ID,
-			label: HUB_INSPECT_TOOL_CONFIG.annotations.title,
-			description: HUB_INSPECT_TOOL_CONFIG.description,
-			settings: { enabled: settings?.builtInTools?.includes(HUB_INSPECT_TOOL_ID) ?? true },
+			id: HUB_REPO_DETAILS_TOOL_ID,
+			label: HUB_REPO_DETAILS_TOOL_CONFIG.annotations.title,
+			description: HUB_REPO_DETAILS_TOOL_CONFIG.description,
+			settings: { enabled: settings?.builtInTools?.includes(HUB_REPO_DETAILS_TOOL_ID) ?? true },
 		},
 		include_readme: {
 			id: README_INCLUDE_FLAG,
@@ -307,7 +301,6 @@ function App() {
 				"Strips image responses from Gradio spaces. Mirrors the 'no_image_content' URL parameter and requires reconnect to take effect.",
 			settings: { enabled: gradioImageFilterEnabled },
 		},
-
 	};
 
 	return (

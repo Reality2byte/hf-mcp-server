@@ -7,6 +7,7 @@ export * from './model-detail.js';
 export * from './utilities.js';
 export * from './paper-search.js';
 export * from './dataset-search.js';
+export * from './repo-search.js';
 export * from './dataset-detail.js';
 export * from './hub-inspect.js';
 export * from './duplicate-space.js';
