@@ -6,7 +6,7 @@ import { DATASET_SEARCH_TOOL_ID, MODEL_SEARCH_TOOL_ID, REPO_SEARCH_TOOL_ID } fro
  */
 const LEGACY_MODEL_SEARCH_ALIASES = new Set([MODEL_SEARCH_TOOL_ID, 'model-search', 'hf_model_search']);
 const LEGACY_DATASET_SEARCH_ALIASES = new Set([DATASET_SEARCH_TOOL_ID, 'dataset-search', 'hf_dataset_search']);
-const LEGACY_REPO_SEARCH_ALIASES = new Set([REPO_SEARCH_TOOL_ID, 'repo-search', 'hf_repo_search']);
+const LEGACY_REPO_SEARCH_ALIASES = new Set([REPO_SEARCH_TOOL_ID, 'repo_search', 'repo-search', 'hf_repo_search']);
 
 /**
  * Hard migration helper for search tools.
@@ -15,7 +15,11 @@ const LEGACY_REPO_SEARCH_ALIASES = new Set([REPO_SEARCH_TOOL_ID, 'repo-search', 
  * to the canonical hub_repo_search ID so only hub_repo_search is exposed downstream.
  */
 export function mapLegacySearchToolId(toolId: string): string {
-	if (LEGACY_MODEL_SEARCH_ALIASES.has(toolId) || LEGACY_DATASET_SEARCH_ALIASES.has(toolId)) {
+	if (
+		LEGACY_MODEL_SEARCH_ALIASES.has(toolId) ||
+		LEGACY_DATASET_SEARCH_ALIASES.has(toolId) ||
+		LEGACY_REPO_SEARCH_ALIASES.has(toolId)
+	) {
 		return REPO_SEARCH_TOOL_ID;
 	}
 
