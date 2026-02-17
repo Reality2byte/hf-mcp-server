@@ -1,4 +1,5 @@
-import { HUB_INSPECT_TOOL_ID, MODEL_DETAIL_TOOL_ID, DATASET_DETAIL_TOOL_ID } from '@llmindset/hf-mcp';
+import { HUB_REPO_DETAILS_TOOL_ID, MODEL_DETAIL_TOOL_ID, DATASET_DETAIL_TOOL_ID } from '@llmindset/hf-mcp';
+import { mapLegacySearchToolId } from './repo-search-migration.js';
 
 /**
  * Normalizes built-in tool lists coming from UI/API clients.
@@ -11,20 +12,22 @@ export function normalizeBuiltInTools(ids: readonly string[]): string[] {
 	let addHubInspect = false;
 
 	for (const rawId of ids) {
-		if (rawId === MODEL_DETAIL_TOOL_ID || rawId === DATASET_DETAIL_TOOL_ID) {
+		const normalizedToolId = mapLegacySearchToolId(rawId);
+
+		if (normalizedToolId === MODEL_DETAIL_TOOL_ID || normalizedToolId === DATASET_DETAIL_TOOL_ID) {
 			addHubInspect = true;
 			continue;
 		}
 
-		if (!seen.has(rawId)) {
-			seen.add(rawId);
-			normalized.push(rawId);
+		if (!seen.has(normalizedToolId)) {
+			seen.add(normalizedToolId);
+			normalized.push(normalizedToolId);
 		}
 	}
 
-	if (addHubInspect && !seen.has(HUB_INSPECT_TOOL_ID)) {
-		seen.add(HUB_INSPECT_TOOL_ID);
-		normalized.push(HUB_INSPECT_TOOL_ID);
+	if (addHubInspect && !seen.has(HUB_REPO_DETAILS_TOOL_ID)) {
+		seen.add(HUB_REPO_DETAILS_TOOL_ID);
+		normalized.push(HUB_REPO_DETAILS_TOOL_ID);
 	}
 
 	return normalized;

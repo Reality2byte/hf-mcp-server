@@ -5,7 +5,7 @@ import { DatasetDetailTool } from './dataset-detail.js';
 import { spaceInfo } from '@huggingface/hub';
 import { formatDate } from './utilities.js';
 
-export const HUB_INSPECT_TOOL_CONFIG = {
+export const HUB_REPO_DETAILS_TOOL_CONFIG = {
 	name: 'hub_repo_details',
 	description:
 		'Get details for one or more Hugging Face repos (model, dataset, or space). ' +
@@ -27,7 +27,7 @@ export const HUB_INSPECT_TOOL_CONFIG = {
 	},
 } as const;
 
-export type HubInspectParams = z.infer<typeof HUB_INSPECT_TOOL_CONFIG.schema>;
+export type HubInspectParams = z.infer<typeof HUB_REPO_DETAILS_TOOL_CONFIG.schema>;
 
 export class HubInspectTool {
 	private readonly modelDetail: ModelDetailTool;

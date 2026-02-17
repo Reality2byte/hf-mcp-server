@@ -1,6 +1,7 @@
 import { StatefulTransport, type TransportOptions, type BaseSession } from './base-transport.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { logger } from '../utils/logger.js';
+import { rewriteLegacySearchToolCallRequest } from '../utils/repo-search-shim.js';
 
 type StdioSession = BaseSession<StdioServerTransport>;
 
@@ -63,6 +64,17 @@ export class StdioTransport extends StatefulTransport<StdioSession> {
 			};
 
 			await server.connect(transport);
+
+			const originalOnMessage = transport.onmessage;
+			transport.onmessage = (message) => {
+				const { rewrittenBody, legacyToolName, rewrittenToolName } = rewriteLegacySearchToolCallRequest(message);
+				if (legacyToolName && rewrittenToolName) {
+					logger.info({ legacyToolName, rewrittenToolName }, 'Rewriting legacy tool call');
+				}
+
+				originalOnMessage?.(rewrittenBody as typeof message);
+			};
+
 			logger.info('STDIO transport initialized');
 		} catch (error) {
 			logger.error({ error }, 'Error connecting STDIO transport');

@@ -8,6 +8,7 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { extractQueryParamsToHeaders } from '../utils/query-params.js';
 import { buildOAuthResourceHeader } from '../utils/oauth-resource.js';
 import { logSystemEvent } from '../utils/query-logger.js';
+import { rewriteLegacySearchToolCallRequest } from '../utils/repo-search-shim.js';
 
 interface StreamableHttpConnection extends BaseSession<StreamableHTTPServerTransport> {
 	activeResponse?: Response;
@@ -158,7 +159,12 @@ export class StreamableHttpTransport extends StatefulTransport<Session> {
 				return;
 			}
 
-			await transport.handleRequest(req, res, req.body);
+			const { rewrittenBody, legacyToolName, rewrittenToolName } = rewriteLegacySearchToolCallRequest(req.body);
+			if (legacyToolName && rewrittenToolName) {
+				logger.info({ legacyToolName, rewrittenToolName }, 'Rewriting legacy tool call');
+			}
+
+			await transport.handleRequest(req, res, rewrittenBody);
 
 			// Track successful method call without timing (stateful mode measures HTTP dispatch time, not MCP processing time)
 			this.metrics.trackMethod(trackingName, undefined, false);

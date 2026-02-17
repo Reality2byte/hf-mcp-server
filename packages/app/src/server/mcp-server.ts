@@ -9,23 +9,24 @@ import {
 	formatSearchResults,
 	SEMANTIC_SEARCH_TOOL_CONFIG,
 	type SearchParams,
-	ModelSearchTool,
 	MODEL_SEARCH_TOOL_CONFIG,
 	type ModelSearchParams,
+	RepoSearchTool,
+	REPO_SEARCH_TOOL_CONFIG,
+	type RepoSearchParams,
 	ModelDetailTool,
 	MODEL_DETAIL_TOOL_CONFIG,
 	MODEL_DETAIL_PROMPT_CONFIG,
 	type ModelDetailParams,
 	PaperSearchTool,
 	PAPER_SEARCH_TOOL_CONFIG,
-	DatasetSearchTool,
 	DATASET_SEARCH_TOOL_CONFIG,
 	type DatasetSearchParams,
 	DatasetDetailTool,
 	DATASET_DETAIL_TOOL_CONFIG,
 	DATASET_DETAIL_PROMPT_CONFIG,
 	type DatasetDetailParams,
-	HUB_INSPECT_TOOL_CONFIG,
+	HUB_REPO_DETAILS_TOOL_CONFIG,
 	HubInspectTool,
 	type HubInspectParams,
 	DuplicateSpaceTool,
@@ -79,12 +80,6 @@ import { applyResultPostProcessing, type GradioToolCallOptions } from './utils/g
 
 // Fallback settings when API fails (enables all tools)
 export const BOUQUET_FALLBACK: AppSettings = {
-	builtInTools: [...TOOL_ID_GROUPS.hf_api],
-	spaceTools: DEFAULT_SPACE_TOOLS,
-};
-
-// Default tools for unauthenticated users when using external settings API
-export const BOUQUET_ANON_DEFAULT: AppSettings = {
 	builtInTools: [...TOOL_ID_GROUPS.hf_api],
 	spaceTools: DEFAULT_SPACE_TOOLS,
 };
@@ -464,6 +459,19 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			MODEL_SEARCH_TOOL_CONFIG.schema.shape,
 			MODEL_SEARCH_TOOL_CONFIG.annotations,
 			async (params: ModelSearchParams) => {
+				const filters: string[] = [];
+				if (params.task) filters.push(params.task);
+				if (params.library) filters.push(params.library);
+
+				const repoParams: Partial<RepoSearchParams> = {
+					query: params.query,
+					repo_types: ['model'],
+					author: params.author,
+					sort: params.sort,
+					limit: params.limit,
+					...(filters.length > 0 ? { filters } : {}),
+				};
+
 				const result = await runWithQueryLogging(
 					logSearchQuery,
 					{
@@ -478,8 +486,38 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 						}),
 					},
 					async () => {
-						const modelSearch = new ModelSearchTool(hfToken);
-						return modelSearch.searchWithParams(params);
+						const repoSearch = new RepoSearchTool(hfToken);
+						return repoSearch.searchWithParams(repoParams);
+					}
+				);
+				return {
+					content: [{ type: 'text', text: result.formatted }],
+				};
+			}
+		);
+
+		toolInstances[REPO_SEARCH_TOOL_CONFIG.name] = server.tool(
+			REPO_SEARCH_TOOL_CONFIG.name,
+			REPO_SEARCH_TOOL_CONFIG.description,
+			REPO_SEARCH_TOOL_CONFIG.schema.shape,
+			REPO_SEARCH_TOOL_CONFIG.annotations,
+			async (params: RepoSearchParams) => {
+				const result = await runWithQueryLogging(
+					logSearchQuery,
+					{
+						methodName: REPO_SEARCH_TOOL_CONFIG.name,
+						query: params.query || `sort:${params.sort || 'trendingScore'}`,
+						parameters: params,
+						baseOptions: getLoggingOptions(),
+						successOptions: (formatted) => ({
+							totalResults: formatted.totalResults,
+							resultsShared: formatted.resultsShared,
+							responseCharCount: formatted.formatted.length,
+						}),
+					},
+					async () => {
+						const repoSearch = new RepoSearchTool(hfToken);
+						return repoSearch.searchWithParams(params);
 					}
 				);
 				return {
@@ -554,6 +592,15 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			DATASET_SEARCH_TOOL_CONFIG.schema.shape,
 			DATASET_SEARCH_TOOL_CONFIG.annotations,
 			async (params: DatasetSearchParams) => {
+				const repoParams: Partial<RepoSearchParams> = {
+					query: params.query,
+					repo_types: ['dataset'],
+					author: params.author,
+					sort: params.sort,
+					limit: params.limit,
+					...(params.tags && params.tags.length > 0 ? { filters: params.tags } : {}),
+				};
+
 				const result = await runWithQueryLogging(
 					logSearchQuery,
 					{
@@ -568,8 +615,8 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 						}),
 					},
 					async () => {
-						const datasetSearch = new DatasetSearchTool(hfToken);
-						return datasetSearch.searchWithParams(params);
+						const repoSearch = new RepoSearchTool(hfToken);
+						return repoSearch.searchWithParams(repoParams);
 					}
 				);
 				return {
@@ -611,9 +658,9 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 		// Compute README availability; adjust description and schema accordingly
 		const hubInspectReadmeAllowed = hasReadmeFlag(toolSelection.enabledToolIds);
 		const hubInspectDescription = hubInspectReadmeAllowed
-			? `${HUB_INSPECT_TOOL_CONFIG.description} README file may be requested from the external repository.`
-			: HUB_INSPECT_TOOL_CONFIG.description;
-		const hubInspectBaseShape = HUB_INSPECT_TOOL_CONFIG.schema.shape as z.ZodRawShape;
+			? `${HUB_REPO_DETAILS_TOOL_CONFIG.description} README file may be requested from the external repository.`
+			: HUB_REPO_DETAILS_TOOL_CONFIG.description;
+		const hubInspectBaseShape = HUB_REPO_DETAILS_TOOL_CONFIG.schema.shape as z.ZodRawShape;
 		const hubInspectSchemaShape: z.ZodRawShape = hubInspectReadmeAllowed
 			? hubInspectBaseShape
 			: (() => {
@@ -621,11 +668,11 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					return rest as unknown as z.ZodRawShape;
 				})();
 
-		toolInstances[HUB_INSPECT_TOOL_CONFIG.name] = server.tool(
-			HUB_INSPECT_TOOL_CONFIG.name,
+		toolInstances[HUB_REPO_DETAILS_TOOL_CONFIG.name] = server.tool(
+			HUB_REPO_DETAILS_TOOL_CONFIG.name,
 			hubInspectDescription,
 			hubInspectSchemaShape,
-			HUB_INSPECT_TOOL_CONFIG.annotations,
+			HUB_REPO_DETAILS_TOOL_CONFIG.annotations,
 			async (params: Record<string, unknown>) => {
 				// Re-evaluate flag dynamically to reflect UI changes without restarting server
 				const currentSelection = await toolSelectionStrategy.selectTools(toolSelectionContext);
@@ -644,7 +691,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 				const result = await runWithQueryLogging(
 					logPromptQuery,
 					{
-						methodName: HUB_INSPECT_TOOL_CONFIG.name,
+						methodName: HUB_REPO_DETAILS_TOOL_CONFIG.name,
 						query: firstRepoId,
 						parameters: { count: repoIds.length, repo_type: repoTypeSafe, include_readme: includeReadme },
 						baseOptions: getLoggingOptions(),
@@ -864,7 +911,10 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 								spaceName: params.space_name,
 							};
 
-								const processedResult = applyResultPostProcessing(invokeResult.result as CallToolResult, postProcessOptions);
+							const processedResult = applyResultPostProcessing(
+								invokeResult.result as CallToolResult,
+								postProcessOptions
+							);
 
 							const warningsContent =
 								invokeResult.warnings.length > 0

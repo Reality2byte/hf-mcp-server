@@ -1,12 +1,11 @@
 import {
 	ALL_BUILTIN_TOOL_IDS,
 	TOOL_ID_GROUPS,
-	HUB_INSPECT_TOOL_ID,
+	HUB_REPO_DETAILS_TOOL_ID,
 	USE_SPACE_TOOL_ID,
 	HF_JOBS_TOOL_ID,
 	DYNAMIC_SPACE_TOOL_ID,
-	MODEL_SEARCH_TOOL_ID,
-	DATASET_SEARCH_TOOL_ID,
+	REPO_SEARCH_TOOL_ID,
 	DOCS_SEMANTIC_SEARCH_TOOL_ID,
 } from '@llmindset/hf-mcp';
 import type { AppSettings } from './settings.js';
@@ -31,10 +30,9 @@ export const BOUQUETS: Record<string, AppSettings> = {
 	},
 	skills: {
 		builtInTools: [
-			HUB_INSPECT_TOOL_ID,
+			HUB_REPO_DETAILS_TOOL_ID,
 			README_INCLUDE_FLAG,
-			MODEL_SEARCH_TOOL_ID,
-			DATASET_SEARCH_TOOL_ID,
+			REPO_SEARCH_TOOL_ID,
 			DOCS_SEMANTIC_SEARCH_TOOL_ID,
 			HF_JOBS_TOOL_ID,
 		],
@@ -46,11 +44,11 @@ export const BOUQUETS: Record<string, AppSettings> = {
 	},
 	// Test bouquets for README inclusion behavior
 	hub_repo_details_readme: {
-		builtInTools: [HUB_INSPECT_TOOL_ID, README_INCLUDE_FLAG],
+		builtInTools: [HUB_REPO_DETAILS_TOOL_ID, README_INCLUDE_FLAG],
 		spaceTools: [],
 	},
 	hub_repo_details: {
-		builtInTools: [HUB_INSPECT_TOOL_ID],
+		builtInTools: [HUB_REPO_DETAILS_TOOL_ID],
 		spaceTools: [],
 	},
 	no_gradio_images: {
@@ -114,7 +112,7 @@ const PRESET_META: Array<Omit<BouquetPreset, 'builtInTools'>> = [
 	{
 		key: 'search',
 		label: 'Search Tools',
-		description: 'Semantic search across models, datasets, papers, and docs.',
+		description: 'Search across models, datasets, spaces, papers, and docs.',
 		category: 'core',
 		supportsBouquet: true,
 		supportsMix: true,
@@ -225,9 +223,9 @@ const TOOL_DESCRIPTIONS: Record<string, Omit<ConfigEntryDescription, 'id' | 'kin
 		label: 'Space Search',
 		description: 'Semantic search across public Spaces on the Hugging Face Hub.',
 	},
-	model_search: {
-		label: 'Model Search',
-		description: 'Find models on the Hub by keyword or capability.',
+	hub_repo_search: {
+		label: 'Repo Search',
+		description: 'Search models, datasets, and optional spaces with one shared query.',
 	},
 	model_details: {
 		label: 'Model Details',
@@ -236,10 +234,6 @@ const TOOL_DESCRIPTIONS: Record<string, Omit<ConfigEntryDescription, 'id' | 'kin
 	paper_search: {
 		label: 'Paper Search',
 		description: 'Discover research papers relevant to your query.',
-	},
-	dataset_search: {
-		label: 'Dataset Search',
-		description: 'Explore datasets published on the Hub.',
 	},
 	dataset_details: {
 		label: 'Dataset Details',

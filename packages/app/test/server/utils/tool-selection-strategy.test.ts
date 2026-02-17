@@ -3,7 +3,7 @@ import { ToolSelectionStrategy, ToolSelectionMode, type ToolSelectionContext } f
 import { McpApiClient, type ApiClientConfig } from '../../../src/server/utils/mcp-api-client.js';
 import type { AppSettings } from '../../../src/shared/settings.js';
 import type { TransportInfo } from '../../../src/shared/transport-info.js';
-import { ALL_BUILTIN_TOOL_IDS, TOOL_ID_GROUPS } from '@llmindset/hf-mcp';
+import { ALL_BUILTIN_TOOL_IDS, REPO_SEARCH_TOOL_ID, TOOL_ID_GROUPS } from '@llmindset/hf-mcp';
 import { extractAuthBouquetAndMix } from '../../../src/server/utils/auth-utils.js';
 import { normalizeBuiltInTools } from '../../../src/shared/tool-normalizer.js';
 import { BOUQUETS } from '../../../src/shared/bouquet-presets.js';
@@ -234,7 +234,9 @@ describe('ToolSelectionStrategy', () => {
 			expect(result.mixedBouquet).toEqual(['hf_api']);
 
 			// Should contain user tools + hf_api tools (deduplicated)
-			const expectedTools = [...new Set([...userSettings.builtInTools, ...TOOL_ID_GROUPS.hf_api])];
+			const expectedTools = normalizeBuiltInTools([
+				...new Set([...userSettings.builtInTools, ...TOOL_ID_GROUPS.hf_api]),
+			]);
 			expect(result.enabledToolIds).toEqual(expectedTools);
 		});
 
@@ -334,7 +336,7 @@ describe('ToolSelectionStrategy', () => {
 
 			// Should use user settings without mixing
 			expect(result.mode).toBe(ToolSelectionMode.INTERNAL_API);
-			expect(result.enabledToolIds).toEqual(userSettings.builtInTools);
+			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(userSettings.builtInTools));
 		});
 	});
 
@@ -354,7 +356,7 @@ describe('ToolSelectionStrategy', () => {
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.INTERNAL_API);
-			expect(result.enabledToolIds).toEqual(userSettings.builtInTools);
+			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(userSettings.builtInTools));
 			expect(result.reason).toBe('Internal API user settings');
 			expect(result.baseSettings).toEqual(userSettings);
 		});
@@ -393,7 +395,7 @@ describe('ToolSelectionStrategy', () => {
 			const result = await externalStrategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.EXTERNAL_API);
-			expect(result.enabledToolIds).toEqual(userSettings.builtInTools);
+			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(userSettings.builtInTools));
 			expect(result.reason).toBe('External API user settings');
 		});
 	});
@@ -572,7 +574,7 @@ describe('ToolSelectionStrategy', () => {
 
 			const result = await strategy.selectTools(context);
 
-			expect(result.enabledToolIds).toEqual(['hf_doc_search', 'hf_model_search']);
+			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(['hf_doc_search', 'hf_model_search']));
 			expect(result.enabledToolIds).not.toContain('hf_doc_fetch');
 		});
 
@@ -592,7 +594,7 @@ describe('ToolSelectionStrategy', () => {
 
 			const result = await strategy.selectTools(context);
 
-			expect(result.enabledToolIds).toEqual(['hf_doc_search', 'hf_model_search']);
+			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(['hf_doc_search', 'hf_model_search']));
 			expect(result.enabledToolIds).not.toContain('hf_doc_fetch');
 		});
 
@@ -614,7 +616,7 @@ describe('ToolSelectionStrategy', () => {
 
 			expect(result.enabledToolIds).toContain('hf_doc_search');
 			expect(result.enabledToolIds).toContain('hf_doc_fetch');
-			expect(result.enabledToolIds).toContain('hf_model_search');
+			expect(result.enabledToolIds).toContain(REPO_SEARCH_TOOL_ID);
 			expect(result.enabledToolIds).toHaveLength(3);
 		});
 
@@ -636,7 +638,7 @@ describe('ToolSelectionStrategy', () => {
 
 			expect(result.enabledToolIds).not.toContain('hf_doc_search');
 			expect(result.enabledToolIds).not.toContain('hf_doc_fetch');
-			expect(result.enabledToolIds).toEqual(['hf_model_search', 'hf_dataset_search']);
+			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(['hf_model_search', 'hf_dataset_search']));
 		});
 
 		it('should not duplicate hf_doc_fetch if already enabled', async () => {
@@ -655,7 +657,9 @@ describe('ToolSelectionStrategy', () => {
 
 			const result = await strategy.selectTools(context);
 
-			expect(result.enabledToolIds).toEqual(['hf_doc_search', 'hf_doc_fetch', 'hf_model_search']);
+			expect(result.enabledToolIds).toEqual(
+				normalizeBuiltInTools(['hf_doc_search', 'hf_doc_fetch', 'hf_model_search'])
+			);
 			expect(result.enabledToolIds.filter((id) => id === 'hf_doc_fetch')).toHaveLength(1);
 		});
 
@@ -693,7 +697,7 @@ describe('ToolSelectionStrategy', () => {
 			expect(result.mode).toBe(ToolSelectionMode.MIX);
 			expect(result.enabledToolIds).toContain('hf_doc_search');
 			expect(result.enabledToolIds).toContain('hf_doc_fetch');
-			expect(result.enabledToolIds).toContain('hf_model_search');
+			expect(result.enabledToolIds).toContain(REPO_SEARCH_TOOL_ID);
 		});
 
 		it('should work with fallback mode when all tools are enabled', async () => {
