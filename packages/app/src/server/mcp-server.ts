@@ -228,7 +228,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 		const skillCatalog = await getSkillCatalog();
 		const hasSkills = !!skillCatalog?.skills.length;
 		const skillsInstructions = hasSkills
-			? '\nThis server exposes Anthropic-style Skills as MCP resources under the `skill://` URI scheme. ' +
+			? '\nThis server exposes Agent Skills as MCP resources under the `skill://` URI scheme. ' +
 				'Read `skill://index.json` to see all available skills, then read individual `SKILL.md` resources for invocation guidance.'
 			: '';
 
