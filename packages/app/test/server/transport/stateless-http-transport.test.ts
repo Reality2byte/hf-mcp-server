@@ -90,4 +90,42 @@ describe('StatelessHttpTransport', () => {
 			expect(result).toBe(false);
 		});
 	});
+
+	describe('skipGradioSetup', () => {
+		it('should not skip setup for list_files calls because it is registered by the Gradio proxy layer', () => {
+			const result = (transport as any).skipGradioSetup({
+				method: 'tools/call',
+				params: { name: 'list_files' },
+			});
+
+			expect(result).toBe(false);
+		});
+
+		it('should not skip setup for Gradio endpoint tool calls', () => {
+			const result = (transport as any).skipGradioSetup({
+				method: 'tools/call',
+				params: { name: 'gr1_predict' },
+			});
+
+			expect(result).toBe(false);
+		});
+
+		it('should not skip setup for dynamic_space invoke calls that need streaming/progress handling', () => {
+			const result = (transport as any).skipGradioSetup({
+				method: 'tools/call',
+				params: { name: 'dynamic_space', arguments: { operation: 'invoke' } },
+			});
+
+			expect(result).toBe(false);
+		});
+
+		it('should skip setup for normal local tool calls', () => {
+			const result = (transport as any).skipGradioSetup({
+				method: 'tools/call',
+				params: { name: 'hf_model_search' },
+			});
+
+			expect(result).toBe(true);
+		});
+	});
 });

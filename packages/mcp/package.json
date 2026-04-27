@@ -37,7 +37,7 @@
 		"clean": "rimraf dist"
 	},
 	"dependencies": {
-		"@huggingface/hub": "^2.6.12",
+		"@huggingface/hub": "^2.11.0",
 		"@mcp-ui/server": "^5.12.0",
 		"@modelcontextprotocol/sdk": "^1.26.0",
 		"shell-quote": "^1.8.3",

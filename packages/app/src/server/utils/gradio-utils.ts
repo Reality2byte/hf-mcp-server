@@ -5,6 +5,8 @@ import type { SpaceTool } from '../../shared/settings.js';
 import { GRADIO_PREFIX, GRADIO_PRIVATE_PREFIX } from '../../shared/constants.js';
 import { logger } from './logger.js';
 import { getGradioSpaces } from './gradio-discovery.js';
+import { HubApiError, repoExists } from '@huggingface/hub';
+import type { FileListingSource } from '@llmindset/hf-mcp';
 
 /**
  * Determines if a tool name represents a Gradio endpoint
@@ -222,6 +224,16 @@ interface GradioFilesEligibilityParams {
 	datasetExists: boolean;
 }
 
+interface FileListingSourceResolutionParams {
+	username?: string;
+	token?: string;
+	gradioSpaceCount: number;
+	builtInTools: string[];
+	dynamicSpaceToolId: string;
+}
+
+export type ResolvedFileListingSource = FileListingSource | null;
+
 /**
  * Pure function to determine if the gradio_files tool should be registered.
  *
@@ -267,4 +279,52 @@ export function shouldRegisterGradioFilesTool(params: GradioFilesEligibilityPara
 	const isDynamicSpaceEnabled = builtInTools.includes(dynamicSpaceToolId);
 
 	return hasGradioSpaces || isDynamicSpaceEnabled;
+}
+
+function isFileListingRelevant(params: {
+	gradioSpaceCount: number;
+	builtInTools: string[];
+	dynamicSpaceToolId: string;
+}): boolean {
+	return params.gradioSpaceCount > 0 || params.builtInTools.includes(params.dynamicSpaceToolId);
+}
+
+async function bucketExists(bucketId: string, token: string): Promise<boolean> {
+	try {
+		return await repoExists({
+			repo: { type: 'bucket', name: bucketId },
+			accessToken: token,
+		});
+	} catch (error) {
+		if (error instanceof HubApiError && error.statusCode === 403) {
+			return false;
+		}
+		throw error;
+	}
+}
+
+export async function resolveMcpFileListingSource(
+	params: FileListingSourceResolutionParams
+): Promise<ResolvedFileListingSource> {
+	const { username, token, gradioSpaceCount, builtInTools, dynamicSpaceToolId } = params;
+	if (!username || !token || !isFileListingRelevant({ gradioSpaceCount, builtInTools, dynamicSpaceToolId })) {
+		return null;
+	}
+
+	const bucketId = `${username}/mcp`;
+	if (await bucketExists(bucketId, token)) {
+		return { kind: 'bucket', id: bucketId };
+	}
+
+	const datasetId = `${username}/gradio-files`;
+	if (
+		await repoExists({
+			repo: { type: 'dataset', name: datasetId },
+			accessToken: token,
+		})
+	) {
+		return { kind: 'dataset', id: datasetId };
+	}
+
+	return null;
 }
