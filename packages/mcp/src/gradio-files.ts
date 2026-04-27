@@ -5,7 +5,18 @@ import { HfApiError } from './hf-api-call.js';
 import { explain } from './error-messages.js';
 import { getFileIcon } from './file-icons.js';
 
-// Define the FileWithUrl interface
+export type FileTypeFilter = 'all' | 'image' | 'audio' | 'text';
+
+export type FileListingSource =
+	| {
+			kind: 'bucket';
+			id: string;
+	  }
+	| {
+			kind: 'dataset';
+			id: string;
+	  };
+
 interface FileWithUrl {
 	path: string;
 	size: number;
@@ -14,6 +25,7 @@ interface FileWithUrl {
 	sizeFormatted: string;
 	lastModified?: string;
 	lfs: boolean;
+	source: FileListingSource['kind'];
 }
 
 // File type detection helpers
@@ -49,11 +61,11 @@ const AUDIO_EXTENSIONS = new Set([
 const TEXT_EXTENSIONS = new Set([
 	'.txt',
 	'.md',
-	'json',
-	'xml',
+	'.json',
+	'.xml',
 	'.csv',
 	'.tsv',
-	'yaml',
+	'.yaml',
 	'.yml',
 	'.html',
 	'.css',
@@ -78,7 +90,7 @@ function isTextFile(path: string): boolean {
 	return TEXT_EXTENSIONS.has(getFileExtension(path));
 }
 
-function matchesFileType(file: FileWithUrl, fileType: 'all' | 'image' | 'audio' | 'text'): boolean {
+function matchesFileType(file: FileWithUrl, fileType: FileTypeFilter): boolean {
 	switch (fileType) {
 		case 'all':
 			return true;
@@ -93,13 +105,29 @@ function matchesFileType(file: FileWithUrl, fileType: 'all' | 'image' | 'audio' 
 	}
 }
 
-// Tool configuration
+const FILE_TYPE_SCHEMA = z.enum(['all', 'image', 'audio', 'text']).optional().default('all').describe('Filter by type');
+
+export const LIST_FILES_TOOL_CONFIG = {
+	name: 'list_files',
+	description:
+		'List files available to use as Gradio File/Image/Audio inputs. Prefer these URLs when a Space asks for a file input and the user has not provided an explicit URL.',
+	schema: z.object({
+		fileType: FILE_TYPE_SCHEMA,
+	}),
+	annotations: {
+		title: 'Available Input Files',
+		destructiveHint: false,
+		readOnlyHint: true,
+		openWorldHint: true,
+	},
+} as const;
+
 export const GRADIO_FILES_TOOL_CONFIG = {
 	name: 'gradio_files',
 	description:
 		'List available URLs that can be used for Gradio File Inputs. Use when an input is requested and an explicit URL has not been provided.', // This will be dynamically set with username
 	schema: z.object({
-		fileType: z.enum(['all', 'image', 'audio', 'text']).optional().default('all').describe('Filter by type'),
+		fileType: FILE_TYPE_SCHEMA,
 	}),
 	annotations: {
 		title: 'Gradio Files List',
@@ -115,37 +143,35 @@ export const GRADIO_FILES_PROMPT_CONFIG = {
 	schema: z.object({}),
 };
 
-// Define parameter types
+export type ListFilesParams = z.infer<typeof LIST_FILES_TOOL_CONFIG.schema>;
 export type GradioFilesParams = z.infer<typeof GRADIO_FILES_TOOL_CONFIG.schema>;
 
 /**
- * Service for listing files in Hugging Face Spaces
+ * Service for listing files from a Hugging Face Bucket or the legacy gradio-files dataset.
  */
-export class GradioFilesTool {
+export class ListFilesTool {
 	private readonly accessToken: string;
-	private readonly datasetname: string;
+	private readonly source: FileListingSource;
 
-	constructor(hfToken: string, username: string) {
+	constructor(hfToken: string, source: FileListingSource) {
 		this.accessToken = hfToken;
-		this.datasetname = `${username}/gradio-files`;
+		this.source = source;
 	}
 
 	/**
-	 * Get all files in a space with their URLs
+	 * Get all files with stable Hub URLs.
 	 */
-	async getGradioFiles(): Promise<FileWithUrl[]> {
+	async getFiles(): Promise<FileWithUrl[]> {
 		try {
 			const files: FileWithUrl[] = [];
 
-			// List all files recursively
 			for await (const file of listFiles({
-				repo: { type: 'dataset', name: this.datasetname },
-				recursive: false, // root directory only for now,
-				expand: true, // Get last commit info
-				...(this.accessToken && { credentials: { accessToken: this.accessToken } }),
+				repo: { type: this.source.kind, name: this.source.id },
+				recursive: this.source.kind === 'bucket',
+				expand: true,
+				accessToken: this.accessToken,
 			})) {
 				if (file.type === 'file') {
-					// Exclude .gitattributes and .gitignore files
 					const fileName = file.path.split('/').pop() || file.path;
 					if (fileName === '.gitattributes' || fileName === '.gitignore') {
 						continue;
@@ -157,8 +183,9 @@ export class GradioFilesTool {
 						type: file.type,
 						url: this.constructFileUrl(file.path),
 						sizeFormatted: formatBytes(file.size),
-						lastModified: file.lastCommit?.date,
+						lastModified: this.source.kind === 'bucket' ? file.uploadedAt : file.lastCommit?.date,
 						lfs: !!file.lfs,
+						source: this.source.kind,
 					});
 				}
 			}
@@ -166,7 +193,7 @@ export class GradioFilesTool {
 			return files.sort((a, b) => a.path.localeCompare(b.path));
 		} catch (error) {
 			if (error instanceof HfApiError) {
-				throw explain(error, `Failed to list files for dataset "${this.datasetname}"`);
+				throw explain(error, `Failed to list files for ${this.source.kind} "${this.source.id}"`);
 			}
 			throw error;
 		}
@@ -176,19 +203,30 @@ export class GradioFilesTool {
 	 * Construct the URL for a file
 	 */
 	private constructFileUrl(filePath: string): string {
-		return `https://huggingface.co/datasets/${this.datasetname}/resolve/main/${filePath}`;
+		if (this.source.kind === 'bucket') {
+			const encodedPath = filePath.split('/').map(encodeURIComponent).join('/');
+			return `https://huggingface.co/buckets/${this.source.id}/resolve/${encodedPath}`;
+		}
+		return `https://huggingface.co/datasets/${this.source.id}/resolve/main/${filePath}`;
 	}
 
 	/**
 	 * Generate detailed markdown report with files grouped by directory
 	 */
-	async generateDetailedMarkdown(fileType: 'all' | 'image' | 'audio' | 'text' = 'all'): Promise<string> {
-		const allFiles = await this.getGradioFiles();
+	async generateDetailedMarkdown(fileType: FileTypeFilter = 'all'): Promise<string> {
+		const allFiles = await this.getFiles();
 		const files = allFiles.filter((file) => matchesFileType(file, fileType));
+		const sourceLabel = this.source.kind === 'bucket' ? 'Hugging Face Bucket' : 'Hugging Face Dataset fallback';
 
-		let markdown = `# Available Gradio Input files in : ${this.datasetname}\n\n`;
+		let markdown = `# Available files in ${this.source.kind}: ${this.source.id}\n\n`;
+		markdown += `**Source:** ${sourceLabel}\n`;
+		markdown += '**Use:** URLs below can be used as Gradio file inputs when accessible to the target Space.\n\n';
+		if (this.source.kind === 'bucket') {
+			markdown +=
+				'Note: private bucket URLs require authorization. A remote Gradio Space can only fetch these URLs directly if it has access; public buckets are safest for cross-Space file inputs.\n\n';
+		}
 		if (fileType !== 'all') {
-			markdown += `**Filter**: ${fileType} files only\n`;
+			markdown += `**Filter**: ${fileType} files only\n\n`;
 		}
 
 		// Handle empty results
@@ -203,17 +241,30 @@ export class GradioFilesTool {
 
 		// Generate table
 		markdown += `## All Files\n\n`;
-		markdown += `| Name | Size | Type | Last Modified | Gradio File Input |\n`;
-		markdown += `|------|------|------|---------------|-----|\n`;
+		markdown += `| Name | Path | Size | Type | Last Modified | URL |\n`;
+		markdown += `|------|------|------|------|---------------|-----|\n`;
 
 		for (const file of files) {
 			const fileName = file.path.split('/').pop() || file.path;
 			const icon = getFileIcon(fileName);
 			const lastMod = file.lastModified ? new Date(file.lastModified).toLocaleDateString() : '-';
 
-			markdown += `| ${escapeMarkdown(fileName)} | ${file.sizeFormatted} | ${icon} ${file.type} | ${lastMod} | ${file.url} |\n`;
+			markdown += `| ${escapeMarkdown(fileName)} | ${escapeMarkdown(file.path)} | ${file.sizeFormatted} | ${icon} ${file.type} | ${lastMod} | ${file.url} |\n`;
 		}
 
 		return markdown;
+	}
+}
+
+/**
+ * Compatibility wrapper for the legacy gradio_files dataset behavior.
+ */
+export class GradioFilesTool extends ListFilesTool {
+	constructor(hfToken: string, username: string) {
+		super(hfToken, { kind: 'dataset', id: `${username}/gradio-files` });
+	}
+
+	async getGradioFiles(): Promise<FileWithUrl[]> {
+		return this.getFiles();
 	}
 }

@@ -8,11 +8,10 @@ import { GRADIO_IMAGE_FILTER_FLAG } from '../shared/behavior-flags.js';
 import { logger } from './utils/logger.js';
 import { convertJsonSchemaToZod, registerRemoteTools } from './gradio-endpoint-connector.js';
 import { extractAuthBouquetAndMix } from './utils/auth-utils.js';
-import { parseGradioSpaceIds, shouldRegisterGradioFilesTool } from './utils/gradio-utils.js';
+import { parseGradioSpaceIds, resolveMcpFileListingSource } from './utils/gradio-utils.js';
 import { getGradioSpaces } from './utils/gradio-discovery.js';
-import { repoExists } from '@huggingface/hub';
-import type { GradioFilesParams } from '@llmindset/hf-mcp';
-import { GRADIO_FILES_TOOL_CONFIG, GradioFilesTool, DYNAMIC_SPACE_TOOL_ID } from '@llmindset/hf-mcp';
+import type { ListFilesParams } from '@llmindset/hf-mcp';
+import { LIST_FILES_TOOL_CONFIG, ListFilesTool, DYNAMIC_SPACE_TOOL_ID } from '@llmindset/hf-mcp';
 import { logSearchQuery, type QueryLoggerOptions } from './utils/query-logger.js';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -283,53 +282,46 @@ export const createProxyServerFactory = (
 			gradioParam: gradio,
 		}, 'Collected Gradio space names');
 
-		// Register gradio_files tool if eligible
-		// This is needed when Gradio spaces are configured OR when dynamic_space is enabled
-		if (sessionInfo?.isAuthenticated && userDetails?.name && hfToken) {
-			const username = userDetails.name;
-			const token = hfToken;
-			const datasetExists = await repoExists({
-				repo: { type: 'dataset', name: `${username}/gradio-files` },
-				accessToken: token,
-			});
+		const fileSource =
+			sessionInfo?.isAuthenticated && userDetails?.name && hfToken
+				? await resolveMcpFileListingSource({
+						username: userDetails.name,
+						token: hfToken,
+						gradioSpaceCount: allSpaceNames.length,
+						builtInTools: settings?.builtInTools ?? [],
+						dynamicSpaceToolId: DYNAMIC_SPACE_TOOL_ID,
+					})
+				: null;
 
-			const shouldRegister = shouldRegisterGradioFilesTool({
-				gradioSpaceCount: allSpaceNames.length,
-				builtInTools: settings?.builtInTools ?? [],
-				dynamicSpaceToolId: DYNAMIC_SPACE_TOOL_ID,
-				datasetExists,
-			});
+		if (fileSource && hfToken) {
+			server.tool(
+				LIST_FILES_TOOL_CONFIG.name,
+				LIST_FILES_TOOL_CONFIG.description,
+				LIST_FILES_TOOL_CONFIG.schema.shape,
+				LIST_FILES_TOOL_CONFIG.annotations,
+				async (params: ListFilesParams) => {
+					const tool = new ListFilesTool(hfToken, fileSource);
+					const markdown = await tool.generateDetailedMarkdown(params.fileType);
 
-			if (shouldRegister) {
-				server.tool(
-					GRADIO_FILES_TOOL_CONFIG.name,
-					GRADIO_FILES_TOOL_CONFIG.description,
-					GRADIO_FILES_TOOL_CONFIG.schema.shape,
-					GRADIO_FILES_TOOL_CONFIG.annotations,
-					async (params: GradioFilesParams) => {
-						const tool = new GradioFilesTool(token, username);
-						const markdown = await tool.generateDetailedMarkdown(params.fileType);
+					// Log the tool usage
+					logSearchQuery(
+						LIST_FILES_TOOL_CONFIG.name,
+						fileSource.id,
+						{ fileType: params.fileType, source: fileSource.kind },
+						{
+							clientSessionId: sessionInfo?.clientSessionId,
+							isAuthenticated: sessionInfo?.isAuthenticated ?? true,
+							clientName: sessionInfo?.clientInfo?.name,
+							clientVersion: sessionInfo?.clientInfo?.version,
+							responseCharCount: markdown.length,
+						}
+					);
 
-						// Log the tool usage
-						logSearchQuery(
-							GRADIO_FILES_TOOL_CONFIG.name,
-							`${username}/gradio-files`,
-							{ fileType: params.fileType },
-							{
-								clientSessionId: sessionInfo?.clientSessionId,
-								isAuthenticated: sessionInfo?.isAuthenticated ?? true,
-								clientName: sessionInfo?.clientInfo?.name,
-								clientVersion: sessionInfo?.clientInfo?.version,
-								responseCharCount: markdown.length,
-							}
-						);
-
-						return {
-							content: [{ type: 'text', text: markdown }],
-						};
-					}
-				);
-			}
+					return {
+						content: [{ type: 'text', text: markdown }],
+					};
+				}
+			);
 		}
 
 		if (allSpaceNames.length === 0) {

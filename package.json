@@ -2,7 +2,7 @@
 	"name": "hf-mcp",
 	"version": "0.3.5",
 	"type": "module",
-	"packageManager": "pnpm@10.29.2",
+	"packageManager": "pnpm@10.33.2",
 	"pnpm": {
 		"shamefullyHoist": true,
 		"strictPeerDependencies": false
@@ -28,12 +28,11 @@
 		"knip": "knip --include files,dependencies,devDependencies,unlisted,exports,types --treat-config-hints-as-errors"
 	},
 	"devDependencies": {
+		"@modelcontextprotocol/sdk": "^1.26.0",
 		"@types/node": "^25.3.0",
 		"concurrently": "^9.2.0",
 		"knip": "^5.85.0",
 		"prettier": "^3.6.2",
-		"typescript": "~5.9.2",
-		"@modelcontextprotocol/sdk": "^1.26.0"
-	},
-	"dependencies": {}
+		"typescript": "~5.9.2"
+	}
 }

@@ -1,10 +1,21 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as hub from '@huggingface/hub';
+import { HubApiError } from '@huggingface/hub';
 import {
 	isGradioTool,
 	createGradioToolName,
 	parseGradioSpaceIds,
+	resolveMcpFileListingSource,
 	shouldRegisterGradioFilesTool,
 } from '../../../src/server/utils/gradio-utils.js';
+
+vi.mock('@huggingface/hub', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('@huggingface/hub')>();
+	return {
+		...actual,
+		repoExists: vi.fn(),
+	};
+});
 
 describe('isGradioTool', () => {
 	describe('should return true for valid Gradio tool names', () => {
@@ -533,6 +544,97 @@ describe('shouldRegisterGradioFilesTool', () => {
 				dynamicSpaceToolId: DYNAMIC_SPACE_TOOL_ID,
 				datasetExists: true,
 			})).toBe(false);
+		});
+	});
+});
+
+describe('resolveMcpFileListingSource', () => {
+	const DYNAMIC_SPACE_TOOL_ID = 'dynamic_space';
+	const baseParams = {
+		username: 'alice',
+		token: 'hf_token',
+		gradioSpaceCount: 1,
+		builtInTools: [],
+		dynamicSpaceToolId: DYNAMIC_SPACE_TOOL_ID,
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('prefers bucket when both bucket and dataset exist', async () => {
+		vi.mocked(hub.repoExists).mockResolvedValueOnce(true);
+
+		await expect(resolveMcpFileListingSource(baseParams)).resolves.toEqual({ kind: 'bucket', id: 'alice/mcp' });
+		expect(hub.repoExists).toHaveBeenCalledTimes(1);
+		expect(hub.repoExists).toHaveBeenCalledWith({
+			repo: { type: 'bucket', name: 'alice/mcp' },
+			accessToken: 'hf_token',
+		});
+	});
+
+	it('returns bucket when dataset is missing', async () => {
+		vi.mocked(hub.repoExists).mockResolvedValueOnce(true);
+
+		await expect(resolveMcpFileListingSource(baseParams)).resolves.toEqual({ kind: 'bucket', id: 'alice/mcp' });
+	});
+
+	it('falls back to dataset when bucket is missing', async () => {
+		vi.mocked(hub.repoExists).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+
+		await expect(resolveMcpFileListingSource(baseParams)).resolves.toEqual({
+			kind: 'dataset',
+			id: 'alice/gradio-files',
+		});
+		expect(hub.repoExists).toHaveBeenNthCalledWith(2, {
+			repo: { type: 'dataset', name: 'alice/gradio-files' },
+			accessToken: 'hf_token',
+		});
+	});
+
+	it('returns null when neither bucket nor dataset exists', async () => {
+		vi.mocked(hub.repoExists).mockResolvedValueOnce(false).mockResolvedValueOnce(false);
+
+		await expect(resolveMcpFileListingSource(baseParams)).resolves.toBeNull();
+	});
+
+	it('returns null without auth prerequisites', async () => {
+		await expect(resolveMcpFileListingSource({ ...baseParams, token: undefined })).resolves.toBeNull();
+		await expect(resolveMcpFileListingSource({ ...baseParams, username: undefined })).resolves.toBeNull();
+		expect(hub.repoExists).not.toHaveBeenCalled();
+	});
+
+	it('returns null when file listing is not relevant', async () => {
+		await expect(
+			resolveMcpFileListingSource({
+				...baseParams,
+				gradioSpaceCount: 0,
+				builtInTools: [],
+			})
+		).resolves.toBeNull();
+		expect(hub.repoExists).not.toHaveBeenCalled();
+	});
+
+	it('allows dynamic_space to make file listing relevant', async () => {
+		vi.mocked(hub.repoExists).mockResolvedValueOnce(true);
+
+		await expect(
+			resolveMcpFileListingSource({
+				...baseParams,
+				gradioSpaceCount: 0,
+				builtInTools: [DYNAMIC_SPACE_TOOL_ID],
+			})
+		).resolves.toEqual({ kind: 'bucket', id: 'alice/mcp' });
+	});
+
+	it('treats bucket 403 as unavailable and falls back to dataset', async () => {
+		vi.mocked(hub.repoExists)
+			.mockRejectedValueOnce(new HubApiError('https://huggingface.co/api/buckets/alice/mcp', 403))
+			.mockResolvedValueOnce(true);
+
+		await expect(resolveMcpFileListingSource(baseParams)).resolves.toEqual({
+			kind: 'dataset',
+			id: 'alice/gradio-files',
 		});
 	});
 });
