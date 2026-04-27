@@ -227,10 +227,6 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 		// Load the experimental skills catalog (cached across sessions). Failure leaves it null and disables skills.
 		const skillCatalog = await getSkillCatalog();
 		const hasSkills = !!skillCatalog?.skills.length;
-		const skillsInstructions = hasSkills
-			? '\nThis server exposes Agent Skills as MCP resources under the `skill://` URI scheme. ' +
-				'Read `skill://index.json` to see all available skills, then read individual `SKILL.md` resources for invocation guidance.'
-			: '';
 
 		/**
 		 *  we will set capabilities below. use of the convenience .tool() registration methods automatically
@@ -253,8 +249,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					"You have tools for using the Hugging Face Hub. arXiv paper id's are often " +
 					'used as references between datasets, models and papers. There are over 100 tags in use, ' +
 					"common tags include 'Text Generation', 'Transformers', 'Image Classification' and so on.\n" +
-					userInfo +
-					skillsInstructions,
+					userInfo,
 			}
 		);
 
