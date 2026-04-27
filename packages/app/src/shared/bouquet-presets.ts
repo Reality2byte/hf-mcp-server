@@ -101,7 +101,8 @@ const PRESET_META: Array<Omit<BouquetPreset, 'builtInTools'>> = [
 	{
 		key: 'skills',
 		label: 'Skills Toolkit',
-		description: 'Tools that work well with Hugging Face Skills (https://github.com/huggingface/skills).',
+		description:
+			'Tools that work well with Hugging Face Skills (https://github.com/huggingface/skills). Pair with a Skills-aware client to load `skill://` resources.',
 		category: 'core',
 		supportsBouquet: true,
 		supportsMix: true,

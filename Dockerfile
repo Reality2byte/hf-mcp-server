@@ -13,6 +13,10 @@ COPY packages/app/package.json ./packages/app/
 RUN pnpm install --frozen-lockfile
 
 # Copy source code
+# NOTE: vendor/hf-skills is a git submodule. Builders must run
+#   `git submodule update --init --recursive`
+# before `docker build`, otherwise the skills directory will be empty
+# and the server will start with skills disabled (warning logged).
 COPY . .
 
 

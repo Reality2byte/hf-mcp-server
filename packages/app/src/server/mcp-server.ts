@@ -3,6 +3,8 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { z } from 'zod';
 import { createRequire } from 'module';
 import { performance } from 'node:perf_hooks';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { whoAmI, type WhoAmI } from '@huggingface/hub';
 import {
 	SpaceSearchTool,
@@ -84,6 +86,9 @@ import { hasReadmeFlag } from '../shared/behavior-flags.js';
 import { registerCapabilities } from './utils/capability-utils.js';
 import { createGradioWidgetResourceConfig } from './resources/gradio-widget-resource.js';
 import { applyResultPostProcessing, type GradioToolCallOptions } from './utils/gradio-tool-caller.js';
+import { loadSkills } from './skills/skill-loader.js';
+import { registerSkillResources } from './skills/skill-resources.js';
+import type { SkillCatalog } from './skills/skill-types.js';
 
 // Fallback settings when API fails (enables all tools)
 export const BOUQUET_FALLBACK: AppSettings = {
@@ -92,6 +97,24 @@ export const BOUQUET_FALLBACK: AppSettings = {
 };
 
 // Bouquet configurations moved to tool-selection-strategy.ts
+
+// Experimental Skills extension (SEP-2640): vendored at vendor/hf-skills/skills.
+// Resolved relative to the built output (packages/app/dist/server/) -> repo root -> vendor/hf-skills/skills.
+// Override via HF_SKILLS_DIR env var for tests or alternate layouts.
+const SKILLS_DIR =
+	process.env.HF_SKILLS_DIR ??
+	path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../vendor/hf-skills/skills');
+
+let skillCatalogPromise: Promise<SkillCatalog | null> | null = null;
+const getSkillCatalog = (): Promise<SkillCatalog | null> => {
+	if (!skillCatalogPromise) {
+		skillCatalogPromise = loadSkills(SKILLS_DIR).catch((err) => {
+			logger.warn({ err, SKILLS_DIR }, 'failed to load skills, skills disabled');
+			return null;
+		});
+	}
+	return skillCatalogPromise;
+};
 
 /**
  * Creates a ServerFactory function that produces McpServer instances with all tools registered
@@ -201,6 +224,14 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			}
 		};
 
+		// Load the experimental skills catalog (cached across sessions). Failure leaves it null and disables skills.
+		const skillCatalog = await getSkillCatalog();
+		const hasSkills = !!skillCatalog?.skills.length;
+		const skillsInstructions = hasSkills
+			? '\nThis server exposes Anthropic-style Skills as MCP resources under the `skill://` URI scheme. ' +
+				'Read `skill://index.json` to see all available skills, then read individual `SKILL.md` resources for invocation guidance.'
+			: '';
+
 		/**
 		 *  we will set capabilities below. use of the convenience .tool() registration methods automatically
 		 * sets tools: {listChanged: true} .
@@ -222,7 +253,8 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					"You have tools for using the Hugging Face Hub. arXiv paper id's are often " +
 					'used as references between datasets, models and papers. There are over 100 tags in use, ' +
 					"common tags include 'Text Generation', 'Transformers', 'Image Classification' and so on.\n" +
-					userInfo,
+					userInfo +
+					skillsInstructions,
 			}
 		);
 
@@ -1096,6 +1128,11 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			}));
 		}
 
+		// Register Skills (SEP-2640) — `skill://` resources + `skill://index.json`.
+		if (skillCatalog && hasSkills) {
+			registerSkillResources(server, skillCatalog);
+		}
+
 		// Declare the function to apply tool states (we only need to call it if we are
 		// applying the tool states either because we have a Gradio tool call (grNN_) or
 		// we are responding to a ListToolsRequest). This also helps if there is a
@@ -1129,6 +1166,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 
 		registerCapabilities(server, sharedApiClient, {
 			hasResources: sessionInfo?.clientInfo?.name === 'openai-mcp',
+			hasSkills,
 		});
 
 		if (!skipGradio) {

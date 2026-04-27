@@ -28,7 +28,7 @@
 		"knip": "knip --include files,dependencies,devDependencies,unlisted,exports,types --treat-config-hints-as-errors"
 	},
 	"devDependencies": {
-		"@modelcontextprotocol/sdk": "^1.26.0",
+		"@modelcontextprotocol/sdk": "^1.29.0",
 		"@types/node": "^25.3.0",
 		"concurrently": "^9.2.0",
 		"knip": "^5.85.0",
