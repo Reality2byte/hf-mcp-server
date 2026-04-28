@@ -21,6 +21,7 @@ export interface ProxyToolDefinition {
 	responseType: ProxyToolResponseType;
 	description?: string;
 	inputSchema?: ProxyToolInputSchema;
+	meta?: Record<string, unknown>;
 }
 
 export interface ProxyToolInputSchema {
@@ -201,6 +202,7 @@ function buildProxyToolDefinition(
 		responseType: source.responseType,
 		description: tool.description,
 		inputSchema,
+		meta: tool._meta,
 	};
 }
 

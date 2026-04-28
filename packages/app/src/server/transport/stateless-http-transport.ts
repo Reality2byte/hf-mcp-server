@@ -62,7 +62,7 @@ export class StatelessHttpTransport extends BaseTransport {
 	 * Determines if a request should be handled by the full server
 	 * or can be handled by the stub responder
 	 */
-	private shouldHandle(requestBody: unknown, clientName?: string): boolean {
+	private shouldHandle(requestBody: unknown, _clientName?: string): boolean {
 		const body = requestBody as { method?: string } | undefined;
 		const method = body?.method;
 
@@ -72,14 +72,10 @@ export class StatelessHttpTransport extends BaseTransport {
 			'prompts/list',
 			'prompts/get',
 			'initialize',
+			'resources/list',
+			'resources/read',
+			'resources/templates/list',
 		]);
-
-		// Only handle resource methods for openai-mcp client
-		if (clientName === 'openai-mcp') {
-			methodsRequiringFullServer.add('resources/list');
-			methodsRequiringFullServer.add('resources/read');
-			methodsRequiringFullServer.add('resources/templates/list');
-		}
 
 		if (method && methodsRequiringFullServer.has(method)) {
 			return true;

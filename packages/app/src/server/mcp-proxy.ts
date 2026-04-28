@@ -15,11 +15,14 @@ import { LIST_FILES_TOOL_CONFIG, ListFilesTool, DYNAMIC_SPACE_TOOL_ID } from '@l
 import { logSearchQuery, type QueryLoggerOptions } from './utils/query-logger.js';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
+import type { ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js';
 import { createRequire } from 'module';
 import { createGradioWidgetResourceConfig } from './resources/gradio-widget-resource.js';
-import { callStreamableHttpTool } from './utils/streamable-http-tool-caller.js';
+import { callStreamableHttpTool, readStreamableHttpResource } from './utils/streamable-http-tool-caller.js';
 import type { ProxyToolDefinition, ProxyToolInputSchema } from './utils/proxy-tools-config.js';
 import { getProxyToolsConfig } from './utils/proxy-tools-config.js';
+import { rewriteProxyAppToolMeta } from './utils/proxy-apps.js';
 
 // Define the Qwen Image prompt configuration
 const QWEN_IMAGE_PROMPT_CONFIG = {
@@ -29,6 +32,9 @@ const QWEN_IMAGE_PROMPT_CONFIG = {
 		prompt: z.string().max(200, 'Use fewer than 200 characters').describe('The prompt to enhance for image generation'),
 	}),
 };
+
+const MCP_APP_RESOURCE_MIME_TYPE = 'text/html;profile=mcp-app';
+type ProxyToolHandlerExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 
 
 function registerProxyToolsFromConfig(
@@ -44,6 +50,7 @@ function registerProxyToolsFromConfig(
 
 	const enabledSet = enabledToolIds ? new Set(enabledToolIds) : null;
 	const registered = new Set<string>();
+	const registeredResources = new Set<string>();
 
 	configs.forEach((config) => {
 		if (enabledSet && !enabledSet.has(config.toolName)) {
@@ -59,56 +66,116 @@ function registerProxyToolsFromConfig(
 			config.description ?? `Streamable HTTP proxy tool for ${config.upstreamToolName}.`;
 		const title = config.proxyId ? `${config.proxyId} - ${config.upstreamToolName}` : config.toolName;
 		const schemaShape = buildProxyToolSchemaShape(config.inputSchema);
+		const { meta, resourceMapping } = rewriteProxyAppToolMeta(config.meta, config.proxyId, config.upstreamToolName);
+		const handler = async (params: Record<string, unknown>, extra: ProxyToolHandlerExtra) => {
+			const start = performance.now();
+			logger.trace(
+				{
+					toolName: config.toolName,
+					serverUrl: config.url,
+					upstreamToolName: config.upstreamToolName,
+					progressToken: extra?._meta?.progressToken ?? null,
+					paramKeys: Object.keys(params ?? {}),
+				},
+				'Streamable proxy tool call received'
+			);
 
-		server.tool(
-			config.toolName,
-			description,
-			schemaShape,
-			{
-				openWorldHint: true,
-				title,
-			},
-			async (params: Record<string, unknown>, extra) => {
-				const start = performance.now();
-				logger.trace(
-					{
-						toolName: config.toolName,
-						serverUrl: config.url,
-						upstreamToolName: config.upstreamToolName,
-						progressToken: extra?._meta?.progressToken ?? null,
-						paramKeys: Object.keys(params ?? {}),
-					},
-					'Streamable proxy tool call received'
+			try {
+				const result = await callStreamableHttpTool(
+					config.url,
+					config.upstreamToolName,
+					params,
+					hfToken,
+					extra
 				);
 
-				try {
-					const result = await callStreamableHttpTool(
-						config.url,
-						config.upstreamToolName,
-						params,
-						hfToken,
-						extra
+				logSearchQuery(config.toolName, config.upstreamToolName, params, {
+					...baseLoggingOptions,
+					durationMs: Math.round(performance.now() - start),
+					success: true,
+					responseCharCount: getSerializedLength(result),
+				});
+
+				return result;
+			} catch (error) {
+				logSearchQuery(config.toolName, config.upstreamToolName, params, {
+					...baseLoggingOptions,
+					durationMs: Math.round(performance.now() - start),
+					success: false,
+					error,
+				});
+				throw error;
+			}
+		};
+
+		if (resourceMapping && !registeredResources.has(resourceMapping.localUri)) {
+			registeredResources.add(resourceMapping.localUri);
+			server.registerResource(
+				`proxy-app:${config.toolName}`,
+				resourceMapping.localUri,
+				{
+					title,
+					description: `MCP App resource proxied from ${config.proxyId}.`,
+					mimeType: MCP_APP_RESOURCE_MIME_TYPE,
+				},
+				async () => {
+					logger.trace(
+						{
+							toolName: config.toolName,
+							serverUrl: config.url,
+							localUri: resourceMapping.localUri,
+							upstreamUri: resourceMapping.upstreamUri,
+						},
+						'Streamable proxy resource read received'
 					);
 
-					logSearchQuery(config.toolName, config.upstreamToolName, params, {
-						...baseLoggingOptions,
-						durationMs: Math.round(performance.now() - start),
-						success: true,
-						responseCharCount: getSerializedLength(result),
-					});
-
-					return result;
-				} catch (error) {
-					logSearchQuery(config.toolName, config.upstreamToolName, params, {
-						...baseLoggingOptions,
-						durationMs: Math.round(performance.now() - start),
-						success: false,
-						error,
-					});
-					throw error;
+					const result = await readStreamableHttpResource(config.url, resourceMapping.upstreamUri, hfToken);
+					return {
+						...result,
+						contents: result.contents.map((content) => ({
+							...content,
+							uri: resourceMapping.localUri,
+						})),
+					};
 				}
-			}
+			);
+		}
+
+		server.registerTool(
+			config.toolName,
+			{
+				title,
+				description,
+				inputSchema: schemaShape,
+				annotations: {
+					openWorldHint: true,
+					title,
+				},
+				_meta: meta,
+			},
+			handler
 		);
+
+		if (config.toolName !== config.upstreamToolName && !registered.has(config.upstreamToolName)) {
+			registered.add(config.upstreamToolName);
+			server.registerTool(
+				config.upstreamToolName,
+				{
+					title: `${title} app alias`,
+					description,
+					inputSchema: schemaShape,
+					annotations: {
+						openWorldHint: true,
+						title: `${title} app alias`,
+					},
+					_meta: {
+						...(meta ?? {}),
+						visibility: ['app'],
+					},
+				},
+				handler
+			);
+		}
 	});
 }
 
