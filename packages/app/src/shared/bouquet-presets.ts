@@ -6,6 +6,7 @@ import {
 	HF_JOBS_TOOL_ID,
 	DYNAMIC_SPACE_TOOL_ID,
 	REPO_SEARCH_TOOL_ID,
+	CREATE_REPO_TOOL_ID,
 	DOCS_SEMANTIC_SEARCH_TOOL_ID,
 } from '@llmindset/hf-mcp';
 import type { AppSettings } from './settings.js';
@@ -61,6 +62,10 @@ export const BOUQUETS: Record<string, AppSettings> = {
 	},
 	jobs: {
 		builtInTools: [HF_JOBS_TOOL_ID],
+		spaceTools: [],
+	},
+	write: {
+		builtInTools: [CREATE_REPO_TOOL_ID],
 		spaceTools: [],
 	},
 	dynamic_space: {
@@ -191,6 +196,14 @@ const PRESET_META: Array<Omit<BouquetPreset, 'builtInTools'>> = [
 		supportsMix: true,
 	},
 	{
+		key: 'write',
+		label: 'Write Tools',
+		description: 'Authenticated Hub write tools, currently create_repo.',
+		category: 'advanced',
+		supportsBouquet: true,
+		supportsMix: true,
+	},
+	{
 		key: 'proxy',
 		label: 'Proxy Tools',
 		description: 'Streamable HTTP proxy tools configured via PROXY_TOOLS_CSV.',
@@ -226,6 +239,10 @@ const TOOL_DESCRIPTIONS: Record<string, Omit<ConfigEntryDescription, 'id' | 'kin
 	hub_repo_search: {
 		label: 'Repo Search',
 		description: 'Search models, datasets, and optional spaces with one shared query.',
+	},
+	create_repo: {
+		label: 'Create Repo',
+		description: 'Create model, dataset, bucket, or space repositories.',
 	},
 	model_details: {
 		label: 'Model Details',

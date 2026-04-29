@@ -18,6 +18,7 @@ import { normalizeBuiltInTools } from '../shared/tool-normalizer.js';
 import {
 	SPACE_SEARCH_TOOL_ID,
 	REPO_SEARCH_TOOL_ID,
+	CREATE_REPO_TOOL_ID,
 	PAPER_SEARCH_TOOL_ID,
 	DUPLICATE_SPACE_TOOL_ID,
 	SPACE_FILES_TOOL_ID,
@@ -26,6 +27,7 @@ import {
 	HUB_REPO_DETAILS_TOOL_ID,
 	SEMANTIC_SEARCH_TOOL_CONFIG,
 	REPO_SEARCH_TOOL_CONFIG,
+	CREATE_REPO_TOOL_CONFIG,
 	PAPER_SEARCH_TOOL_CONFIG,
 	HUB_REPO_DETAILS_TOOL_CONFIG,
 	DUPLICATE_SPACE_TOOL_CONFIG,
@@ -251,6 +253,13 @@ function App() {
 			label: REPO_SEARCH_TOOL_CONFIG.annotations.title,
 			description: REPO_SEARCH_TOOL_CONFIG.description,
 			settings: { enabled: settings?.builtInTools?.includes(REPO_SEARCH_TOOL_ID) ?? true },
+		},
+
+		create_repo: {
+			id: CREATE_REPO_TOOL_ID,
+			label: CREATE_REPO_TOOL_CONFIG.annotations.title,
+			description: CREATE_REPO_TOOL_CONFIG.description,
+			settings: { enabled: settings?.builtInTools?.includes(CREATE_REPO_TOOL_ID) ?? true },
 		},
 
 		hub_repo_details: {

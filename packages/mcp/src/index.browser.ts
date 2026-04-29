@@ -44,6 +44,19 @@ export const REPO_SEARCH_TOOL_CONFIG: BrowserToolConfig = {
 	},
 };
 
+export const CREATE_REPO_TOOL_CONFIG: BrowserToolConfig = {
+	name: 'create_repo',
+	description:
+		'Create a Hugging Face model, dataset, Space, or bucket repository. ' +
+		"name must be fully qualified, for example 'username/repo-name'.",
+	annotations: {
+		title: 'Create Hugging Face Repository',
+		destructiveHint: false,
+		readOnlyHint: false,
+		openWorldHint: true,
+	},
+};
+
 export const PAPER_SEARCH_TOOL_CONFIG: BrowserToolConfig = {
 	name: 'paper_search',
 	description:
@@ -121,6 +134,7 @@ export const DOC_FETCH_CONFIG: BrowserToolConfig = {
 export const SPACE_SEARCH_TOOL_ID = SEMANTIC_SEARCH_TOOL_CONFIG.name;
 export const MODEL_SEARCH_TOOL_ID = 'model_search';
 export const REPO_SEARCH_TOOL_ID = REPO_SEARCH_TOOL_CONFIG.name;
+export const CREATE_REPO_TOOL_ID = CREATE_REPO_TOOL_CONFIG.name;
 export const MODEL_DETAIL_TOOL_ID = 'model_details';
 export const PAPER_SEARCH_TOOL_ID = PAPER_SEARCH_TOOL_CONFIG.name;
 export const DATASET_SEARCH_TOOL_ID = 'dataset_search';
@@ -139,6 +153,7 @@ export const ALL_BUILTIN_TOOL_IDS = [
 	SPACE_SEARCH_TOOL_ID,
 	MODEL_SEARCH_TOOL_ID,
 	REPO_SEARCH_TOOL_ID,
+	CREATE_REPO_TOOL_ID,
 	MODEL_DETAIL_TOOL_ID,
 	PAPER_SEARCH_TOOL_ID,
 	DATASET_SEARCH_TOOL_ID,
@@ -168,6 +183,7 @@ export const TOOL_ID_GROUPS = {
 	hf_api: [
 		SPACE_SEARCH_TOOL_ID,
 		REPO_SEARCH_TOOL_ID,
+		CREATE_REPO_TOOL_ID,
 		PAPER_SEARCH_TOOL_ID,
 		HUB_REPO_DETAILS_TOOL_ID,
 		DOCS_SEMANTIC_SEARCH_TOOL_ID,
