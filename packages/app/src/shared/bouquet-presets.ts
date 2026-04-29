@@ -227,6 +227,10 @@ const TOOL_DESCRIPTIONS: Record<string, Omit<ConfigEntryDescription, 'id' | 'kin
 		label: 'Repo Search',
 		description: 'Search models, datasets, and optional spaces with one shared query.',
 	},
+	create_repo: {
+		label: 'Create Repo',
+		description: 'Create model, dataset, or Space repositories using a fully-qualified repo name.',
+	},
 	model_details: {
 		label: 'Model Details',
 		description: 'Retrieve detailed metadata for a specific model repository.',

@@ -14,6 +14,9 @@ import {
 	RepoSearchTool,
 	REPO_SEARCH_TOOL_CONFIG,
 	type RepoSearchParams,
+	CreateRepoTool,
+	formatCreateRepoResult,
+	type CreateRepoParams,
 	ModelDetailTool,
 	MODEL_DETAIL_TOOL_CONFIG,
 	MODEL_DETAIL_PROMPT_CONFIG,
@@ -522,6 +525,21 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 				);
 				return {
 					content: [{ type: 'text', text: result.formatted }],
+				};
+			}
+		);
+
+		const createRepoToolConfig = CreateRepoTool.createToolConfig();
+		toolInstances[createRepoToolConfig.name] = server.tool(
+			createRepoToolConfig.name,
+			createRepoToolConfig.description,
+			createRepoToolConfig.schema.shape,
+			createRepoToolConfig.annotations,
+			async (params: CreateRepoParams) => {
+				const createRepoTool = new CreateRepoTool(hfToken);
+				const result = await createRepoTool.create(params);
+				return {
+					content: [{ type: 'text', text: formatCreateRepoResult(result) }],
 				};
 			}
 		);
