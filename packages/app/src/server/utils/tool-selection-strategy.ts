@@ -1,6 +1,6 @@
 import { logger } from './logger.js';
 import type { AppSettings, SpaceTool } from '../../shared/settings.js';
-import { ALL_BUILTIN_TOOL_IDS } from '@llmindset/hf-mcp';
+import { ALL_BUILTIN_TOOL_IDS, CREATE_REPO_TOOL_ID } from '@llmindset/hf-mcp';
 import type { McpApiClient } from './mcp-api-client.js';
 import { extractAuthBouquetAndMix } from '../utils/auth-utils.js';
 import { normalizeBuiltInTools } from '../../shared/tool-normalizer.js';
@@ -21,6 +21,8 @@ export interface ToolSelectionContext {
 	userSettings?: AppSettings;
 	hfToken?: string;
 }
+
+export const AUTHENTICATED_BUILTIN_TOOL_IDS = [CREATE_REPO_TOOL_ID] as const;
 
 interface ToolSelectionResult {
 	mode: ToolSelectionMode;
@@ -128,6 +130,15 @@ export class ToolSelectionStrategy {
 		return [...new Set([...normalizeBuiltInTools(enabledToolIds), ...proxyToolNames])];
 	}
 
+	private applyAuthVisibility(enabledToolIds: string[], hfToken?: string): string[] {
+		if (hfToken) {
+			return enabledToolIds;
+		}
+
+		const authenticatedTools = new Set<string>(AUTHENTICATED_BUILTIN_TOOL_IDS);
+		return enabledToolIds.filter((toolId) => !authenticatedTools.has(toolId));
+	}
+
 	/**
 	 * Selects tools based on clear precedence rules:
 	 * 1. Bouquet override (highest precedence)
@@ -162,6 +173,7 @@ export class ToolSelectionStrategy {
 			} else if (wantsProxyTools && proxyToolNames.length === 0) {
 				logger.warn('Proxy tools requested but no proxy tools are configured');
 			}
+			enabledToolIds = this.applyAuthVisibility(enabledToolIds, context.hfToken);
 			logger.debug(
 				{ bouquet, mix: includesProxyMix ? ['proxy'] : [], enabledToolIds, gradioCount: gradioSpaceTools.length },
 				'Using bouquet override'
@@ -199,6 +211,7 @@ export class ToolSelectionStrategy {
 					} else if (includesProxyMix && proxyToolNames.length === 0) {
 						logger.warn('Proxy mix requested but no proxy tools are configured');
 					}
+					enabledToolIds = this.applyAuthVisibility(enabledToolIds, context.hfToken);
 
 					logger.debug(
 						{
@@ -230,18 +243,19 @@ export class ToolSelectionStrategy {
 			const enabledToolIds = normalizeBuiltInTools(
 				this.applySearchEnablesFetch(baseSettings.builtInTools)
 			);
+			const visibleToolIds = this.applyAuthVisibility(enabledToolIds, context.hfToken);
 
 			logger.debug(
 				{
 					mode,
-					enabledToolIds,
+					enabledToolIds: visibleToolIds,
 				},
 				'Using user settings'
 			);
 
 			return {
 				mode,
-				enabledToolIds,
+				enabledToolIds: visibleToolIds,
 				reason:
 					mode === ToolSelectionMode.EXTERNAL_API
 						? `External API user settings${gradioSpaceTools.length > 0 ? ` + ${gradioSpaceTools.length} gradio endpoints` : ''}`
@@ -261,6 +275,7 @@ export class ToolSelectionStrategy {
 		} else if (includesProxyMix && proxyToolNames.length === 0) {
 			logger.warn('Proxy mix requested but no proxy tools are configured');
 		}
+		enabledToolIds = this.applyAuthVisibility(enabledToolIds, context.hfToken);
 		return {
 			mode: ToolSelectionMode.FALLBACK,
 			enabledToolIds,

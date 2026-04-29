@@ -75,7 +75,11 @@ import { logger } from './utils/logger.js';
 import { logSearchQuery, logPromptQuery, logGradioEvent, type QueryLoggerOptions } from './utils/query-logger.js';
 import { DEFAULT_SPACE_TOOLS, type AppSettings } from '../shared/settings.js';
 import { extractAuthBouquetAndMix } from './utils/auth-utils.js';
-import { ToolSelectionStrategy, type ToolSelectionContext } from './utils/tool-selection-strategy.js';
+import {
+	AUTHENTICATED_BUILTIN_TOOL_IDS,
+	ToolSelectionStrategy,
+	type ToolSelectionContext,
+} from './utils/tool-selection-strategy.js';
 import { hasReadmeFlag } from '../shared/behavior-flags.js';
 import { registerCapabilities } from './utils/capability-utils.js';
 import { createGradioWidgetResourceConfig } from './resources/gradio-widget-resource.js';
@@ -530,14 +534,32 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 		);
 
 		const createRepoToolConfig = CreateRepoTool.createToolConfig();
-		toolInstances[createRepoToolConfig.name] = server.tool(
+		toolInstances[createRepoToolConfig.name] = server.registerTool(
 			createRepoToolConfig.name,
-			createRepoToolConfig.description,
-			createRepoToolConfig.schema.shape,
-			createRepoToolConfig.annotations,
+			{
+				title: createRepoToolConfig.annotations.title,
+				description: createRepoToolConfig.description,
+				inputSchema: createRepoToolConfig.schema.shape,
+				annotations: createRepoToolConfig.annotations,
+			},
 			async (params: CreateRepoParams) => {
-				const createRepoTool = new CreateRepoTool(hfToken);
-				const result = await createRepoTool.create(params);
+				const result = await runWithQueryLogging(
+					logPromptQuery,
+					{
+						methodName: createRepoToolConfig.name,
+						query: `${params.repo_type ?? 'model'}:${params.name}`,
+						parameters: params,
+						baseOptions: getLoggingOptions(),
+						successOptions: (created) => ({
+							resultsShared: 1,
+							responseCharCount: formatCreateRepoResult(created).length,
+						}),
+					},
+					async () => {
+						const createRepoTool = new CreateRepoTool(hfToken);
+						return createRepoTool.create(params);
+					}
+				);
 				return {
 					content: [{ type: 'text', text: formatCreateRepoResult(result) }],
 				};
@@ -1100,7 +1122,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 				const toolStateChangeHandler = (toolId: string, enabled: boolean) => {
 					const toolInstance = toolInstances[toolId];
 					if (toolInstance) {
-						if (enabled) {
+						if (enabled && (!(AUTHENTICATED_BUILTIN_TOOL_IDS as readonly string[]).includes(toolId) || hfToken)) {
 							toolInstance.enable();
 						} else {
 							toolInstance.disable();

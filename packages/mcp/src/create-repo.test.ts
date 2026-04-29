@@ -63,6 +63,31 @@ describe('CreateRepoTool', () => {
 		});
 	});
 
+	it('creates a bucket repository', async () => {
+		vi.mocked(createRepo).mockResolvedValue({
+			repoUrl: 'https://huggingface.co/buckets/alice/example-bucket',
+			id: 'bucket-id',
+		});
+		const tool = new CreateRepoTool('token');
+		const result = await tool.create({
+			name: 'alice/example-bucket',
+			repo_type: 'bucket',
+			private: true,
+		});
+
+		expect(createRepo).toHaveBeenCalledWith({
+			accessToken: 'token',
+			repo: { name: 'alice/example-bucket', type: 'bucket' },
+			private: true,
+		});
+		expect(result).toEqual({
+			url: 'https://huggingface.co/buckets/alice/example-bucket',
+			name: 'alice/example-bucket',
+			repoType: 'bucket',
+			id: 'bucket-id',
+		});
+	});
+
 	it('creates a Space repository with sdk', async () => {
 		vi.mocked(createRepo).mockResolvedValue({
 			repoUrl: 'https://huggingface.co/spaces/alice/demo',
@@ -80,6 +105,26 @@ describe('CreateRepoTool', () => {
 			repo: { name: 'alice/demo', type: 'space' },
 			private: undefined,
 			sdk: 'gradio',
+		});
+	});
+
+	it('creates a Streamlit Space repository', async () => {
+		vi.mocked(createRepo).mockResolvedValue({
+			repoUrl: 'https://huggingface.co/spaces/alice/streamlit-demo',
+			id: 'streamlit-space-id',
+		});
+		const tool = new CreateRepoTool('token');
+		await tool.create({
+			name: 'alice/streamlit-demo',
+			repo_type: 'space',
+			sdk: 'streamlit',
+		});
+
+		expect(createRepo).toHaveBeenCalledWith({
+			accessToken: 'token',
+			repo: { name: 'alice/streamlit-demo', type: 'space' },
+			private: undefined,
+			sdk: 'streamlit',
 		});
 	});
 

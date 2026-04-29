@@ -229,7 +229,7 @@ const TOOL_DESCRIPTIONS: Record<string, Omit<ConfigEntryDescription, 'id' | 'kin
 	},
 	create_repo: {
 		label: 'Create Repo',
-		description: 'Create model, dataset, or Space repositories using a fully-qualified repo name.',
+		description: 'Create model, dataset, bucket, or space repositories.',
 	},
 	model_details: {
 		label: 'Model Details',

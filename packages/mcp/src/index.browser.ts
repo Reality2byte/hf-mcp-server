@@ -47,7 +47,7 @@ export const REPO_SEARCH_TOOL_CONFIG: BrowserToolConfig = {
 export const CREATE_REPO_TOOL_CONFIG: BrowserToolConfig = {
 	name: 'create_repo',
 	description:
-		'Create a Hugging Face model, dataset, or Space repository. ' +
+		'Create a Hugging Face model, dataset, Space, or bucket repository. ' +
 		"name must be fully qualified, for example 'username/repo-name'.",
 	annotations: {
 		title: 'Create Hugging Face Repository',

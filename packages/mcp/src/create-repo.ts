@@ -1,18 +1,18 @@
-import { createRepo } from '@huggingface/hub';
+import { createRepo, type RepoType as HubRepoType, type SpaceSdk } from '@huggingface/hub';
 import { z } from 'zod';
 import { NO_TOKEN_INSTRUCTIONS } from './utilities.js';
 
-const REPO_TYPES = ['model', 'dataset', 'space'] as const;
-const SPACE_SDKS = ['gradio', 'docker', 'static'] as const;
+const REPO_TYPES = ['model', 'dataset', 'space', 'bucket'] as const satisfies readonly HubRepoType[];
+const SPACE_SDKS = ['streamlit', 'gradio', 'docker', 'static'] as const satisfies readonly SpaceSdk[];
 
 export const CREATE_REPO_TOOL_CONFIG = {
 	name: 'create_repo',
 	description: '',
 	schema: z.object({
 		name: z.string().min(1).describe("Fully-qualified repository name in 'namespace/repo-name' format."),
-		repo_type: z.enum(REPO_TYPES).optional().default('model').describe('Repository type. Defaults to model.'),
+		repo_type: z.enum(REPO_TYPES).optional().default('bucket').describe('Repository type. Defaults to bucket.'),
 		private: z.boolean().optional().describe('Whether to create the repository as private.'),
-		sdk: z.enum(SPACE_SDKS).optional().default('static').describe('Required when repo_type is space.'),
+		sdk: z.enum(SPACE_SDKS).optional().default('static').describe("SDK type - only required for repo_type='space'."),
 	}),
 	annotations: {
 		title: 'Create Hugging Face Repository',
@@ -24,6 +24,16 @@ export const CREATE_REPO_TOOL_CONFIG = {
 
 export type CreateRepoParams = z.input<typeof CREATE_REPO_TOOL_CONFIG.schema>;
 type RepoType = (typeof REPO_TYPES)[number];
+type SupportedSpaceSdk = (typeof SPACE_SDKS)[number];
+
+function assertExhaustiveUnion<T extends never>(_value?: T): void {
+	void _value;
+}
+
+assertExhaustiveUnion<Exclude<HubRepoType, RepoType>>();
+assertExhaustiveUnion<Exclude<RepoType, HubRepoType>>();
+assertExhaustiveUnion<Exclude<SpaceSdk, SupportedSpaceSdk>>();
+assertExhaustiveUnion<Exclude<SupportedSpaceSdk, SpaceSdk>>();
 
 export interface CreateRepoResult {
 	url: string;
@@ -38,9 +48,7 @@ export class CreateRepoTool {
 	static createToolConfig(): Omit<typeof CREATE_REPO_TOOL_CONFIG, 'description'> & { description: string } {
 		return {
 			...CREATE_REPO_TOOL_CONFIG,
-			description:
-				'Create a Hugging Face model, dataset, or Space repository. ' +
-				"name must be fully qualified, for example 'username/repo-name'.",
+			description: 'Create a Hugging Face model, dataset, space, or bucket repository.',
 		};
 	}
 

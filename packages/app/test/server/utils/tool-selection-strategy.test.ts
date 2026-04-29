@@ -3,7 +3,7 @@ import { ToolSelectionStrategy, ToolSelectionMode, type ToolSelectionContext } f
 import { McpApiClient, type ApiClientConfig } from '../../../src/server/utils/mcp-api-client.js';
 import type { AppSettings } from '../../../src/shared/settings.js';
 import type { TransportInfo } from '../../../src/shared/transport-info.js';
-import { ALL_BUILTIN_TOOL_IDS, REPO_SEARCH_TOOL_ID, TOOL_ID_GROUPS } from '@llmindset/hf-mcp';
+import { ALL_BUILTIN_TOOL_IDS, CREATE_REPO_TOOL_ID, REPO_SEARCH_TOOL_ID, TOOL_ID_GROUPS } from '@llmindset/hf-mcp';
 import { extractAuthBouquetAndMix } from '../../../src/server/utils/auth-utils.js';
 import { normalizeBuiltInTools } from '../../../src/shared/tool-normalizer.js';
 import { BOUQUETS } from '../../../src/shared/bouquet-presets.js';
@@ -123,6 +123,18 @@ describe('ToolSelectionStrategy', () => {
 	});
 
 	describe('Bouquet Override (Highest Precedence)', () => {
+		it('should hide authenticated tools from anonymous bouquet users', async () => {
+			const context: ToolSelectionContext = {
+				headers: { 'x-mcp-bouquet': 'hf_api' },
+			};
+
+			const result = await strategy.selectTools(context);
+
+			expect(result.mode).toBe(ToolSelectionMode.BOUQUET_OVERRIDE);
+			expect(TOOL_ID_GROUPS.hf_api).toContain(CREATE_REPO_TOOL_ID);
+			expect(result.enabledToolIds).not.toContain(CREATE_REPO_TOOL_ID);
+		});
+
 		it('should use bouquet override for search bouquet', async () => {
 			const context: ToolSelectionContext = {
 				headers: { 'x-mcp-bouquet': 'search' },
@@ -341,6 +353,23 @@ describe('ToolSelectionStrategy', () => {
 	});
 
 	describe('User Settings Mode (Third Precedence)', () => {
+		it('should hide authenticated tools from anonymous user settings', async () => {
+			const userSettings: AppSettings = {
+				builtInTools: [CREATE_REPO_TOOL_ID, REPO_SEARCH_TOOL_ID],
+				spaceTools: [],
+			};
+
+			const context: ToolSelectionContext = {
+				headers: {},
+				userSettings,
+			};
+
+			const result = await strategy.selectTools(context);
+
+			expect(result.mode).toBe(ToolSelectionMode.INTERNAL_API);
+			expect(result.enabledToolIds).toEqual([REPO_SEARCH_TOOL_ID]);
+		});
+
 		it('should use provided user settings in internal API mode', async () => {
 			const userSettings: AppSettings = {
 				builtInTools: ['hf_semantic_search', 'hf_model_search'],

@@ -1,3 +1,4 @@
+import type { SpaceHardwareFlavor } from '@huggingface/hub';
 import { z } from 'zod';
 
 /**
@@ -20,8 +21,8 @@ export const GPU_FLAVORS = [
 	'a10g-largex2',
 	'a10g-largex4',
 	'a100-large',
-	'h100',
-	'h100x8',
+	'a100x4',
+	'a100x8',
 ] as const;
 
 export const SPECIALIZED_FLAVORS = ['inf2x6'] as const;
@@ -29,6 +30,13 @@ export const SPECIALIZED_FLAVORS = ['inf2x6'] as const;
 export const ALL_FLAVORS = [...CPU_FLAVORS, ...GPU_FLAVORS, ...SPECIALIZED_FLAVORS] as const;
 
 export type JobFlavor = (typeof ALL_FLAVORS)[number];
+
+function assertExhaustiveHardwareUnion<T extends never>(_value?: T): void {
+	void _value;
+}
+
+assertExhaustiveHardwareUnion<Exclude<SpaceHardwareFlavor, JobFlavor>>();
+assertExhaustiveHardwareUnion<Exclude<JobFlavor, SpaceHardwareFlavor>>();
 
 /**
  * Job status stages (from OpenAPI spec)
