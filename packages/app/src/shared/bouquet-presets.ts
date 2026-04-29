@@ -6,6 +6,7 @@ import {
 	HF_JOBS_TOOL_ID,
 	DYNAMIC_SPACE_TOOL_ID,
 	REPO_SEARCH_TOOL_ID,
+	CREATE_REPO_TOOL_ID,
 	DOCS_SEMANTIC_SEARCH_TOOL_ID,
 } from '@llmindset/hf-mcp';
 import type { AppSettings } from './settings.js';
@@ -61,6 +62,10 @@ export const BOUQUETS: Record<string, AppSettings> = {
 	},
 	jobs: {
 		builtInTools: [HF_JOBS_TOOL_ID],
+		spaceTools: [],
+	},
+	write: {
+		builtInTools: [CREATE_REPO_TOOL_ID],
 		spaceTools: [],
 	},
 	dynamic_space: {
@@ -186,6 +191,14 @@ const PRESET_META: Array<Omit<BouquetPreset, 'builtInTools'>> = [
 		key: 'jobs',
 		label: 'Run and Manage Jobs',
 		description: 'Run, monitor and schedule jobs on Hugging Face infrastructure.',
+		category: 'advanced',
+		supportsBouquet: true,
+		supportsMix: true,
+	},
+	{
+		key: 'write',
+		label: 'Write Tools',
+		description: 'Authenticated Hub write tools, currently create_repo.',
 		category: 'advanced',
 		supportsBouquet: true,
 		supportsMix: true,
