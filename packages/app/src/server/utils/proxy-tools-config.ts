@@ -58,6 +58,47 @@ export function getProxyToolDefinition(toolName: string): ProxyToolDefinition | 
 	return cachedToolsByName.get(toolName);
 }
 
+export function cacheDiscoveredProxyAppTool(
+	parentConfig: ProxyToolDefinition,
+	toolName: string,
+	argumentKeys: string[]
+): ProxyToolDefinition {
+	const existing = cachedToolsByName.get(toolName);
+	const existingProperties = existing?.inputSchema?.properties ?? {};
+	const discoveredProperties = Object.fromEntries(argumentKeys.map((key) => [key, {}]));
+	const inputSchema: ProxyToolInputSchema = {
+		type: 'object',
+		properties: {
+			...existingProperties,
+			...discoveredProperties,
+		},
+	};
+	const definition: ProxyToolDefinition = {
+		...parentConfig,
+		toolName,
+		upstreamToolName: toolName,
+		description: `FastMCP app backend action discovered from ${parentConfig.toolName}.`,
+		inputSchema,
+		meta: {
+			visibility: ['app'],
+			hfProxy: {
+				discoveredFrom: parentConfig.toolName,
+				upstreamToolName: toolName,
+			},
+		},
+	};
+
+	cachedTools = cachedTools ?? [];
+	const index = cachedTools.findIndex((tool) => tool.toolName === toolName);
+	if (index === -1) {
+		cachedTools.push(definition);
+	} else {
+		cachedTools[index] = definition;
+	}
+	cachedToolsByName.set(toolName, definition);
+	return definition;
+}
+
 export async function loadProxyToolsConfig(): Promise<ProxyToolDefinition[]> {
 	if (cachedTools) {
 		return cachedTools;
@@ -119,15 +160,20 @@ export async function loadProxyToolsConfig(): Promise<ProxyToolDefinition[]> {
 	return cachedConfigPromise;
 }
 
+export function resetProxyToolsConfigForTest(): void {
+	cachedTools = null;
+	cachedConfigPromise = null;
+	cachedToolsByName = new Map();
+}
+
 async function loadProxyToolSchemas(sources: ProxyToolSource[]): Promise<ProxyToolDefinition[]> {
 	if (sources.length === 0) {
 		return [];
 	}
 
-	const shouldPrefix = sources.length > 1;
-	const hfToken = process.env.LOGGING_HF_TOKEN || process.env.DEFAULT_HF_TOKEN;
+	const hfToken = process.env.DEFAULT_HF_TOKEN || process.env.HF_TOKEN || process.env.LOGGING_HF_TOKEN;
 	const schemaTasks = sources.map((source) =>
-		Promise.race([fetchProxyToolSchemas(source, shouldPrefix, hfToken), createTimeout(PROXY_SCHEMA_TIMEOUT_MS)])
+		Promise.race([fetchProxyToolSchemas(source, hfToken), createTimeout(PROXY_SCHEMA_TIMEOUT_MS)])
 			.then((tools) => ({ source, tools }))
 			.catch((error: unknown) => {
 				logger.error({ error, proxyId: source.proxyId, url: source.url }, 'Failed to fetch proxy tool schemas');
@@ -141,7 +187,6 @@ async function loadProxyToolSchemas(sources: ProxyToolSource[]): Promise<ProxyTo
 
 async function fetchProxyToolSchemas(
 	source: ProxyToolSource,
-	shouldPrefix: boolean,
 	hfToken: string | undefined
 ): Promise<ProxyToolDefinition[]> {
 	const client = new Client(
@@ -168,7 +213,13 @@ async function fetchProxyToolSchemas(
 		}
 
 		return tools
-			.map((tool) => buildProxyToolDefinition(source, tool, shouldPrefix))
+			.map((tool) =>
+				buildProxyToolDefinition(
+					source,
+					tool,
+					tools.length === 1 ? source.proxyId : tool.name
+				)
+			)
 			.filter((tool): tool is ProxyToolDefinition => Boolean(tool));
 	} catch (error) {
 		logger.error({ error, proxyId: source.proxyId, url: source.url }, 'Proxy tool schema fetch failed');
@@ -185,9 +236,8 @@ async function fetchProxyToolSchemas(
 function buildProxyToolDefinition(
 	source: ProxyToolSource,
 	tool: Tool,
-	shouldPrefix: boolean
+	toolName: string
 ): ProxyToolDefinition | null {
-	const outwardName = shouldPrefix ? `${source.proxyId}_${tool.name}` : tool.name;
 	const inputSchema = tool.inputSchema as ProxyToolInputSchema | undefined;
 	if (!inputSchema || inputSchema.type !== 'object') {
 		logger.error({ proxyId: source.proxyId, toolName: tool.name }, 'Proxy tool schema missing or invalid');
@@ -196,7 +246,7 @@ function buildProxyToolDefinition(
 
 	return {
 		proxyId: source.proxyId,
-		toolName: outwardName,
+		toolName,
 		upstreamToolName: tool.name,
 		url: source.url,
 		responseType: source.responseType,

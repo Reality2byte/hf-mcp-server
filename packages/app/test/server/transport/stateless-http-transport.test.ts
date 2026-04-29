@@ -92,10 +92,10 @@ describe('StatelessHttpTransport', () => {
 	});
 
 	describe('skipGradioSetup', () => {
-		it('should not skip setup for list_files calls because it is registered by the Gradio proxy layer', () => {
+		it('should not skip setup for gradio_files calls because it is registered by the Gradio proxy layer', () => {
 			const result = (transport as any).skipGradioSetup({
 				method: 'tools/call',
-				params: { name: 'list_files' },
+				params: { name: 'gradio_files' },
 			});
 
 			expect(result).toBe(false);

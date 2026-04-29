@@ -21,8 +21,8 @@ import { createRequire } from 'module';
 import { createGradioWidgetResourceConfig } from './resources/gradio-widget-resource.js';
 import { callStreamableHttpTool, readStreamableHttpResource } from './utils/streamable-http-tool-caller.js';
 import type { ProxyToolDefinition, ProxyToolInputSchema } from './utils/proxy-tools-config.js';
-import { getProxyToolsConfig } from './utils/proxy-tools-config.js';
-import { rewriteProxyAppToolMeta } from './utils/proxy-apps.js';
+import { cacheDiscoveredProxyAppTool, getProxyToolsConfig } from './utils/proxy-tools-config.js';
+import { discoverProxyAppToolCalls, rewriteProxyAppToolMeta } from './utils/proxy-apps.js';
 
 // Define the Qwen Image prompt configuration
 const QWEN_IMAGE_PROMPT_CONFIG = {
@@ -36,6 +36,9 @@ const QWEN_IMAGE_PROMPT_CONFIG = {
 const MCP_APP_RESOURCE_MIME_TYPE = 'text/html;profile=mcp-app';
 type ProxyToolHandlerExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 
+function isDuplicateRegistrationError(error: unknown): boolean {
+	return error instanceof Error && /already registered/i.test(error.message);
+}
 
 function registerProxyToolsFromConfig(
 	server: McpServer,
@@ -52,8 +55,8 @@ function registerProxyToolsFromConfig(
 	const registered = new Set<string>();
 	const registeredResources = new Set<string>();
 
-	configs.forEach((config) => {
-		if (enabledSet && !enabledSet.has(config.toolName)) {
+	const registerProxyTool = (config: ProxyToolDefinition): void => {
+		if (!isProxyToolEnabled(config, enabledSet)) {
 			return;
 		}
 		if (registered.has(config.toolName)) {
@@ -88,6 +91,13 @@ function registerProxyToolsFromConfig(
 					hfToken,
 					extra
 				);
+				const appName = typeof config.meta?.fastmcp === 'object' && config.meta.fastmcp !== null && 'app' in config.meta.fastmcp
+					? String((config.meta.fastmcp as Record<string, unknown>).app)
+					: undefined;
+				for (const appToolCall of discoverProxyAppToolCalls(result, appName)) {
+					const discoveredConfig = cacheDiscoveredProxyAppTool(config, appToolCall.toolName, appToolCall.argumentKeys);
+					registerProxyTool(discoveredConfig);
+				}
 
 				logSearchQuery(config.toolName, config.upstreamToolName, params, {
 					...baseLoggingOptions,
@@ -107,6 +117,36 @@ function registerProxyToolsFromConfig(
 				throw error;
 			}
 		};
+
+		try {
+			server.registerTool(
+				config.toolName,
+				{
+					title,
+					description,
+					inputSchema: schemaShape,
+					annotations: {
+						openWorldHint: true,
+						title,
+					},
+					_meta: meta,
+				},
+				handler
+			);
+		} catch (error) {
+			if (isDuplicateRegistrationError(error)) {
+				logger.warn(
+					{
+						toolName: config.toolName,
+						proxyId: config.proxyId,
+						upstreamToolName: config.upstreamToolName,
+					},
+					'Skipping proxy tool registration because a tool with the same name is already registered'
+				);
+				return;
+			}
+			throw error;
+		}
 
 		if (resourceMapping && !registeredResources.has(resourceMapping.localUri)) {
 			registeredResources.add(resourceMapping.localUri);
@@ -140,43 +180,31 @@ function registerProxyToolsFromConfig(
 				}
 			);
 		}
+	};
 
-		server.registerTool(
-			config.toolName,
-			{
-				title,
-				description,
-				inputSchema: schemaShape,
-				annotations: {
-					openWorldHint: true,
-					title,
-				},
-				_meta: meta,
-			},
-			handler
-		);
+	configs.forEach(registerProxyTool);
+}
 
-		if (config.toolName !== config.upstreamToolName && !registered.has(config.upstreamToolName)) {
-			registered.add(config.upstreamToolName);
-			server.registerTool(
-				config.upstreamToolName,
-				{
-					title: `${title} app alias`,
-					description,
-					inputSchema: schemaShape,
-					annotations: {
-						openWorldHint: true,
-						title: `${title} app alias`,
-					},
-					_meta: {
-						...(meta ?? {}),
-						visibility: ['app'],
-					},
-				},
-				handler
-			);
-		}
-	});
+export function isProxyToolEnabled(
+	config: Pick<ProxyToolDefinition, 'proxyId' | 'toolName' | 'meta'>,
+	enabledSet: ReadonlySet<string> | null
+): boolean {
+	if (!enabledSet || enabledSet.has(config.toolName) || enabledSet.has(config.proxyId)) {
+		return true;
+	}
+
+	const discoveredFrom = getDiscoveredFromToolName(config);
+	return Boolean(discoveredFrom && enabledSet.has(discoveredFrom));
+}
+
+function getDiscoveredFromToolName(config: Pick<ProxyToolDefinition, 'meta'>): string | undefined {
+	const hfProxy = config.meta?.hfProxy;
+	if (typeof hfProxy !== 'object' || hfProxy === null || !('discoveredFrom' in hfProxy)) {
+		return undefined;
+	}
+
+	const discoveredFrom = (hfProxy as Record<string, unknown>).discoveredFrom;
+	return typeof discoveredFrom === 'string' ? discoveredFrom : undefined;
 }
 
 function getSerializedLength(value: unknown): number | undefined {
@@ -360,35 +388,54 @@ export const createProxyServerFactory = (
 					})
 				: null;
 
-		if (fileSource && hfToken) {
-			server.tool(
-				LIST_FILES_TOOL_CONFIG.name,
-				LIST_FILES_TOOL_CONFIG.description,
-				LIST_FILES_TOOL_CONFIG.schema.shape,
-				LIST_FILES_TOOL_CONFIG.annotations,
-				async (params: ListFilesParams) => {
-					const tool = new ListFilesTool(hfToken, fileSource);
-					const markdown = await tool.generateDetailedMarkdown(params.fileType);
-
-					// Log the tool usage
-					logSearchQuery(
-						LIST_FILES_TOOL_CONFIG.name,
-						fileSource.id,
-						{ fileType: params.fileType, source: fileSource.kind },
-						{
-							clientSessionId: sessionInfo?.clientSessionId,
-							isAuthenticated: sessionInfo?.isAuthenticated ?? true,
-							clientName: sessionInfo?.clientInfo?.name,
-							clientVersion: sessionInfo?.clientInfo?.version,
-							responseCharCount: markdown.length,
-						}
-					);
-
-					return {
-						content: [{ type: 'text', text: markdown }],
-					};
-				}
+		const fileListingProvidedByProxy = proxyTools.some((tool) => tool.toolName === LIST_FILES_TOOL_CONFIG.name);
+		if (fileListingProvidedByProxy) {
+			logger.debug(
+				{ toolName: LIST_FILES_TOOL_CONFIG.name, source: fileSource?.id },
+				'Skipping built-in file listing tool because it is provided by proxy configuration'
 			);
+		}
+
+		if (fileSource && hfToken && !fileListingProvidedByProxy) {
+			try {
+				server.tool(
+					LIST_FILES_TOOL_CONFIG.name,
+					LIST_FILES_TOOL_CONFIG.description,
+					LIST_FILES_TOOL_CONFIG.schema.shape,
+					LIST_FILES_TOOL_CONFIG.annotations,
+					async (params: ListFilesParams) => {
+						const tool = new ListFilesTool(hfToken, fileSource);
+						const markdown = await tool.generateDetailedMarkdown(params.fileType);
+
+						// Log the tool usage
+						logSearchQuery(
+							LIST_FILES_TOOL_CONFIG.name,
+							fileSource.id,
+							{ fileType: params.fileType, source: fileSource.kind },
+							{
+								clientSessionId: sessionInfo?.clientSessionId,
+								isAuthenticated: sessionInfo?.isAuthenticated ?? true,
+								clientName: sessionInfo?.clientInfo?.name,
+								clientVersion: sessionInfo?.clientInfo?.version,
+								responseCharCount: markdown.length,
+							}
+						);
+
+						return {
+							content: [{ type: 'text', text: markdown }],
+						};
+					}
+				);
+			} catch (error) {
+				if (isDuplicateRegistrationError(error)) {
+					logger.warn(
+						{ toolName: LIST_FILES_TOOL_CONFIG.name, source: fileSource.id },
+						'Skipping built-in file listing tool because a tool with the same name is already registered'
+					);
+				} else {
+					throw error;
+				}
+			}
 		}
 
 		if (allSpaceNames.length === 0) {

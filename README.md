@@ -256,19 +256,25 @@ If a source fails or returns no tools, it is skipped (no startup failure).
 **CSV format**
 
 ```
-proxy_id,url,response_type
+tool_name,url,response_type
 papers,https://evalstate-hf-papers.hf.space/mcp,SSE
 news,https://example.com/mcp,JSON
 ```
 
-- `proxy_id`: identifier used to disambiguate tools.
+- `tool_name`: local tool name for single-tool upstreams; identifier for the proxy source when the upstream exposes
+  multiple tools.
 - `url`: Streamable HTTP MCP endpoint.
 - `response_type`: `SSE` (streamed response) or `JSON` (direct JSON-RPC response).
 
 **Tool naming**
 
-- Single source: tool names are **unchanged** (taken from the downstream server).
-- Multiple sources: tool names are **prefixed** with `proxy_id_` (e.g. `papers_hf-papers-search_send`).
+Tool naming depends on how many tools the upstream MCP endpoint returns:
+
+- Single upstream tool: the exposed tool name is the first CSV column.
+- Multiple upstream tools: the exposed tool names are the upstream tool names.
+
+If an exposed proxy tool name collides with an already-registered tool, the proxy tool is skipped and a warning is
+logged.
 
 You can include these tool names in bouquets or mixes as needed.
 Use `bouquet=proxy` or `mix=proxy` to enable all proxy tools loaded from `PROXY_TOOLS_CSV` (in addition to the base built-in tools).

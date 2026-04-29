@@ -5,7 +5,7 @@ import type { SpaceTool } from '../../shared/settings.js';
 import { GRADIO_PREFIX, GRADIO_PRIVATE_PREFIX } from '../../shared/constants.js';
 import { logger } from './logger.js';
 import { getGradioSpaces } from './gradio-discovery.js';
-import { HubApiError, repoExists } from '@huggingface/hub';
+import { repoExists } from '@huggingface/hub';
 import type { FileListingSource } from '@llmindset/hf-mcp';
 
 /**
@@ -210,20 +210,6 @@ export async function parseAndFetchGradioEndpoints(gradioParam: string, hfToken?
 	return fetchGradioSubdomains(parsedSpaces, hfToken);
 }
 
-/**
- * Input parameters for determining if gradio_files tool should be registered
- */
-interface GradioFilesEligibilityParams {
-	/** Number of configured Gradio spaces */
-	gradioSpaceCount: number;
-	/** List of enabled built-in tool IDs */
-	builtInTools: string[];
-	/** The tool ID that represents dynamic_space */
-	dynamicSpaceToolId: string;
-	/** Whether the user's gradio-files dataset exists */
-	datasetExists: boolean;
-}
-
 interface FileListingSourceResolutionParams {
 	username?: string;
 	token?: string;
@@ -234,53 +220,6 @@ interface FileListingSourceResolutionParams {
 
 export type ResolvedFileListingSource = FileListingSource | null;
 
-/**
- * Pure function to determine if the gradio_files tool should be registered.
- *
- * The tool should be registered when:
- * 1. The user's gradio-files dataset exists, AND
- * 2. Either Gradio spaces are configured OR dynamic_space tool is enabled
- *
- * @param params - The eligibility parameters
- * @returns true if gradio_files tool should be registered
- *
- * @example
- * shouldRegisterGradioFilesTool({
- *   gradioSpaceCount: 0,
- *   builtInTools: ['dynamic_space'],
- *   dynamicSpaceToolId: 'dynamic_space',
- *   datasetExists: true,
- * }) // true - dynamic_space enabled with existing dataset
- *
- * @example
- * shouldRegisterGradioFilesTool({
- *   gradioSpaceCount: 2,
- *   builtInTools: [],
- *   dynamicSpaceToolId: 'dynamic_space',
- *   datasetExists: true,
- * }) // true - Gradio spaces configured with existing dataset
- *
- * @example
- * shouldRegisterGradioFilesTool({
- *   gradioSpaceCount: 0,
- *   builtInTools: [],
- *   dynamicSpaceToolId: 'dynamic_space',
- *   datasetExists: true,
- * }) // false - no Gradio spaces and dynamic_space not enabled
- */
-export function shouldRegisterGradioFilesTool(params: GradioFilesEligibilityParams): boolean {
-	const { gradioSpaceCount, builtInTools, dynamicSpaceToolId, datasetExists } = params;
-
-	if (!datasetExists) {
-		return false;
-	}
-
-	const hasGradioSpaces = gradioSpaceCount > 0;
-	const isDynamicSpaceEnabled = builtInTools.includes(dynamicSpaceToolId);
-
-	return hasGradioSpaces || isDynamicSpaceEnabled;
-}
-
 function isFileListingRelevant(params: {
 	gradioSpaceCount: number;
 	builtInTools: string[];
@@ -289,19 +228,19 @@ function isFileListingRelevant(params: {
 	return params.gradioSpaceCount > 0 || params.builtInTools.includes(params.dynamicSpaceToolId);
 }
 
-async function bucketExists(bucketId: string, token: string): Promise<boolean> {
-	try {
-		return await repoExists({
-			repo: { type: 'bucket', name: bucketId },
-			accessToken: token,
-		});
-	} catch (error) {
-		if (error instanceof HubApiError && error.statusCode === 403) {
-			return false;
-		}
-		throw error;
-	}
-}
+// async function bucketExists(bucketId: string, token: string): Promise<boolean> {
+// 	try {
+// 		return await repoExists({
+// 			repo: { type: 'bucket', name: bucketId },
+// 			accessToken: token,
+// 		});
+// 	} catch (error) {
+// 		if (error instanceof HubApiError && error.statusCode === 403) {
+// 			return false;
+// 		}
+// 		throw error;
+// 	}
+// }
 
 export async function resolveMcpFileListingSource(
 	params: FileListingSourceResolutionParams
@@ -311,11 +250,13 @@ export async function resolveMcpFileListingSource(
 		return null;
 	}
 
-	const bucketId = `${username}/mcp`;
-	if (await bucketExists(bucketId, token)) {
-		return { kind: 'bucket', id: bucketId };
-	}
+	/** THIS IS NOW INTENDED TO BE DELIVERED VIA AN MCP APPS PROXY  */
+	// const bucketId = `${username}/mcp`;
+	// if (await bucketExists(bucketId, token)) {
+	// 	return { kind: 'bucket', id: bucketId };
+	// }
 
+	/** RETAIN FOR BACKWARDS COMPAT */
 	const datasetId = `${username}/gradio-files`;
 	if (
 		await repoExists({

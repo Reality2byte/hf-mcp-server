@@ -1,12 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as hub from '@huggingface/hub';
-import { HubApiError } from '@huggingface/hub';
 import {
 	isGradioTool,
 	createGradioToolName,
 	parseGradioSpaceIds,
 	resolveMcpFileListingSource,
-	shouldRegisterGradioFilesTool,
 } from '../../../src/server/utils/gradio-utils.js';
 
 vi.mock('@huggingface/hub', async (importOriginal) => {
@@ -457,97 +455,6 @@ describe('parseGradioSpaceIds', () => {
 	});
 });
 
-describe('shouldRegisterGradioFilesTool', () => {
-	const DYNAMIC_SPACE_TOOL_ID = 'dynamic_space';
-
-	describe('should register when conditions are met', () => {
-		it('should register when Gradio spaces configured and dataset exists', () => {
-			expect(shouldRegisterGradioFilesTool({
-				gradioSpaceCount: 2,
-				builtInTools: [],
-				dynamicSpaceToolId: DYNAMIC_SPACE_TOOL_ID,
-				datasetExists: true,
-			})).toBe(true);
-		});
-
-		it('should register when dynamic_space enabled and dataset exists', () => {
-			expect(shouldRegisterGradioFilesTool({
-				gradioSpaceCount: 0,
-				builtInTools: [DYNAMIC_SPACE_TOOL_ID],
-				dynamicSpaceToolId: DYNAMIC_SPACE_TOOL_ID,
-				datasetExists: true,
-			})).toBe(true);
-		});
-
-		it('should register when both Gradio spaces and dynamic_space enabled', () => {
-			expect(shouldRegisterGradioFilesTool({
-				gradioSpaceCount: 3,
-				builtInTools: [DYNAMIC_SPACE_TOOL_ID, 'other_tool'],
-				dynamicSpaceToolId: DYNAMIC_SPACE_TOOL_ID,
-				datasetExists: true,
-			})).toBe(true);
-		});
-	});
-
-	describe('should NOT register when conditions are not met', () => {
-		it('should NOT register when dataset does not exist', () => {
-			expect(shouldRegisterGradioFilesTool({
-				gradioSpaceCount: 2,
-				builtInTools: [DYNAMIC_SPACE_TOOL_ID],
-				dynamicSpaceToolId: DYNAMIC_SPACE_TOOL_ID,
-				datasetExists: false,
-			})).toBe(false);
-		});
-
-		it('should NOT register when no Gradio spaces and dynamic_space not enabled', () => {
-			expect(shouldRegisterGradioFilesTool({
-				gradioSpaceCount: 0,
-				builtInTools: ['other_tool', 'another_tool'],
-				dynamicSpaceToolId: DYNAMIC_SPACE_TOOL_ID,
-				datasetExists: true,
-			})).toBe(false);
-		});
-
-		it('should NOT register with empty builtInTools and no spaces', () => {
-			expect(shouldRegisterGradioFilesTool({
-				gradioSpaceCount: 0,
-				builtInTools: [],
-				dynamicSpaceToolId: DYNAMIC_SPACE_TOOL_ID,
-				datasetExists: true,
-			})).toBe(false);
-		});
-	});
-
-	describe('edge cases', () => {
-		it('should handle gradioSpaceCount of 1', () => {
-			expect(shouldRegisterGradioFilesTool({
-				gradioSpaceCount: 1,
-				builtInTools: [],
-				dynamicSpaceToolId: DYNAMIC_SPACE_TOOL_ID,
-				datasetExists: true,
-			})).toBe(true);
-		});
-
-		it('should handle dynamic_space among many tools', () => {
-			expect(shouldRegisterGradioFilesTool({
-				gradioSpaceCount: 0,
-				builtInTools: ['tool1', 'tool2', DYNAMIC_SPACE_TOOL_ID, 'tool3'],
-				dynamicSpaceToolId: DYNAMIC_SPACE_TOOL_ID,
-				datasetExists: true,
-			})).toBe(true);
-		});
-
-		it('should be case-sensitive for tool ID matching', () => {
-			expect(shouldRegisterGradioFilesTool({
-				gradioSpaceCount: 0,
-				builtInTools: ['DYNAMIC_SPACE', 'Dynamic_Space'],
-				dynamicSpaceToolId: DYNAMIC_SPACE_TOOL_ID,
-				datasetExists: true,
-			})).toBe(false);
-		});
-	});
-});
-
 describe('resolveMcpFileListingSource', () => {
 	const DYNAMIC_SPACE_TOOL_ID = 'dynamic_space';
 	const baseParams = {
@@ -562,38 +469,22 @@ describe('resolveMcpFileListingSource', () => {
 		vi.clearAllMocks();
 	});
 
-	it('prefers bucket when both bucket and dataset exist', async () => {
+	it('returns legacy gradio-files dataset when it exists', async () => {
 		vi.mocked(hub.repoExists).mockResolvedValueOnce(true);
-
-		await expect(resolveMcpFileListingSource(baseParams)).resolves.toEqual({ kind: 'bucket', id: 'alice/mcp' });
-		expect(hub.repoExists).toHaveBeenCalledTimes(1);
-		expect(hub.repoExists).toHaveBeenCalledWith({
-			repo: { type: 'bucket', name: 'alice/mcp' },
-			accessToken: 'hf_token',
-		});
-	});
-
-	it('returns bucket when dataset is missing', async () => {
-		vi.mocked(hub.repoExists).mockResolvedValueOnce(true);
-
-		await expect(resolveMcpFileListingSource(baseParams)).resolves.toEqual({ kind: 'bucket', id: 'alice/mcp' });
-	});
-
-	it('falls back to dataset when bucket is missing', async () => {
-		vi.mocked(hub.repoExists).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
 
 		await expect(resolveMcpFileListingSource(baseParams)).resolves.toEqual({
 			kind: 'dataset',
 			id: 'alice/gradio-files',
 		});
-		expect(hub.repoExists).toHaveBeenNthCalledWith(2, {
+		expect(hub.repoExists).toHaveBeenCalledTimes(1);
+		expect(hub.repoExists).toHaveBeenCalledWith({
 			repo: { type: 'dataset', name: 'alice/gradio-files' },
 			accessToken: 'hf_token',
 		});
 	});
 
-	it('returns null when neither bucket nor dataset exists', async () => {
-		vi.mocked(hub.repoExists).mockResolvedValueOnce(false).mockResolvedValueOnce(false);
+	it('returns null when the legacy dataset is missing', async () => {
+		vi.mocked(hub.repoExists).mockResolvedValueOnce(false);
 
 		await expect(resolveMcpFileListingSource(baseParams)).resolves.toBeNull();
 	});
@@ -624,17 +515,6 @@ describe('resolveMcpFileListingSource', () => {
 				gradioSpaceCount: 0,
 				builtInTools: [DYNAMIC_SPACE_TOOL_ID],
 			})
-		).resolves.toEqual({ kind: 'bucket', id: 'alice/mcp' });
-	});
-
-	it('treats bucket 403 as unavailable and falls back to dataset', async () => {
-		vi.mocked(hub.repoExists)
-			.mockRejectedValueOnce(new HubApiError('https://huggingface.co/api/buckets/alice/mcp', 403))
-			.mockResolvedValueOnce(true);
-
-		await expect(resolveMcpFileListingSource(baseParams)).resolves.toEqual({
-			kind: 'dataset',
-			id: 'alice/gradio-files',
-		});
+		).resolves.toEqual({ kind: 'dataset', id: 'alice/gradio-files' });
 	});
 });
