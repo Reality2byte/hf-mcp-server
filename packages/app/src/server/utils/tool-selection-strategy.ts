@@ -125,7 +125,7 @@ export class ToolSelectionStrategy {
 		if (proxyToolNames.length === 0) {
 			return enabledToolIds;
 		}
-		return normalizeBuiltInTools([...enabledToolIds, ...proxyToolNames]);
+		return [...new Set([...normalizeBuiltInTools(enabledToolIds), ...proxyToolNames])];
 	}
 
 	/**
@@ -253,13 +253,18 @@ export class ToolSelectionStrategy {
 
 		// 5. Fallback - all tools enabled
 		logger.warn('No settings available, using fallback (all tools enabled)');
-		const enabledToolIds = normalizeBuiltInTools(
+		let enabledToolIds = normalizeBuiltInTools(
 			this.applySearchEnablesFetch([...ALL_BUILTIN_TOOL_IDS])
 		);
+		if (includesProxyMix && proxyToolNames.length > 0) {
+			enabledToolIds = this.appendProxyTools(enabledToolIds);
+		} else if (includesProxyMix && proxyToolNames.length === 0) {
+			logger.warn('Proxy mix requested but no proxy tools are configured');
+		}
 		return {
 			mode: ToolSelectionMode.FALLBACK,
 			enabledToolIds,
-			reason: `Fallback - no settings available${gradioSpaceTools.length > 0 ? ` + ${gradioSpaceTools.length} gradio endpoints` : ''}`,
+			reason: `Fallback - no settings available${includesProxyMix ? ' + proxy mix' : ''}${gradioSpaceTools.length > 0 ? ` + ${gradioSpaceTools.length} gradio endpoints` : ''}`,
 			gradioSpaceTools: gradioSpaceTools.length > 0 ? gradioSpaceTools : undefined,
 		};
 	}

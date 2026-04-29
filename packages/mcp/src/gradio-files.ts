@@ -108,7 +108,7 @@ function matchesFileType(file: FileWithUrl, fileType: FileTypeFilter): boolean {
 const FILE_TYPE_SCHEMA = z.enum(['all', 'image', 'audio', 'text']).optional().default('all').describe('Filter by type');
 
 export const LIST_FILES_TOOL_CONFIG = {
-	name: 'list_files',
+	name: 'gradio_files',
 	description:
 		'List files available to use as Gradio File/Image/Audio inputs. Prefer these URLs when a Space asks for a file input and the user has not provided an explicit URL.',
 	schema: z.object({
@@ -122,29 +122,7 @@ export const LIST_FILES_TOOL_CONFIG = {
 	},
 } as const;
 
-export const GRADIO_FILES_TOOL_CONFIG = {
-	name: 'gradio_files',
-	description:
-		'List available URLs that can be used for Gradio File Inputs. Use when an input is requested and an explicit URL has not been provided.', // This will be dynamically set with username
-	schema: z.object({
-		fileType: FILE_TYPE_SCHEMA,
-	}),
-	annotations: {
-		title: 'Gradio Files List',
-		destructiveHint: false,
-		readOnlyHint: true,
-		openWorldHint: true,
-	},
-} as const;
-
-export const GRADIO_FILES_PROMPT_CONFIG = {
-	name: 'Available Gradio Input Files',
-	description: 'Returns a list of files and their URLs to use as Gradio File Inputs.',
-	schema: z.object({}),
-};
-
 export type ListFilesParams = z.infer<typeof LIST_FILES_TOOL_CONFIG.schema>;
-export type GradioFilesParams = z.infer<typeof GRADIO_FILES_TOOL_CONFIG.schema>;
 
 /**
  * Service for listing files from a Hugging Face Bucket or the legacy gradio-files dataset.

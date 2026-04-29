@@ -45,9 +45,9 @@ describe('StatelessHttpTransport', () => {
 			expect(result).toBe(true);
 		});
 
-		it('should NOT handle resources/list requests for non-openai-mcp clients', () => {
+		it('should handle resources/list requests for non-openai-mcp clients', () => {
 			const result = (transport as any).shouldHandle({ method: 'resources/list' });
-			expect(result).toBe(false);
+			expect(result).toBe(true);
 		});
 
 		it('should handle resources/list requests for openai-mcp client', () => {
@@ -55,9 +55,9 @@ describe('StatelessHttpTransport', () => {
 			expect(result).toBe(true);
 		});
 
-		it('should NOT handle resources/read requests for non-openai-mcp clients', () => {
+		it('should handle resources/read requests for non-openai-mcp clients', () => {
 			const result = (transport as any).shouldHandle({ method: 'resources/read' });
-			expect(result).toBe(false);
+			expect(result).toBe(true);
 		});
 
 		it('should handle resources/read requests for openai-mcp client', () => {
@@ -65,9 +65,9 @@ describe('StatelessHttpTransport', () => {
 			expect(result).toBe(true);
 		});
 
-		it('should NOT handle resources/templates/list requests for non-openai-mcp clients', () => {
+		it('should handle resources/templates/list requests for non-openai-mcp clients', () => {
 			const result = (transport as any).shouldHandle({ method: 'resources/templates/list' });
-			expect(result).toBe(false);
+			expect(result).toBe(true);
 		});
 
 		it('should handle resources/templates/list requests for openai-mcp client', () => {
@@ -92,10 +92,10 @@ describe('StatelessHttpTransport', () => {
 	});
 
 	describe('skipGradioSetup', () => {
-		it('should not skip setup for list_files calls because it is registered by the Gradio proxy layer', () => {
+		it('should not skip setup for gradio_files calls because it is registered by the Gradio proxy layer', () => {
 			const result = (transport as any).skipGradioSetup({
 				method: 'tools/call',
-				params: { name: 'list_files' },
+				params: { name: 'gradio_files' },
 			});
 
 			expect(result).toBe(false);

@@ -9,8 +9,9 @@ import { whoAmI, HubApiError, type WhoAmI } from '@huggingface/hub';
 import { extractAuthBouquetAndMix } from '../utils/auth-utils.js';
 import { getMetricsSafeName } from '../utils/gradio-metrics.js';
 import { isGradioTool } from '../utils/gradio-utils.js';
-import { LIST_FILES_TOOL_CONFIG } from '@llmindset/hf-mcp';
 import { getProxyToolDefinition, type ProxyToolResponseType } from '../utils/proxy-tools-config.js';
+
+const GRADIO_FILES_TOOL_NAME = 'gradio_files';
 
 /**
  * Result returned by ServerFactory containing the server instance and optional user details
@@ -352,7 +353,7 @@ export abstract class BaseTransport {
 			const toolName = body?.params?.name;
 
 			// File listing tools need Gradio setup (for conditional registration) but not streaming.
-			if (toolName === LIST_FILES_TOOL_CONFIG.name) {
+			if (toolName === GRADIO_FILES_TOOL_NAME) {
 				return false; // Don't skip Gradio setup
 			}
 

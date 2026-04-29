@@ -1,5 +1,5 @@
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult, ReadResourceResult } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolResultSchema, ReadResourceResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -161,6 +161,61 @@ export async function callStreamableHttpTool(
 		);
 
 		return result;
+	} finally {
+		await client.close();
+	}
+}
+
+export async function readStreamableHttpResource(
+	serverUrl: string,
+	resourceUri: string,
+	hfToken: string | undefined
+): Promise<ReadResourceResult> {
+	logger.trace(
+		{
+			serverUrl,
+			resourceUri,
+			hasToken: Boolean(hfToken),
+		},
+		'Streamable proxy reading upstream resource'
+	);
+
+	const validatedServerUrl = parseAndValidateUrl(serverUrl, PROXY_STREAMABLE_PROFILE.urlPolicy);
+
+	const client = new Client(
+		{
+			name: 'hf-mcp-streamable-client',
+			version: '1.0.0',
+		},
+		{
+			capabilities: {},
+		}
+	);
+
+	const headers = buildAuthHeaders(hfToken);
+	const transport = new StreamableHTTPClientTransport(validatedServerUrl, {
+		requestInit: headers ? { headers } : undefined,
+		fetch: async (url, init) => {
+			const { response } = await fetchWithProfile(url.toString(), PROXY_STREAMABLE_PROFILE, {
+				requestInit: init,
+			});
+			return response;
+		},
+	});
+
+	await client.connect(transport);
+	logger.trace({ serverUrl, resourceUri }, 'Streamable proxy connected upstream for resource read');
+
+	try {
+		return await client.request(
+			{
+				method: 'resources/read',
+				params: {
+					uri: resourceUri,
+				},
+			},
+			ReadResourceResultSchema
+		);
 	} finally {
 		await client.close();
 	}

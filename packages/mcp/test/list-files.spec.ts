@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as hub from '@huggingface/hub';
 import type { ListFileEntry } from '@huggingface/hub';
-import { LIST_FILES_TOOL_CONFIG, ListFilesTool, GRADIO_FILES_TOOL_CONFIG } from '../src/gradio-files.js';
+import { LIST_FILES_TOOL_CONFIG, ListFilesTool } from '../src/gradio-files.js';
 
 vi.mock('@huggingface/hub', () => ({
 	listFiles: vi.fn(),
@@ -113,9 +113,8 @@ describe('ListFilesTool', () => {
 		expect(markdown).not.toContain('private bucket URLs require authorization');
 	});
 
-	it('exposes list_files while keeping gradio_files compatibility config', () => {
-		expect(LIST_FILES_TOOL_CONFIG.name).toBe('list_files');
+	it('exposes the gradio_files tool config', () => {
+		expect(LIST_FILES_TOOL_CONFIG.name).toBe('gradio_files');
 		expect(LIST_FILES_TOOL_CONFIG.annotations.readOnlyHint).toBe(true);
-		expect(GRADIO_FILES_TOOL_CONFIG.name).toBe('gradio_files');
 	});
 });
