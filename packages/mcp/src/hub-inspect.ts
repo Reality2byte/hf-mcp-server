@@ -4,12 +4,17 @@ import { ModelDetailTool } from './model-detail.js';
 import { DatasetDetailTool } from './dataset-detail.js';
 import { spaceInfo } from '@huggingface/hub';
 import { formatDate } from './utilities.js';
+import { DatasetViewerInspector } from './dataset-viewer-inspect.js';
+
+const HUB_INSPECT_OPERATIONS = ['overview', 'dataset_structure', 'dataset_preview'] as const;
 
 export const HUB_REPO_DETAILS_TOOL_CONFIG = {
 	name: 'hub_repo_details',
 	description:
 		'Get details for one or more Hugging Face repos (model, dataset, or space). ' +
-		'Auto-detects type unless specified.',
+		'Auto-detects type unless specified. For datasets, use operations: overview, dataset_structure, dataset_preview. ' +
+		'Use dataset_structure first to discover configs, splits, sizes, and schema. Use dataset_preview only when ' +
+		'config and split are known, unless the dataset has a single config/split.',
 	schema: z.object({
 		repo_ids: z
 			.array(z.string().min(1))
@@ -18,6 +23,26 @@ export const HUB_REPO_DETAILS_TOOL_CONFIG = {
 			.describe('Repo IDs for (models|dataset/space) - usually in author/name format (e.g. openai/gpt-oss-120b)'),
 		repo_type: z.enum(['model', 'dataset', 'space']).optional().describe('Specify lookup type; otherwise auto-detects'),
 		include_readme: z.boolean().default(false).describe('Include README from the repo'),
+		operations: z
+			.array(z.enum(HUB_INSPECT_OPERATIONS))
+			.optional()
+			.describe(
+				'Details to return. Defaults to ["overview"]. For datasets, prefer ["overview", "dataset_structure"] first; then call ["dataset_preview"] with config and split.'
+			),
+		config: z
+			.string()
+			.optional()
+			.describe(
+				'Dataset Viewer config. Required for dataset_preview when the dataset has multiple config/split options. Discover via dataset_structure.'
+			),
+		split: z
+			.string()
+			.optional()
+			.describe(
+				'Dataset Viewer split. Required for dataset_preview when the dataset has multiple config/split options. Discover via dataset_structure.'
+			),
+		offset: z.number().int().nonnegative().optional().describe('Row offset for dataset_preview. Defaults to 0.'),
+		limit: z.number().int().optional().describe('Row count for dataset_preview. Defaults to 5 and is clamped to 1-100.'),
 	}),
 	annotations: {
 		title: 'Hub Repo Details',
@@ -32,11 +57,13 @@ export type HubInspectParams = z.infer<typeof HUB_REPO_DETAILS_TOOL_CONFIG.schem
 export class HubInspectTool {
 	private readonly modelDetail: ModelDetailTool;
 	private readonly datasetDetail: DatasetDetailTool;
+	private readonly datasetViewer: DatasetViewerInspector;
 	private readonly hubUrl?: string;
 
 	constructor(hfToken?: string, hubUrl?: string) {
 		this.modelDetail = new ModelDetailTool(hfToken, hubUrl);
 		this.datasetDetail = new DatasetDetailTool(hfToken, hubUrl);
+		this.datasetViewer = new DatasetViewerInspector(hfToken, { hubUrl });
 		this.hubUrl = hubUrl;
 	}
 
@@ -46,7 +73,7 @@ export class HubInspectTool {
 
 		for (const id of params.repo_ids) {
 			try {
-				const section = await this.inspectSingle(id, params.repo_type, includeReadme);
+				const section = await this.inspectSingle(id, params, includeReadme);
 				parts.push(section);
 				successCount += 1;
 			} catch (err) {
@@ -66,18 +93,28 @@ export class HubInspectTool {
 
 	private async inspectSingle(
 		repoId: string,
-		type: 'model' | 'dataset' | 'space' | undefined,
+		params: HubInspectParams,
 		includeReadme: boolean
 	): Promise<string> {
+		const type = params.repo_type;
+		const operations = normalizeOperations(params.operations);
+		const hasDatasetOperation = operations.some((operation) => operation === 'dataset_structure' || operation === 'dataset_preview');
+
 		// If caller constrained the type, do only that
 		if (type === 'model') {
+			if (hasDatasetOperation) return operationMismatch(repoId, 'model', operations);
 			return (await this.modelDetail.getDetails(repoId, includeReadme)).formatted;
 		}
 		if (type === 'dataset') {
-			return (await this.datasetDetail.getDetails(repoId, includeReadme)).formatted;
+			return await this.getDatasetDetails(repoId, params, includeReadme, operations);
 		}
 		if (type === 'space') {
+			if (hasDatasetOperation) return operationMismatch(repoId, 'space', operations);
 			return await this.getSpaceDetails(repoId);
+		}
+
+		if (hasDatasetOperation) {
+			return await this.getDatasetDetails(repoId, params, includeReadme, operations);
 		}
 
 		// Auto-detect: attempt all three and aggregate. The same id may exist for multiple types.
@@ -111,6 +148,33 @@ export class HubInspectTool {
 		return matches.join('\n\n---\n\n');
 	}
 
+	private async getDatasetDetails(
+		repoId: string,
+		params: HubInspectParams,
+		includeReadme: boolean,
+		operations: HubInspectOperation[]
+	): Promise<string> {
+		const sections: string[] = [];
+		if (operations.includes('overview')) {
+			const overview = (await this.datasetDetail.getDetails(repoId, includeReadme)).formatted;
+			sections.push(`${overview}\n\n${datasetDrillDownHint()}`);
+		}
+		if (operations.includes('dataset_structure')) {
+			sections.push(await this.datasetViewer.getStructure(repoId, { config: params.config, split: params.split }));
+		}
+		if (operations.includes('dataset_preview')) {
+			sections.push(
+				await this.datasetViewer.getPreview(repoId, {
+					config: params.config,
+					split: params.split,
+					offset: params.offset,
+					limit: params.limit,
+				})
+			);
+		}
+		return sections.join('\n\n');
+	}
+
 	private async getSpaceDetails(spaceId: string): Promise<string> {
 		const additionalFields = ['author', 'tags', 'runtime', 'subdomain', 'sha'] as const;
 		const info = await spaceInfo<(typeof additionalFields)[number]>({
@@ -141,4 +205,24 @@ export class HubInspectTool {
 		lines.push(`**Link:** [https://hf.co/spaces/${info.name}](https://hf.co/spaces/${info.name})`);
 		return lines.join('\n');
 	}
+}
+
+type HubInspectOperation = (typeof HUB_INSPECT_OPERATIONS)[number];
+
+function normalizeOperations(operations: readonly HubInspectOperation[] | undefined): HubInspectOperation[] {
+	return operations && operations.length > 0 ? [...new Set(operations)] : ['overview'];
+}
+
+function operationMismatch(repoId: string, type: 'model' | 'space', operations: HubInspectOperation[]): string {
+	const requested = operations.filter((operation) => operation.startsWith('dataset_')).join(', ');
+	return `# ${repoId}\n\nRequested dataset operation(s) \`${requested}\`, but this repo was requested as a ${type}. Dataset Viewer operations only apply to dataset repos.`;
+}
+
+function datasetDrillDownHint(): string {
+	return [
+		'## Available deeper inspections',
+		'Call `hub_repo_details` with:',
+		'- `operations: ["dataset_structure"]` for configs, splits, sizes, parquet exports, and schema.',
+		'- `operations: ["dataset_preview"]` with `config` and `split` for sample rows.',
+	].join('\n');
 }

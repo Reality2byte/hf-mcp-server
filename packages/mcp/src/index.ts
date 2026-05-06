@@ -10,6 +10,7 @@ export * from './dataset-search.js';
 export * from './repo-search.js';
 export * from './create-repo.js';
 export * from './dataset-detail.js';
+export * from './dataset-viewer-inspect.js';
 export * from './hub-inspect.js';
 export * from './duplicate-space.js';
 export * from './space-info.js';

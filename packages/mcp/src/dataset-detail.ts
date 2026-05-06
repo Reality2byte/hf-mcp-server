@@ -163,7 +163,7 @@ export class DatasetDetailTool {
 
 			// Fetch and append README content if requested
 			if (includeReadme) {
-				const readmeContent = await fetchReadmeContent(datasetDetails.name, 'datasets', false);
+				const readmeContent = await fetchReadmeContent(datasetDetails.name, 'datasets');
 				if (readmeContent) {
 					const result = formatDatasetDetails(datasetDetails);
 					result.formatted +=
