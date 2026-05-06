@@ -75,7 +75,8 @@ export const HUB_REPO_DETAILS_TOOL_CONFIG: BrowserToolConfig = {
 	name: 'hub_repo_details',
 	description:
 		'Get details for one or more Hugging Face repos (model, dataset, or space). ' +
-		'Auto-detects type unless specified.',
+		'Auto-detects type unless specified. For datasets, use dataset_structure first to discover configs, splits, ' +
+		'sizes, and schema. Use dataset_preview only when config and split are known, unless the dataset has a single config/split.',
 	annotations: {
 		title: 'Hub Repo Details',
 		destructiveHint: false,

@@ -259,7 +259,7 @@ export class ModelDetailTool {
 
 			// Fetch and append README content if requested
 			if (includeReadme) {
-				const readmeContent = await fetchReadmeContent(modelDetails.name, 'models', false);
+				const readmeContent = await fetchReadmeContent(modelDetails.name, 'models');
 				if (readmeContent) {
 					const result = formatModelDetails(modelDetails);
 					result.formatted += '\n\n## README\n<modelcard-readme>\n\n' + readmeContent.trim() + '\n</modelcard-readme>';

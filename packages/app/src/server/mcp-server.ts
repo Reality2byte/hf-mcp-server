@@ -727,13 +727,30 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 				const repoType = (params as { repo_type?: unknown }).repo_type as unknown;
 				const repoTypeSafe =
 					repoType === 'model' || repoType === 'dataset' || repoType === 'space' ? repoType : undefined;
+				const operationsParam = (params as { operations?: unknown }).operations;
+				const operations = Array.isArray(operationsParam)
+					? operationsParam.filter((operation): operation is string => typeof operation === 'string')
+					: undefined;
+				const config = (params as { config?: unknown }).config;
+				const split = (params as { split?: unknown }).split;
+				const offset = (params as { offset?: unknown }).offset;
+				const limit = (params as { limit?: unknown }).limit;
 
 				const result = await runWithQueryLogging(
 					logPromptQuery,
 					{
 						methodName: HUB_REPO_DETAILS_TOOL_CONFIG.name,
 						query: firstRepoId,
-						parameters: { count: repoIds.length, repo_type: repoTypeSafe, include_readme: includeReadme },
+						parameters: {
+							count: repoIds.length,
+							repo_type: repoTypeSafe,
+							include_readme: includeReadme,
+							operations,
+							config: typeof config === 'string' ? config : undefined,
+							split: typeof split === 'string' ? split : undefined,
+							offset: typeof offset === 'number' ? offset : undefined,
+							limit: typeof limit === 'number' ? limit : undefined,
+						},
 						baseOptions: getLoggingOptions(),
 						successOptions: (details) => ({
 							totalResults: details.totalResults,
