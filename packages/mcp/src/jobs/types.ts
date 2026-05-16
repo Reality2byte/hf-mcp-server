@@ -61,6 +61,20 @@ export interface JobOwner {
 }
 
 /**
+ * Hugging Face Hub volume mounted into a Job container.
+ */
+export type JobVolumeType = 'bucket' | 'model' | 'dataset' | 'space';
+
+export interface JobVolume {
+	type: JobVolumeType;
+	source: string;
+	mountPath: string;
+	revision?: string;
+	readOnly?: boolean;
+	path?: string;
+}
+
+/**
  * Job information from API
  * Based on OpenAPI schema
  */
@@ -97,6 +111,7 @@ export interface JobSpec {
 	secrets?: Record<string, string>;
 	flavor: string;
 	timeoutSeconds?: number;
+	volumes?: JobVolume[];
 }
 
 /**
@@ -164,6 +179,14 @@ export const runArgsSchema = commonArgsSchema.extend({
 		.optional()
 		.describe('Secrets as key-value pairs. Use HF_TOKEN=$HF_TOKEN to include your token'),
 	timeout: z.string().optional().describe('Max duration (e.g., "5m", "2h", "30s"). Default: 30m').default('30m'),
+	volumes: z
+		.array(z.string())
+		.optional()
+		.describe(
+			'Volume mounts using hf:// URLs. Format: hf://TYPE/OWNER/NAME[/PATH]:/MOUNT_PATH[:ro|:rw]. ' +
+				'TYPE is models, datasets, spaces, or buckets. ' +
+				'Examples: ["hf://datasets/org/ds:/data:ro", "hf://buckets/org/b:/output"].'
+		),
 	detach: z
 		.boolean()
 		.optional()
@@ -187,7 +210,18 @@ export const uvArgsSchema = commonArgsSchema.extend({
 		.optional()
 		.describe('Secrets as key-value pairs. Use HF_TOKEN=$HF_TOKEN to include your token'),
 	timeout: z.string().optional().default('30m').describe('Max duration'),
-	detach: z.boolean().optional().default(false).describe('If true, return immediately with job ID. If false (default), tail logs for up to 10 seconds.'),
+	volumes: z
+		.array(z.string())
+		.optional()
+		.describe(
+			'Volume mounts using hf:// URLs. Format: hf://TYPE/OWNER/NAME[/PATH]:/MOUNT_PATH[:ro|:rw]. ' +
+				'TYPE is models, datasets, spaces, or buckets.'
+		),
+	detach: z
+		.boolean()
+		.optional()
+		.default(false)
+		.describe('If true, return immediately with job ID. If false (default), tail logs for up to 10 seconds.'),
 });
 
 // PS command args

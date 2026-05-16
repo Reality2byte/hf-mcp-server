@@ -357,6 +357,28 @@ ${HARDWARE_FLAVORS_SECTION}
 - Include newline characters directly in the argument (e.g., \`"first line\\nsecond line"\`)
 - UV inline scripts are automatically base64-decoded inside the container; just send the raw script text
 
+## Volumes
+
+Attach Hub repositories or buckets into the job container with \`hf://\` volume URLs.
+
+Format: \`hf://[TYPE/]OWNER/NAME[/PATH]:/MOUNT_PATH[:ro|:rw]\`
+
+- \`TYPE\` is one of \`models\`, \`datasets\`, \`spaces\`, or \`buckets\`; omitted type defaults to models.
+- \`OWNER/NAME\` source IDs are required.
+- \`:ro\` and \`:rw\` are optional; backend defaults are preserved when omitted.
+
+Example:
+\`\`\`json
+{
+  "operation": "run",
+  "args": {
+    "image": "python:3.12",
+    "command": ["python", "-c", "import os; print(os.listdir('/data'))"],
+    "volumes": ["hf://datasets/org/dataset:/data:ro"]
+  }
+}
+\`\`\`
+
 ### Show command-specific help
 Call this tool with:
 \`\`\`json

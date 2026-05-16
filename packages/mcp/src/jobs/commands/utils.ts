@@ -1,4 +1,4 @@
-import type { JobSpec } from '../types.js';
+import type { JobSpec, JobVolume, JobVolumeType } from '../types.js';
 import { parse as parseShellArgs } from 'shell-quote';
 
 interface EnvToken {
@@ -7,6 +7,17 @@ interface EnvToken {
 }
 
 const SPECIAL_PARAMS = new Set(['*', '@', '#', '?', '!', '-', '_']);
+const HF_VOLUME_PREFIX = 'hf://';
+const VOLUME_FORMAT_HELP =
+	'Expected format: hf://[TYPE/]OWNER/NAME[/PATH]:/MOUNT_PATH[:ro|:rw], ' +
+	'e.g. hf://datasets/org/dataset:/data:ro or hf://buckets/org/bucket:/output.';
+const HF_VOLUME_TYPES: Record<string, JobVolumeType> = {
+	models: 'model',
+	datasets: 'dataset',
+	spaces: 'space',
+	buckets: 'bucket',
+};
+const SINGULAR_VOLUME_TYPES = new Set(['model', 'dataset', 'space', 'bucket']);
 
 function isEnvToken(entry: unknown): entry is EnvToken {
 	return Boolean(entry && typeof entry === 'object' && (entry as EnvToken).type === 'env');
@@ -50,9 +61,7 @@ export function parseTimeout(timeout: string): number {
 		if (!isNaN(seconds)) {
 			return seconds;
 		}
-		throw new Error(
-			`Invalid timeout format: "${timeout}". Use format like "5m", "2h", "30s", or plain seconds.`
-		);
+		throw new Error(`Invalid timeout format: "${timeout}". Use format like "5m", "2h", "30s", or plain seconds.`);
 	}
 
 	const value = parseFloat(match[1]);
@@ -93,7 +102,7 @@ export function parseCommand(command: string | string[]): { command: string[]; a
 	}
 
 	// Parse the command string using shell-quote for POSIX-compliant parsing
-	const parsed = parseShellArgs<EnvToken>(command, key => ({ type: 'env', key }));
+	const parsed = parseShellArgs<EnvToken>(command, (key) => ({ type: 'env', key }));
 
 	// Convert parsed result to string array
 	// shell-quote can return various types (strings, objects for operators, etc.)
@@ -119,6 +128,82 @@ export function parseCommand(command: string | string[]): { command: string[]; a
 	}
 
 	return { command: stringArgs, arguments: [] };
+}
+
+function invalidVolume(rawSpec: string, message: string): Error {
+	return new Error(`Invalid volume "${rawSpec}". ${message} ${VOLUME_FORMAT_HELP}`);
+}
+
+function parseVolume(rawSpec: string): JobVolume {
+	let spec = rawSpec;
+	let readOnly: boolean | undefined;
+
+	if (spec.endsWith(':ro')) {
+		readOnly = true;
+		spec = spec.slice(0, -3);
+	} else if (spec.endsWith(':rw')) {
+		readOnly = false;
+		spec = spec.slice(0, -3);
+	}
+
+	if (!spec.startsWith(HF_VOLUME_PREFIX)) {
+		throw invalidVolume(rawSpec, `Volume source must start with "${HF_VOLUME_PREFIX}".`);
+	}
+
+	const body = spec.slice(HF_VOLUME_PREFIX.length);
+	const mountSeparator = body.lastIndexOf(':/');
+	if (mountSeparator === -1) {
+		throw invalidVolume(rawSpec, 'Missing mount path.');
+	}
+
+	const sourcePart = body.slice(0, mountSeparator);
+	const mountPath = body.slice(mountSeparator + 1);
+	if (!sourcePart) {
+		throw invalidVolume(rawSpec, 'Missing Hub source before mount path.');
+	}
+	if (!mountPath.startsWith('/') || mountPath === '/') {
+		throw invalidVolume(rawSpec, `Mount path must be a non-empty absolute path, got "${mountPath}".`);
+	}
+
+	const segments = sourcePart.split('/');
+	const firstSegment = segments[0];
+	if (!firstSegment) {
+		throw invalidVolume(rawSpec, 'Missing Hub source type or owner.');
+	}
+	if (SINGULAR_VOLUME_TYPES.has(firstSegment)) {
+		throw invalidVolume(rawSpec, `Type prefix must be plural, got "${firstSegment}/".`);
+	}
+
+	const explicitType = HF_VOLUME_TYPES[firstSegment];
+	const type = explicitType ?? 'model';
+	const locationSegments = explicitType ? segments.slice(1) : segments;
+	if (locationSegments.length < 2 || !locationSegments[0] || !locationSegments[1]) {
+		throw invalidVolume(rawSpec, 'Hub source must include OWNER/NAME.');
+	}
+
+	const source = `${locationSegments[0]}/${locationSegments[1]}`;
+	const path = locationSegments.slice(2).join('/') || undefined;
+	const volume: JobVolume = { type, source, mountPath };
+
+	if (readOnly !== undefined) {
+		volume.readOnly = readOnly;
+	}
+	if (path) {
+		volume.path = path;
+	}
+
+	return volume;
+}
+
+/**
+ * Parse hf:// volume mount strings into the Jobs API payload shape.
+ */
+export function parseVolumes(volumes?: string[]): JobVolume[] | undefined {
+	if (!volumes || volumes.length === 0) {
+		return undefined;
+	}
+
+	return volumes.map(parseVolume);
 }
 
 /**
@@ -162,6 +247,7 @@ export function createJobSpec(args: {
 	secrets?: Record<string, string>;
 	timeout?: string;
 	hfToken?: string;
+	volumes?: string[];
 }): JobSpec {
 	// Validate required fields
 	if (!args.image) {
@@ -176,6 +262,7 @@ export function createJobSpec(args: {
 	const timeoutSeconds = args.timeout ? parseTimeout(args.timeout) : undefined;
 	const environment = transformEnvMap(args.env, args.hfToken) || {};
 	const secrets = transformEnvMap(args.secrets, args.hfToken) || {};
+	const volumes = parseVolumes(args.volumes);
 
 	const spec: JobSpec = {
 		...imageSource,
@@ -186,6 +273,9 @@ export function createJobSpec(args: {
 		secrets,
 		timeoutSeconds,
 	};
+	if (volumes) {
+		spec.volumes = volumes;
+	}
 
 	return spec;
 }

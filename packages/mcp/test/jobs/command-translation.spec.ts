@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { parseTimeout, parseImageSource, parseCommand, createJobSpec } from '../../src/jobs/commands/utils.js';
+import {
+	parseTimeout,
+	parseImageSource,
+	parseCommand,
+	parseVolumes,
+	createJobSpec,
+} from '../../src/jobs/commands/utils.js';
 
 describe('Jobs Command Translation', () => {
 	describe('parseTimeout', () => {
@@ -104,7 +110,7 @@ describe('Jobs Command Translation', () => {
 		});
 
 		it('should handle single-quoted strings', () => {
-			const result = parseCommand("python -c 'print(\"Hello world!\")'");
+			const result = parseCommand('python -c \'print("Hello world!")\'');
 			expect(result.command).toEqual(['python', '-c', 'print("Hello world!")']);
 		});
 
@@ -200,6 +206,67 @@ describe('Jobs Command Translation', () => {
 		it('should handle multiline Python in array format', () => {
 			const result = parseCommand(['python', '-c', 'import sys\nprint("hello")\nprint("world")']);
 			expect(result.command).toEqual(['python', '-c', 'import sys\nprint("hello")\nprint("world")']);
+		});
+	});
+
+	describe('parseVolumes', () => {
+		it('should parse explicit model volume', () => {
+			expect(parseVolumes(['hf://models/org/model:/model'])).toEqual([
+				{ type: 'model', source: 'org/model', mountPath: '/model' },
+			]);
+		});
+
+		it('should parse implicit model volume with owner and name', () => {
+			expect(parseVolumes(['hf://org/model:/model'])).toEqual([
+				{ type: 'model', source: 'org/model', mountPath: '/model' },
+			]);
+		});
+
+		it('should parse dataset volume with read-only suffix', () => {
+			expect(parseVolumes(['hf://datasets/org/ds:/data:ro'])).toEqual([
+				{ type: 'dataset', source: 'org/ds', mountPath: '/data', readOnly: true },
+			]);
+		});
+
+		it('should parse bucket subpath with read-write suffix', () => {
+			expect(parseVolumes(['hf://buckets/org/b/sub/dir:/output:rw'])).toEqual([
+				{
+					type: 'bucket',
+					source: 'org/b',
+					path: 'sub/dir',
+					mountPath: '/output',
+					readOnly: false,
+				},
+			]);
+		});
+
+		it('should parse multiple volumes', () => {
+			expect(parseVolumes(['hf://datasets/org/ds:/data:ro', 'hf://buckets/org/b:/output'])).toEqual([
+				{ type: 'dataset', source: 'org/ds', mountPath: '/data', readOnly: true },
+				{ type: 'bucket', source: 'org/b', mountPath: '/output' },
+			]);
+		});
+
+		it('should omit empty volumes', () => {
+			expect(parseVolumes()).toBeUndefined();
+			expect(parseVolumes([])).toBeUndefined();
+		});
+
+		it('should reject missing hf prefix', () => {
+			expect(() => parseVolumes(['datasets/org/ds:/data'])).toThrow(/Invalid volume.*hf:\/\//);
+		});
+
+		it('should reject single-segment source ids', () => {
+			expect(() => parseVolumes(['hf://gpt2:/model'])).toThrow(/OWNER\/NAME/);
+		});
+
+		it('should reject singular type prefixes', () => {
+			expect(() => parseVolumes(['hf://dataset/org/ds:/data'])).toThrow(/plural/);
+		});
+
+		it('should reject invalid mount paths', () => {
+			expect(() => parseVolumes(['hf://datasets/org/ds:/'])).toThrow(/Mount path/);
+			expect(() => parseVolumes(['hf://datasets/org/ds:data'])).toThrow(/Missing mount path/);
 		});
 	});
 
@@ -326,6 +393,25 @@ describe('Jobs Command Translation', () => {
 			});
 
 			expect(spec.command).toEqual(['bash', '-c', 'echo hello']);
+		});
+
+		it('should include volumes when provided', () => {
+			const spec = createJobSpec({
+				image: 'python:3.12',
+				command: ['echo', 'hi'],
+				volumes: ['hf://datasets/org/ds:/data:ro'],
+			});
+
+			expect(spec.volumes).toEqual([{ type: 'dataset', source: 'org/ds', mountPath: '/data', readOnly: true }]);
+		});
+
+		it('should omit volumes when not provided', () => {
+			const spec = createJobSpec({
+				image: 'python:3.12',
+				command: ['echo', 'hi'],
+			});
+
+			expect(spec).not.toHaveProperty('volumes');
 		});
 	});
 });

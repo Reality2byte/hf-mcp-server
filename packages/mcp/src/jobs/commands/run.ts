@@ -18,6 +18,7 @@ export async function runCommand(args: RunArgs, client: JobsApiClient, token?: s
 		secrets: args.secrets,
 		timeout: args.timeout,
 		hfToken: token,
+		volumes: args.volumes,
 	});
 
 	// Submit job
@@ -39,7 +40,11 @@ export async function runCommand(args: RunArgs, client: JobsApiClient, token?: s
 
 	// Not detached - fetch logs
 	const logsUrl = client.getLogsUrl(job.id, job.owner.name);
-	const logResult = await fetchJobLogs(logsUrl, { token, maxDuration: DEFAULT_LOG_WAIT_MS, maxLines: DEFAULT_MAX_LOG_LINES });
+	const logResult = await fetchJobLogs(logsUrl, {
+		token,
+		maxDuration: DEFAULT_LOG_WAIT_MS,
+		maxLines: DEFAULT_MAX_LOG_LINES,
+	});
 
 	let response = `Job started: ${job.id}\n\n`;
 
@@ -80,6 +85,7 @@ export async function uvCommand(args: UvArgs, client: JobsApiClient, token?: str
 		timeout: args.timeout,
 		detach: args.detach,
 		namespace: args.namespace,
+		volumes: args.volumes,
 	};
 
 	return runCommand(runArgs, client, token);
