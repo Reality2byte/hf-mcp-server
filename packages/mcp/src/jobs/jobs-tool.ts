@@ -337,6 +337,30 @@ Manage compute jobs on Hugging Face infrastructure.
 
 ${renderExampleSection('Run a simple job', 'run')}${renderExampleSection('Run a Python script with UV', 'uv')}
 
+## Deep Hub Dataset/Repo Analysis
+
+Use Jobs for deep analysis prompts involving Hugging Face datasets, models, Spaces, repos, traces, or large Hub files—especially when the user asks to "analyze", "find trends", "process all rows/files", "run a complete analysis", "take your time", or "install/use Python libraries".
+
+Recommended workflow:
+1. Inspect the repo with \`hub_repo_details\` for schema, splits, and parquet URLs.
+2. Run \`operation: "uv"\` with a self-contained Python script; do not call \`{"operation": "uv"}\` by itself except to request help.
+3. Add dependencies with \`with_deps\`, such as \`pandas\`, \`pyarrow\`, \`huggingface_hub\`, \`datasets\`, \`duckdb\`, \`polars\`, or \`transformers\`.
+4. Prefer converted parquet URLs for Hub datasets when available; they are often more reliable for mixed JSONL/session repos than \`datasets.load_dataset(...)\`.
+5. If the initial response only shows installation logs or partial output, call \`logs\` with the returned job ID.
+
+Example:
+\`\`\`json
+{
+  "operation": "uv",
+  "args": {
+    "with_deps": ["pandas", "pyarrow", "huggingface_hub"],
+    "timeout": "60m",
+    "flavor": "cpu-upgrade",
+    "script": "import pandas as pd\\nurl = 'PARQUET_URL_FROM_HUB_REPO_DETAILS'\\ndf = pd.read_parquet(url)\\nprint(df.shape)\\nprint(df.head())"
+  }
+}
+\`\`\`
+
 ## Hardware Flavors
 
 ${HARDWARE_FLAVORS_SECTION}
@@ -400,9 +424,8 @@ Call this tool with:
 export const HF_JOBS_TOOL_CONFIG = {
 	name: 'hf_jobs',
 	description:
-		'Manage Hugging Face CPU/GPU compute jobs. Run commands in Docker containers, ' +
-		'execute Python scripts with UV. List, schedule and monitor jobs/logs. ' +
-		'Call this tool with no operation for full usage instructions and examples. ',
+		'Remote compute for Hugging Face workflows. Run Python/UV or Docker jobs to deeply analyze Hub datasets, repos, traces, models, and large files; compute trends/statistics; run batch inference/evaluation; or perform long-running work with installed libraries. ' +
+		'Use for dataset/repo analysis prompts when local chat inspection is insufficient. Includes submit, logs, inspect, cancel, schedule, and volume mounting.',
 	schema: z.object({
 		operation: z
 			.enum(OPERATION_NAMES)
