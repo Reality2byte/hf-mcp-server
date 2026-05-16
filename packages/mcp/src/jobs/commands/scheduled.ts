@@ -28,6 +28,7 @@ export async function scheduledRunCommand(
 		secrets: args.secrets,
 		timeout: args.timeout,
 		hfToken: token,
+		volumes: args.volumes,
 	});
 
 	// Create scheduled job spec
@@ -78,6 +79,7 @@ export async function scheduledUvCommand(
 		timeout: args.timeout,
 		detach: args.detach,
 		namespace: args.namespace,
+		volumes: args.volumes,
 	};
 
 	return scheduledRunCommand(scheduledRunArgs, client, token);
