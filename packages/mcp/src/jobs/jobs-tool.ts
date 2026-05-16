@@ -344,19 +344,31 @@ Use Jobs for deep analysis prompts involving Hugging Face datasets, models, Spac
 Recommended workflow:
 1. Inspect the repo with \`hub_repo_details\` for schema, splits, and parquet URLs.
 2. Run \`operation: "uv"\` with a self-contained Python script; do not call \`{"operation": "uv"}\` by itself except to request help.
-3. Add dependencies with \`with_deps\`, such as \`pandas\`, \`pyarrow\`, \`huggingface_hub\`, \`datasets\`, \`duckdb\`, \`polars\`, or \`transformers\`.
+3. Always put third-party packages in \`with_deps\`; do not assume packages like \`pandas\`, \`polars\`, \`pyarrow\`, \`datasets\`, or \`huggingface_hub\` are installed. Prefer \`with_deps\` over relying on inline PEP 723 script metadata.
 4. Prefer converted parquet URLs for Hub datasets when available; they are often more reliable for mixed JSONL/session repos than \`datasets.load_dataset(...)\`.
-5. If the initial response only shows installation logs or partial output, call \`logs\` with the returned job ID.
+5. Print the final report at the end of the job. If the initial response only shows installation logs or partial output, call \`logs\` with the exact returned job ID and a larger \`tail\`, e.g. \`{"tail": 500}\`.
+6. Jobs do not automatically inherit the MCP server's Hugging Face token inside the container. For private/gated data or uploads, pass \`secrets: { "HF_TOKEN": "$HF_TOKEN" }\`.
 
 Example:
 \`\`\`json
 {
   "operation": "uv",
   "args": {
-    "with_deps": ["pandas", "pyarrow", "huggingface_hub"],
+    "with_deps": ["polars", "pyarrow", "huggingface_hub"],
     "timeout": "60m",
     "flavor": "cpu-upgrade",
-    "script": "import pandas as pd\\nurl = 'PARQUET_URL_FROM_HUB_REPO_DETAILS'\\ndf = pd.read_parquet(url)\\nprint(df.shape)\\nprint(df.head())"
+    "script": "import polars as pl\\nurl = 'PARQUET_URL_FROM_HUB_REPO_DETAILS'\\ndf = pl.read_parquet(url)\\nprint(df.shape)\\nprint(df.head())"
+  }
+}
+\`\`\`
+
+If output is incomplete, fetch more logs:
+\`\`\`json
+{
+  "operation": "logs",
+  "args": {
+    "job_id": "JOB_ID_FROM_RUN_RESPONSE",
+    "tail": 500
   }
 }
 \`\`\`
