@@ -66,8 +66,15 @@ async function loadSkill(skillRoot: string, dirName: string): Promise<Skill | nu
 		return null;
 	}
 
-	const files = await walkFiles(skillRoot);
+	let files: SkillFile[];
+	try {
+		files = await walkFiles(skillRoot);
+	} catch (err) {
+		logger.warn({ dirName, err }, 'skill file walk failed, skipping');
+		return null;
+	}
 	if (!files.some((f) => f.relPath === SKILL_FILE)) {
+		// e.g. SKILL.md is a symlink (skipped during walk) — index would advertise a non-existent resource.
 		logger.warn({ dirName }, 'skill walk did not include SKILL.md, skipping');
 		return null;
 	}

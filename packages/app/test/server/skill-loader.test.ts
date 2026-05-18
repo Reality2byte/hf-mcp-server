@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { platform } from 'node:os';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadSkills } from '../../src/server/skills/skill-loader.js';
@@ -100,6 +101,23 @@ describe('loadSkills', () => {
 		const catalog = await loadSkills(root);
 		const files = catalog.skills[0]?.files.map((f) => f.relPath) ?? [];
 		expect(files).not.toContain('leak.txt');
+	});
+
+	it('isolates a skill whose file walk fails — other skills still load', async () => {
+		// POSIX-only: chmod the directory to 0 to make readdir throw EACCES.
+		if (platform() === 'win32') return;
+
+		await writeSkill('good', 'good', 'still loads');
+		const badDir = await writeSkill('bad', 'bad', 'will fail walk');
+		await mkdir(path.join(badDir, 'locked'), { recursive: true });
+		await chmod(path.join(badDir, 'locked'), 0o000);
+
+		try {
+			const catalog = await loadSkills(root);
+			expect(catalog.skills.map((s) => s.name).sort()).toEqual(['good']);
+		} finally {
+			await chmod(path.join(badDir, 'locked'), 0o755).catch(() => undefined);
+		}
 	});
 
 	it('skips hidden dotfiles and node_modules inside a skill', async () => {
