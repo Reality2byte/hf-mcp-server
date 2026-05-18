@@ -11,7 +11,6 @@ export interface Skill {
 	description: string;
 	rootDir: string;
 	files: SkillFile[];
-	frontmatter: Record<string, unknown>;
 }
 
 export interface SkillCatalog {

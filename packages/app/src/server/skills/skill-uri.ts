@@ -52,14 +52,3 @@ export function buildSkillUri(skillName: string, relPath: string): string {
 	const normalised = relPath.split(path.sep).join('/');
 	return `skill://${skillName}/${normalised}`;
 }
-
-export function parseSkillUri(uri: string): { skillName: string; relPath: string } | null {
-	if (!uri.startsWith('skill://')) return null;
-	const rest = uri.slice('skill://'.length);
-	const slash = rest.indexOf('/');
-	if (slash <= 0) return null;
-	const skillName = rest.slice(0, slash);
-	const relPath = rest.slice(slash + 1);
-	if (!skillName || !relPath) return null;
-	return { skillName, relPath };
-}

@@ -1,42 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSkillUri, mimeFor, parseSkillUri } from '../../src/server/skills/skill-uri.js';
-
-describe('parseSkillUri', () => {
-	it('parses a valid skill uri', () => {
-		expect(parseSkillUri('skill://my-skill/SKILL.md')).toEqual({
-			skillName: 'my-skill',
-			relPath: 'SKILL.md',
-		});
-	});
-
-	it('parses nested paths', () => {
-		expect(parseSkillUri('skill://my-skill/assets/diagram.png')).toEqual({
-			skillName: 'my-skill',
-			relPath: 'assets/diagram.png',
-		});
-	});
-
-	it('rejects uri with wrong scheme', () => {
-		expect(parseSkillUri('https://example.com/x')).toBeNull();
-		expect(parseSkillUri('file:///etc/passwd')).toBeNull();
-	});
-
-	it('rejects uri with no slash after host', () => {
-		expect(parseSkillUri('skill://only-name')).toBeNull();
-	});
-
-	it('rejects uri with empty skill name', () => {
-		expect(parseSkillUri('skill:///SKILL.md')).toBeNull();
-	});
-
-	it('rejects uri with empty rel path', () => {
-		expect(parseSkillUri('skill://my-skill/')).toBeNull();
-	});
-
-	it('rejects empty string', () => {
-		expect(parseSkillUri('')).toBeNull();
-	});
-});
+import { buildSkillUri, mimeFor } from '../../src/server/skills/skill-uri.js';
 
 describe('buildSkillUri', () => {
 	it('produces a skill uri for a single file', () => {
@@ -45,11 +8,6 @@ describe('buildSkillUri', () => {
 
 	it('normalises backslashes to forward slashes', () => {
 		expect(buildSkillUri('my-skill', 'assets\\diagram.png')).toBe('skill://my-skill/assets/diagram.png');
-	});
-
-	it('round-trips through parseSkillUri', () => {
-		const uri = buildSkillUri('skill-a', 'docs/guide.md');
-		expect(parseSkillUri(uri)).toEqual({ skillName: 'skill-a', relPath: 'docs/guide.md' });
 	});
 });
 

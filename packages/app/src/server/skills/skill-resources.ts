@@ -55,12 +55,10 @@ function registerSkillFile(server: McpServer, skill: Skill, file: Skill['files']
 	);
 }
 
-export function registerSkillResources(server: McpServer, catalog: SkillCatalog): number {
-	let registered = 0;
+export function registerSkillResources(server: McpServer, catalog: SkillCatalog): void {
 	for (const skill of catalog.skills) {
 		for (const file of skill.files) {
 			registerSkillFile(server, skill, file);
-			registered++;
 		}
 	}
 
@@ -77,8 +75,7 @@ export function registerSkillResources(server: McpServer, catalog: SkillCatalog)
 			contents: [{ uri: INDEX_URI, mimeType: 'application/json', text: indexBody }],
 		}),
 	);
-	registered++;
 
-	logger.info({ skills: catalog.skills.length, resources: registered }, 'registered skill resources');
-	return registered;
+	const fileCount = catalog.skills.reduce((acc, s) => acc + s.files.length, 0);
+	logger.info({ skills: catalog.skills.length, resources: fileCount + 1 }, 'registered skill resources');
 }

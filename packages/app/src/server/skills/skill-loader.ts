@@ -49,8 +49,7 @@ async function loadSkill(skillRoot: string, dirName: string): Promise<Skill | nu
 		return null;
 	}
 
-	const parsed = matter(raw);
-	const data = parsed.data as Record<string, unknown>;
+	const { data } = matter(raw);
 	const name = typeof data.name === 'string' ? data.name : undefined;
 	const description = typeof data.description === 'string' ? data.description : undefined;
 
@@ -85,7 +84,6 @@ async function loadSkill(skillRoot: string, dirName: string): Promise<Skill | nu
 		description,
 		rootDir: skillRoot,
 		files,
-		frontmatter: data,
 	};
 }
 
