@@ -5,6 +5,8 @@ import { buildSkillUri } from './skill-uri.js';
 import type { Skill, SkillCatalog } from './skill-types.js';
 
 const INDEX_URI = 'skill://index.json';
+// Tracks the Agent Skills discovery schema version referenced by draft SEP-2640.
+// Bump alongside SEP updates.
 const INDEX_SCHEMA = 'https://schemas.agentskills.io/discovery/0.2.0/schema.json';
 
 interface IndexEntry {

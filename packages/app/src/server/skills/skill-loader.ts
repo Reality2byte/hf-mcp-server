@@ -9,7 +9,7 @@ import type { Skill, SkillCatalog, SkillFile } from './skill-types.js';
 const SKILL_FILE = 'SKILL.md';
 const IGNORE_NAMES = new Set(['node_modules']);
 
-async function walkFiles(skillRoot: string): Promise<SkillFile[]> {
+async function walkFiles(skillDir: string): Promise<SkillFile[]> {
 	const out: SkillFile[] = [];
 
 	async function walk(dir: string): Promise<void> {
@@ -28,19 +28,19 @@ async function walkFiles(skillRoot: string): Promise<SkillFile[]> {
 			if (entry.isDirectory()) {
 				await walk(abs);
 			} else if (entry.isFile()) {
-				const relPath = path.relative(skillRoot, abs).split(path.sep).join('/');
+				const relPath = path.relative(skillDir, abs).split(path.sep).join('/');
 				const { mimeType, isText } = mimeFor(relPath);
 				out.push({ relPath, absPath: abs, mimeType, isText });
 			}
 		}
 	}
 
-	await walk(skillRoot);
+	await walk(skillDir);
 	return out;
 }
 
-async function loadSkill(skillRoot: string, dirName: string): Promise<Skill | null> {
-	const skillMdPath = path.join(skillRoot, SKILL_FILE);
+async function loadSkill(skillDir: string, dirName: string): Promise<Skill | null> {
+	const skillMdPath = path.join(skillDir, SKILL_FILE);
 	let raw: string;
 	try {
 		raw = await fs.readFile(skillMdPath, 'utf8');
@@ -67,7 +67,7 @@ async function loadSkill(skillRoot: string, dirName: string): Promise<Skill | nu
 
 	let files: SkillFile[];
 	try {
-		files = await walkFiles(skillRoot);
+		files = await walkFiles(skillDir);
 	} catch (err) {
 		logger.warn({ dirName, err }, 'skill file walk failed, skipping');
 		return null;
@@ -78,13 +78,7 @@ async function loadSkill(skillRoot: string, dirName: string): Promise<Skill | nu
 		return null;
 	}
 
-	return {
-		name,
-		dirName,
-		description,
-		rootDir: skillRoot,
-		files,
-	};
+	return { name, description, files };
 }
 
 export async function loadSkills(rootDir: string): Promise<SkillCatalog> {
@@ -93,15 +87,15 @@ export async function loadSkills(rootDir: string): Promise<SkillCatalog> {
 		entries = await fs.readdir(rootDir, { withFileTypes: true });
 	} catch (err) {
 		logger.warn({ rootDir, err }, 'skills root not found, skills disabled');
-		return { rootDir, skills: [] };
+		return { skills: [] };
 	}
 
 	const skills: Skill[] = [];
 	const seenNames = new Set<string>();
 	for (const entry of entries) {
 		if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-		const skillRoot = path.join(rootDir, entry.name);
-		const skill = await loadSkill(skillRoot, entry.name);
+		const skillDir = path.join(rootDir, entry.name);
+		const skill = await loadSkill(skillDir, entry.name);
 		if (!skill) continue;
 		if (seenNames.has(skill.name)) {
 			logger.warn({ name: skill.name }, 'duplicate skill name, skipping');
@@ -112,5 +106,5 @@ export async function loadSkills(rootDir: string): Promise<SkillCatalog> {
 	}
 
 	logger.info({ rootDir, count: skills.length }, 'loaded skills');
-	return { rootDir, skills };
+	return { skills };
 }
