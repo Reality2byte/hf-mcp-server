@@ -1,3 +1,0 @@
-[submodule "vendor/hf-skills"]
-	path = vendor/hf-skills
-	url = https://github.com/huggingface/skills
