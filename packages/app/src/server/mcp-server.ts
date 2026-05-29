@@ -3,8 +3,6 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { z } from 'zod';
 import { createRequire } from 'module';
 import { performance } from 'node:perf_hooks';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { whoAmI, type WhoAmI } from '@huggingface/hub';
 import {
 	SpaceSearchTool,
@@ -98,12 +96,10 @@ export const BOUQUET_FALLBACK: AppSettings = {
 
 // Bouquet configurations moved to tool-selection-strategy.ts
 
-// Experimental Skills extension (SEP-2640): vendored at vendor/hf-skills/skills.
-// Resolved relative to the built output (packages/app/dist/server/) -> repo root -> vendor/hf-skills/skills.
-// Override via HF_SKILLS_DIR env var for tests or alternate layouts.
-const SKILLS_DIR =
-	process.env.HF_SKILLS_DIR ??
-	path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../vendor/hf-skills/skills');
+// Experimental Skills extension (SEP-2640).
+// In the deployed Hugging Face Space, mount hf://buckets/huggingface/skills at /mnt/hf-skills.
+// Override via HF_SKILLS_DIR for local tests or alternate layouts.
+const SKILLS_DIR = process.env.HF_SKILLS_DIR ?? '/mnt/hf-skills/skills';
 
 let skillCatalogPromise: Promise<SkillCatalog | null> | null = null;
 const getSkillCatalog = (): Promise<SkillCatalog | null> => {

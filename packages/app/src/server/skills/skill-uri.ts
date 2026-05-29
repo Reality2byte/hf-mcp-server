@@ -49,6 +49,6 @@ export function mimeFor(relPath: string): { mimeType: string; isText: boolean } 
 }
 
 export function buildSkillUri(skillName: string, relPath: string): string {
-	const normalised = relPath.split(path.sep).join('/');
+	const normalised = relPath.replaceAll('\\', '/');
 	return `skill://${skillName}/${normalised}`;
 }

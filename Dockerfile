@@ -13,10 +13,6 @@ COPY packages/app/package.json ./packages/app/
 RUN pnpm install --frozen-lockfile
 
 # Copy source code
-# NOTE: vendor/hf-skills is a git submodule. Builders must run
-#   `git submodule update --init --recursive`
-# before `docker build`, otherwise the skills directory will be empty
-# and the server will start with skills disabled (warning logged).
 COPY . .
 
 
@@ -62,6 +58,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV TRANSPORT=streamableHttpJson
 ENV PORT=3000
+ENV HF_SKILLS_DIR=/mnt/hf-skills/skills
 
 # Expose port
 EXPOSE 3000
