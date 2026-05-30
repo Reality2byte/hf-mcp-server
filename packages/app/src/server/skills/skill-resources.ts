@@ -1,7 +1,10 @@
 import fs from 'node:fs/promises';
+import { gzip } from 'node:zlib';
+import { promisify } from 'node:util';
+import tar from 'tar-stream';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { logger } from '../utils/logger.js';
-import { buildSkillUri } from './skill-uri.js';
+import { buildArchiveUri, buildSkillUri } from './skill-uri.js';
 import type { Skill, SkillCatalog } from './skill-types.js';
 
 const INDEX_URI = 'skill://index.json';
@@ -9,9 +12,14 @@ const INDEX_URI = 'skill://index.json';
 // Bump alongside SEP updates.
 const INDEX_SCHEMA = 'https://schemas.agentskills.io/discovery/0.2.0/schema.json';
 
+const gzipAsync = promisify(gzip);
+// Fixed epoch for tar entry mtimes so a skill's archive bytes are reproducible
+// (independent of file timestamps), which keeps the cached buffer stable.
+const ARCHIVE_MTIME = new Date(0);
+
 interface IndexEntry {
 	name: string;
-	type: 'skill-md';
+	type: 'skill-md' | 'archive';
 	description: string;
 	url: string;
 }
@@ -22,15 +30,85 @@ interface IndexJson {
 }
 
 function buildIndex(catalog: SkillCatalog): IndexJson {
+	// SEP-2640 uses a single-pointer model per entry, so each skill gets two
+	// entries: the `skill-md` pointer (per-file resources, lazy-loaded by
+	// non-shell clients) and an `archive` pointer (one .tar.gz install artifact).
 	return {
 		$schema: INDEX_SCHEMA,
-		skills: catalog.skills.map((s) => ({
-			name: s.name,
-			type: 'skill-md',
-			description: s.description,
-			url: buildSkillUri(s.name, 'SKILL.md'),
-		})),
+		skills: catalog.skills.flatMap((s) => [
+			{
+				name: s.name,
+				type: 'skill-md' as const,
+				description: s.description,
+				url: buildSkillUri(s.name, 'SKILL.md'),
+			},
+			{
+				name: s.name,
+				type: 'archive' as const,
+				description: s.description,
+				url: buildArchiveUri(s.name),
+			},
+		]),
 	};
+}
+
+// Built lazily on first archive read and memoized per Skill. getSkillCatalog()
+// caches the same Skill objects across sessions, so each archive is generated
+// once regardless of how many sessions register resources.
+const archiveCache = new WeakMap<Skill, Promise<Buffer>>();
+
+async function buildSkillArchive(skill: Skill): Promise<Buffer> {
+	const pack = tar.pack();
+	const chunks: Buffer[] = [];
+	pack.on('data', (chunk: Buffer) => chunks.push(chunk));
+	const done = new Promise<void>((resolve, reject) => {
+		pack.on('end', resolve);
+		pack.on('error', reject);
+	});
+
+	for (const file of skill.files) {
+		const buf = await fs.readFile(file.absPath);
+		// `relPath` is relative to the skill dir, so SKILL.md lands at the archive
+		// root as SEP-2640 requires (entries are not nested under the skill name).
+		await new Promise<void>((resolve, reject) => {
+			pack.entry({ name: file.relPath, mode: 0o644, mtime: ARCHIVE_MTIME, type: 'file' }, buf, (err) => {
+				if (err) reject(err);
+				else resolve();
+			});
+		});
+	}
+	pack.finalize();
+	await done;
+
+	// Node's gzip writes a zeroed MTIME header field, so the output is stable.
+	return gzipAsync(Buffer.concat(chunks));
+}
+
+function getSkillArchive(skill: Skill): Promise<Buffer> {
+	let cached = archiveCache.get(skill);
+	if (!cached) {
+		cached = buildSkillArchive(skill);
+		archiveCache.set(skill, cached);
+	}
+	return cached;
+}
+
+function registerSkillArchive(server: McpServer, skill: Skill): void {
+	const uri = buildArchiveUri(skill.name);
+	server.registerResource(
+		`${skill.name}.tar.gz`,
+		uri,
+		{
+			description: skill.description,
+			mimeType: 'application/gzip',
+		},
+		async () => {
+			const buf = await getSkillArchive(skill);
+			return {
+				contents: [{ uri, mimeType: 'application/gzip', blob: buf.toString('base64') }],
+			};
+		},
+	);
 }
 
 function registerSkillFile(server: McpServer, skill: Skill, file: Skill['files'][number]): void {
@@ -62,6 +140,7 @@ export function registerSkillResources(server: McpServer, catalog: SkillCatalog)
 		for (const file of skill.files) {
 			registerSkillFile(server, skill, file);
 		}
+		registerSkillArchive(server, skill);
 	}
 
 	const indexJson = buildIndex(catalog);
@@ -79,5 +158,7 @@ export function registerSkillResources(server: McpServer, catalog: SkillCatalog)
 	);
 
 	const fileCount = catalog.skills.reduce((acc, s) => acc + s.files.length, 0);
-	logger.info({ skills: catalog.skills.length, resources: fileCount + 1 }, 'registered skill resources');
+	// Per-file resources + one .tar.gz archive per skill + the index.json.
+	const resources = fileCount + catalog.skills.length + 1;
+	logger.info({ skills: catalog.skills.length, resources }, 'registered skill resources');
 }
