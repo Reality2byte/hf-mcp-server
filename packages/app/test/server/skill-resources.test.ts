@@ -83,6 +83,23 @@ describe('registerSkillResources', () => {
 		]);
 	});
 
+	it('registers canonical encoded URIs for files that need escaping', async () => {
+		const skillDir = path.join(root, 'with-spaces');
+		await mkdir(path.join(skillDir, 'assets'), { recursive: true });
+		await writeFile(
+			path.join(skillDir, 'SKILL.md'),
+			'---\nname: with-spaces\ndescription: filenames need escaping\n---\n# with spaces\n',
+			'utf8',
+		);
+		await writeFile(path.join(skillDir, 'assets', 'foo bar.png'), Buffer.from([0x89, 0x50]));
+
+		const catalog = await loadSkills(root);
+		const { server, calls } = makeMockServer();
+		registerSkillResources(server, catalog);
+
+		expect(calls.map((c) => c.uri)).toContain('skill://with-spaces/assets/foo%20bar.png');
+	});
+
 	it('returns text content for text files and base64 blobs for binary files', async () => {
 		const skillDir = path.join(root, 'mixed');
 		await mkdir(skillDir, { recursive: true });

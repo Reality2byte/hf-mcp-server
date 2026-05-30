@@ -9,6 +9,10 @@ describe('buildSkillUri', () => {
 	it('normalises backslashes to forward slashes', () => {
 		expect(buildSkillUri('my-skill', 'assets\\diagram.png')).toBe('skill://my-skill/assets/diagram.png');
 	});
+
+	it('encodes skill names and path segments', () => {
+		expect(buildSkillUri('my skill', 'assets/foo bar(1).png')).toBe('skill://my%20skill/assets/foo%20bar(1).png');
+	});
 });
 
 describe('mimeFor', () => {
