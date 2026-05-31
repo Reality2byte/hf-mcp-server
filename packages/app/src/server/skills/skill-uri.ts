@@ -53,10 +53,3 @@ export function buildSkillUri(skillName: string, relPath: string): string {
 	const encodedPath = normalised.split('/').map(encodeURIComponent).join('/');
 	return `skill://${encodeURIComponent(skillName)}/${encodedPath}`;
 }
-
-// SEP-2640 archive entry: the skill-path is the archive URL with the `.tar.gz`
-// suffix stripped, so encode the name the same way as buildSkillUri to stay
-// consistent with the per-file `skill://<name>/...` namespace.
-export function buildArchiveUri(skillName: string): string {
-	return `skill://${encodeURIComponent(skillName)}.tar.gz`;
-}

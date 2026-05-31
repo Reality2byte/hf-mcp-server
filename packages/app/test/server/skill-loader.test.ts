@@ -1,23 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
-import { platform } from 'node:os';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadSkills } from '../../src/server/skills/skill-loader.js';
 
 let root: string;
 
-async function writeSkill(name: string, frontmatterName: string, description: string, extra?: Record<string, string>): Promise<string> {
-	const dir = path.join(root, name);
-	await mkdir(dir, { recursive: true });
-	const body = `---\nname: ${frontmatterName}\ndescription: ${description}\n---\n# ${frontmatterName}\n`;
-	await writeFile(path.join(dir, 'SKILL.md'), body, 'utf8');
-	for (const [rel, content] of Object.entries(extra ?? {})) {
-		const filePath = path.join(dir, rel);
-		await mkdir(path.dirname(filePath), { recursive: true });
-		await writeFile(filePath, content, 'utf8');
-	}
-	return dir;
+async function writeIndex(skills: unknown[]): Promise<void> {
+	await writeFile(
+		path.join(root, 'index.json'),
+		JSON.stringify(
+			{
+				$schema: 'https://schemas.agentskills.io/discovery/0.2.0/schema.json',
+				skills,
+			},
+			null,
+			2,
+		),
+		'utf8',
+	);
 }
 
 beforeEach(async () => {
@@ -29,108 +30,169 @@ afterEach(async () => {
 });
 
 describe('loadSkills', () => {
-	it('loads a skill with matching frontmatter name and walks its files', async () => {
-		await writeSkill('alpha', 'alpha', 'first skill', { 'extra.txt': 'hello' });
+	it('loads skill resources from a prebuilt distribution index', async () => {
+		await mkdir(path.join(root, 'alpha'), { recursive: true });
+		await writeFile(path.join(root, 'alpha', 'SKILL.md'), '# alpha\n', 'utf8');
+		await writeFile(path.join(root, 'beta.tar.gz'), Buffer.from([0x1f, 0x8b]));
+		await writeIndex([
+			{
+				name: 'alpha',
+				type: 'skill-md',
+				description: 'first skill',
+				url: 'skill://alpha/SKILL.md',
+				digest: 'sha256:abc',
+			},
+			{
+				name: 'beta',
+				type: 'archive',
+				description: 'second skill',
+				url: 'skill://beta.tar.gz',
+			},
+		]);
 
 		const catalog = await loadSkills(root);
 
-		expect(catalog.skills).toHaveLength(1);
-		const skill = catalog.skills[0];
-		expect(skill.name).toBe('alpha');
-		expect(skill.description).toBe('first skill');
-		expect(skill.files.map((f) => f.relPath).sort()).toEqual(['SKILL.md', 'extra.txt']);
+		expect(catalog.indexPath).toBe(path.join(root, 'index.json'));
+		expect(catalog.indexText).toContain('agentskills');
+		expect(catalog.skills).toMatchObject([
+			{
+				name: 'alpha',
+				type: 'skill-md',
+				description: 'first skill',
+				url: 'skill://alpha/SKILL.md',
+				digest: 'sha256:abc',
+				mimeType: 'text/markdown',
+				isText: true,
+			},
+			{
+				name: 'beta',
+				type: 'archive',
+				description: 'second skill',
+				url: 'skill://beta.tar.gz',
+				mimeType: 'application/gzip',
+				isText: false,
+			},
+		]);
 	});
 
-	it('returns an empty catalog when the root does not exist', async () => {
+	it('loads compatibility file resources from the sibling source skills tree', async () => {
+		const bucketRoot = path.join(root, 'bucket');
+		const distributionRoot = path.join(bucketRoot, 'distribution', 'latest');
+		const sourceSkillRoot = path.join(bucketRoot, 'skills', 'alpha');
+		await mkdir(path.join(distributionRoot, 'alpha'), { recursive: true });
+		await mkdir(path.join(sourceSkillRoot, 'assets'), { recursive: true });
+		await writeFile(path.join(distributionRoot, 'alpha', 'SKILL.md'), '# alpha distribution\n', 'utf8');
+		await writeFile(path.join(sourceSkillRoot, 'SKILL.md'), '# alpha source\n', 'utf8');
+		await writeFile(path.join(sourceSkillRoot, 'assets', 'diagram.png'), Buffer.from([0x89, 0x50]));
+		await writeFile(
+			path.join(distributionRoot, 'index.json'),
+			JSON.stringify({
+				skills: [
+					{
+						name: 'alpha',
+						type: 'skill-md',
+						description: 'first skill',
+						url: 'skill://alpha/SKILL.md',
+					},
+				],
+			}),
+			'utf8',
+		);
+
+		const catalog = await loadSkills(distributionRoot);
+
+		expect(catalog.skills.map((s) => s.url)).toEqual(['skill://alpha/SKILL.md']);
+		expect(catalog.compatibilityFiles.map((f) => f.url).sort()).toEqual([
+			'skill://alpha/SKILL.md',
+			'skill://alpha/assets/diagram.png',
+		]);
+		expect(catalog.compatibilityFiles.find((f) => f.url.endsWith('diagram.png'))).toMatchObject({
+			resourceName: 'alpha/assets/diagram.png',
+			mimeType: 'image/png',
+			isText: false,
+		});
+	});
+
+	it('returns an empty catalog when the index does not exist', async () => {
 		const catalog = await loadSkills(path.join(root, 'does-not-exist'));
 		expect(catalog.skills).toEqual([]);
+		expect(catalog.compatibilityFiles).toEqual([]);
 	});
 
-	it('skips directories without SKILL.md', async () => {
-		await mkdir(path.join(root, 'no-skill'), { recursive: true });
-		await writeSkill('has-skill', 'has-skill', 'ok');
-
-		const catalog = await loadSkills(root);
-
-		expect(catalog.skills.map((s) => s.name)).toEqual(['has-skill']);
-	});
-
-	it('skips skills missing required frontmatter fields', async () => {
-		const dir = path.join(root, 'bad');
-		await mkdir(dir, { recursive: true });
-		await writeFile(path.join(dir, 'SKILL.md'), '---\nname: bad\n---\nno description\n', 'utf8');
+	it('returns an empty catalog when the index is invalid JSON', async () => {
+		await writeFile(path.join(root, 'index.json'), '{nope', 'utf8');
 
 		const catalog = await loadSkills(root);
 
 		expect(catalog.skills).toEqual([]);
 	});
 
-	it('rejects skills whose frontmatter name does not match the directory', async () => {
-		await writeSkill('alpha', 'something-else', 'mismatched');
+	it('skips invalid entries and missing resource files', async () => {
+		await mkdir(path.join(root, 'valid'), { recursive: true });
+		await writeFile(path.join(root, 'valid', 'SKILL.md'), '# valid\n', 'utf8');
+		await writeIndex([
+			{
+				name: 'valid',
+				type: 'skill-md',
+				description: 'ok',
+				url: 'skill://valid/SKILL.md',
+			},
+			{
+				name: 'missing',
+				type: 'archive',
+				description: 'not present',
+				url: 'skill://missing.tar.gz',
+			},
+			{
+				name: 'bad',
+				type: 'unknown',
+				description: 'bad type',
+				url: 'skill://bad/SKILL.md',
+			},
+		]);
+
+		const catalog = await loadSkills(root);
+
+		expect(catalog.skills.map((s) => s.name)).toEqual(['valid']);
+	});
+
+	it('rejects skill URLs that escape the distribution root', async () => {
+		await writeFile(path.join(root, 'outside.md'), '# outside\n', 'utf8');
+		await writeIndex([
+			{
+				name: 'escape',
+				type: 'skill-md',
+				description: 'bad path',
+				url: 'skill://../outside.md',
+			},
+		]);
 
 		const catalog = await loadSkills(root);
 
 		expect(catalog.skills).toEqual([]);
 	});
 
-	it('dedupes by skill name when two directories share the same frontmatter name', async () => {
-		// Both directories must use frontmatter name matching dirName (SEP requirement),
-		// so collisions only happen across distinct directories with distinct names —
-		// but if a future loosening allowed the same `name:` twice, dedup should still work.
-		await writeSkill('alpha', 'alpha', 'one');
-		await writeSkill('alpha-copy', 'alpha-copy', 'two');
-
-		const catalog = await loadSkills(root);
-
-		expect(catalog.skills.map((s) => s.name).sort()).toEqual(['alpha', 'alpha-copy']);
-	});
-
-	it('skips symlinked files inside a skill directory', async () => {
-		const skillDir = await writeSkill('safe', 'safe', 'no traversal');
-		const outside = path.join(root, 'outside.txt');
-		await writeFile(outside, 'secret', 'utf8');
-
+	it('skips symlinked resource files', async () => {
+		const target = path.join(root, 'target.md');
+		const link = path.join(root, 'linked.md');
+		await writeFile(target, '# target\n', 'utf8');
 		try {
-			await symlink(outside, path.join(skillDir, 'leak.txt'));
+			await symlink(target, link);
 		} catch (err) {
-			// Windows without dev mode / admin cannot create symlinks — skip rather than fail
 			if ((err as NodeJS.ErrnoException).code === 'EPERM') return;
 			throw err;
 		}
+		await writeIndex([
+			{
+				name: 'linked',
+				type: 'skill-md',
+				description: 'symlink',
+				url: 'skill://linked.md',
+			},
+		]);
 
 		const catalog = await loadSkills(root);
-		const files = catalog.skills[0]?.files.map((f) => f.relPath) ?? [];
-		expect(files).not.toContain('leak.txt');
-	});
 
-	it('isolates a skill whose file walk fails — other skills still load', async () => {
-		// POSIX-only: chmod the directory to 0 to make readdir throw EACCES.
-		if (platform() === 'win32') return;
-
-		await writeSkill('good', 'good', 'still loads');
-		const badDir = await writeSkill('bad', 'bad', 'will fail walk');
-		await mkdir(path.join(badDir, 'locked'), { recursive: true });
-		await chmod(path.join(badDir, 'locked'), 0o000);
-
-		try {
-			const catalog = await loadSkills(root);
-			expect(catalog.skills.map((s) => s.name).sort()).toEqual(['good']);
-		} finally {
-			await chmod(path.join(badDir, 'locked'), 0o755).catch(() => undefined);
-		}
-	});
-
-	it('skips hidden dotfiles and node_modules inside a skill', async () => {
-		const dir = await writeSkill('with-junk', 'with-junk', 'has noise', {
-			'.hidden': 'x',
-			'node_modules/pkg/index.js': 'module.exports = {}',
-			'real.txt': 'keep me',
-		});
-		// touch dir so lint doesn't complain about unused
-		void dir;
-
-		const catalog = await loadSkills(root);
-		const files = catalog.skills[0].files.map((f) => f.relPath).sort();
-		expect(files).toEqual(['SKILL.md', 'real.txt']);
+		expect(catalog.skills).toEqual([]);
 	});
 });

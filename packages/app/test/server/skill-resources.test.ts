@@ -1,9 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { gunzipSync } from 'node:zlib';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import tar from 'tar-stream';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { loadSkills } from '../../src/server/skills/skill-loader.js';
 import { registerSkillResources } from '../../src/server/skills/skill-resources.js';
@@ -33,24 +31,34 @@ function makeMockServer(): { server: McpServer; calls: Registration[] } {
 	return { server, calls };
 }
 
-function extractTar(tarBytes: Buffer): Promise<Record<string, string>> {
-	return new Promise((resolve, reject) => {
-		const out: Record<string, string> = {};
-		const extract = tar.extract();
-		extract.on('entry', (header, stream, next) => {
-			const parts: Buffer[] = [];
-			stream.on('data', (c: Buffer) => parts.push(c));
-			stream.on('end', () => {
-				out[header.name] = Buffer.concat(parts).toString('utf8');
-				next();
-			});
-			stream.on('error', reject);
-			stream.resume();
-		});
-		extract.on('finish', () => resolve(out));
-		extract.on('error', reject);
-		extract.end(tarBytes);
-	});
+async function writeIndex(root: string): Promise<void> {
+	await writeFile(
+		path.join(root, 'index.json'),
+		JSON.stringify(
+			{
+				$schema: 'https://schemas.agentskills.io/discovery/0.2.0/schema.json',
+				skills: [
+					{
+						name: 'alpha',
+						type: 'skill-md',
+						description: 'first skill',
+						url: 'skill://alpha/SKILL.md',
+						digest: 'sha256:alpha',
+					},
+					{
+						name: 'beta',
+						type: 'archive',
+						description: 'archive skill',
+						url: 'skill://beta.tar.gz',
+						digest: 'sha256:beta',
+					},
+				],
+			},
+			null,
+			2,
+		),
+		'utf8',
+	);
 }
 
 let root: string;
@@ -64,150 +72,106 @@ afterEach(async () => {
 });
 
 describe('registerSkillResources', () => {
-	it('registers every skill file plus a skill://index.json discovery resource', async () => {
-		const skillDir = path.join(root, 'alpha');
-		await mkdir(skillDir, { recursive: true });
-		await writeFile(
-			path.join(skillDir, 'SKILL.md'),
-			'---\nname: alpha\ndescription: first skill\n---\n# alpha\n',
-			'utf8',
-		);
-		await writeFile(path.join(skillDir, 'notes.txt'), 'hello text', 'utf8');
-		await writeFile(path.join(skillDir, 'pic.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]));
+	it('registers the prebuilt index and each referenced distribution file', async () => {
+		await mkdir(path.join(root, 'alpha'), { recursive: true });
+		await writeFile(path.join(root, 'alpha', 'SKILL.md'), '# alpha\n', 'utf8');
+		await writeFile(path.join(root, 'beta.tar.gz'), Buffer.from([0x1f, 0x8b, 0x08]));
+		await writeIndex(root);
 
 		const catalog = await loadSkills(root);
 		const { server, calls } = makeMockServer();
 		registerSkillResources(server, catalog);
 
 		expect(calls.map((c) => c.uri).sort()).toEqual([
-			'skill://alpha.tar.gz',
 			'skill://alpha/SKILL.md',
-			'skill://alpha/notes.txt',
-			'skill://alpha/pic.png',
+			'skill://beta.tar.gz',
 			'skill://index.json',
 		]);
 
 		const skillMdReg = calls.find((c) => c.uri === 'skill://alpha/SKILL.md')!;
+		expect(skillMdReg.name).toBe('alpha');
 		expect(skillMdReg.metadata.description).toBe('first skill');
 		expect(skillMdReg.metadata.mimeType).toBe('text/markdown');
+
+		const archiveReg = calls.find((c) => c.uri === 'skill://beta.tar.gz')!;
+		expect(archiveReg.name).toBe('beta.tar.gz');
+		expect(archiveReg.metadata.description).toBe('archive skill');
+		expect(archiveReg.metadata.mimeType).toBe('application/gzip');
+	});
+
+	it('registers source-tree files as a clearly separate compatibility resource surface', async () => {
+		const bucketRoot = path.join(root, 'bucket');
+		const distributionRoot = path.join(bucketRoot, 'distribution', 'latest');
+		const sourceSkillRoot = path.join(bucketRoot, 'skills', 'alpha');
+		await mkdir(path.join(distributionRoot, 'alpha'), { recursive: true });
+		await mkdir(path.join(sourceSkillRoot, 'assets'), { recursive: true });
+		await writeFile(path.join(distributionRoot, 'alpha', 'SKILL.md'), '# alpha distribution\n', 'utf8');
+		await writeFile(path.join(distributionRoot, 'beta.tar.gz'), Buffer.from([0x1f, 0x8b, 0x08]));
+		await writeFile(path.join(sourceSkillRoot, 'SKILL.md'), '# alpha source\n', 'utf8');
+		await writeFile(path.join(sourceSkillRoot, 'assets', 'notes.txt'), 'compat notes', 'utf8');
+		await writeIndex(distributionRoot);
+
+		const catalog = await loadSkills(distributionRoot);
+		const { server, calls } = makeMockServer();
+		registerSkillResources(server, catalog);
+
+		expect(calls.map((c) => c.uri).sort()).toEqual([
+			'skill://alpha/SKILL.md',
+			'skill://alpha/assets/notes.txt',
+			'skill://beta.tar.gz',
+			'skill://index.json',
+		]);
+
+		const skillMdRegs = calls.filter((c) => c.uri === 'skill://alpha/SKILL.md');
+		expect(skillMdRegs).toHaveLength(1);
+
+		const notes = calls.find((c) => c.uri === 'skill://alpha/assets/notes.txt')!;
+		expect(notes.name).toBe('alpha/assets/notes.txt');
+		expect(notes.metadata.description).toBeUndefined();
+		const notesBody = (await notes.handler()).contents[0];
+		expect(notesBody.mimeType).toBe('text/plain');
+		expect(notesBody.text).toBe('compat notes');
+	});
+
+	it('serves index.json exactly as provided by the distribution', async () => {
+		await mkdir(path.join(root, 'alpha'), { recursive: true });
+		await writeFile(path.join(root, 'alpha', 'SKILL.md'), '# alpha\n', 'utf8');
+		await writeFile(path.join(root, 'beta.tar.gz'), Buffer.from([0x1f, 0x8b, 0x08]));
+		await writeIndex(root);
+
+		const catalog = await loadSkills(root);
+		const { server, calls } = makeMockServer();
+		registerSkillResources(server, catalog);
 
 		const index = calls.find((c) => c.uri === 'skill://index.json')!;
 		const indexBody = (await index.handler()).contents[0];
 		expect(indexBody.mimeType).toBe('application/json');
-		const parsed = JSON.parse(indexBody.text ?? '');
-		expect(parsed.$schema).toMatch(/agentskills/);
-		expect(parsed.skills).toEqual([
-			{
-				name: 'alpha',
-				type: 'skill-md',
-				description: 'first skill',
-				url: 'skill://alpha/SKILL.md',
-			},
-			{
-				name: 'alpha',
-				type: 'archive',
-				description: 'first skill',
-				url: 'skill://alpha.tar.gz',
-			},
-		]);
+		expect(indexBody.text).toBe(catalog.indexText);
+		expect(indexBody.blob).toBeUndefined();
 	});
 
-	it('registers canonical encoded URIs for files that need escaping', async () => {
-		const skillDir = path.join(root, 'with-spaces');
-		await mkdir(path.join(skillDir, 'assets'), { recursive: true });
-		await writeFile(
-			path.join(skillDir, 'SKILL.md'),
-			'---\nname: with-spaces\ndescription: filenames need escaping\n---\n# with spaces\n',
-			'utf8',
-		);
-		await writeFile(path.join(skillDir, 'assets', 'foo bar.png'), Buffer.from([0x89, 0x50]));
+	it('returns text content for skill-md resources and base64 blobs for archives', async () => {
+		const skillMd = '# alpha\n';
+		const archiveBytes = Buffer.from([0x1f, 0x8b, 0x08]);
+		await mkdir(path.join(root, 'alpha'), { recursive: true });
+		await writeFile(path.join(root, 'alpha', 'SKILL.md'), skillMd, 'utf8');
+		await writeFile(path.join(root, 'beta.tar.gz'), archiveBytes);
+		await writeIndex(root);
 
 		const catalog = await loadSkills(root);
 		const { server, calls } = makeMockServer();
 		registerSkillResources(server, catalog);
 
-		expect(calls.map((c) => c.uri)).toContain('skill://with-spaces/assets/foo%20bar.png');
-	});
+		const skillMdReg = calls.find((c) => c.uri === 'skill://alpha/SKILL.md')!;
+		const skillMdBody = (await skillMdReg.handler()).contents[0];
+		expect(skillMdBody.mimeType).toBe('text/markdown');
+		expect(skillMdBody.text).toBe(skillMd);
+		expect(skillMdBody.blob).toBeUndefined();
 
-	it('serves a gzipped tar archive per skill with SKILL.md at the archive root', async () => {
-		const skillDir = path.join(root, 'alpha');
-		await mkdir(path.join(skillDir, 'scripts'), { recursive: true });
-		const skillMd = '---\nname: alpha\ndescription: first skill\n---\n# alpha\n';
-		await writeFile(path.join(skillDir, 'SKILL.md'), skillMd, 'utf8');
-		await writeFile(path.join(skillDir, 'scripts', 'run.py'), 'print("hi")\n', 'utf8');
-
-		const catalog = await loadSkills(root);
-		const { server, calls } = makeMockServer();
-		registerSkillResources(server, catalog);
-
-		const archive = calls.find((c) => c.uri === 'skill://alpha.tar.gz')!;
-		expect(archive.metadata.mimeType).toBe('application/gzip');
-
-		const content = (await archive.handler()).contents[0];
-		expect(content.mimeType).toBe('application/gzip');
-		expect(content.text).toBeUndefined();
-		expect(content.blob).toBeDefined();
-
-		const tarBytes = gunzipSync(Buffer.from(content.blob!, 'base64'));
-		const entries = await extractTar(tarBytes);
-		// SKILL.md at the archive root (not nested under the skill name), per SEP-2640.
-		expect(entries['SKILL.md']).toBe(skillMd);
-		expect(entries['scripts/run.py']).toBe('print("hi")\n');
-	});
-
-	it('does not emit an archive for a single-file skill (SKILL.md only)', async () => {
-		const skillDir = path.join(root, 'solo');
-		await mkdir(skillDir, { recursive: true });
-		await writeFile(
-			path.join(skillDir, 'SKILL.md'),
-			'---\nname: solo\ndescription: just a skill md\n---\n# solo\n',
-			'utf8',
-		);
-
-		const catalog = await loadSkills(root);
-		const { server, calls } = makeMockServer();
-		registerSkillResources(server, catalog);
-
-		expect(calls.some((c) => c.uri === 'skill://solo.tar.gz')).toBe(false);
-
-		const index = calls.find((c) => c.uri === 'skill://index.json')!;
-		const parsed = JSON.parse((await index.handler()).contents[0].text ?? '');
-		expect(parsed.skills).toEqual([
-			{
-				name: 'solo',
-				type: 'skill-md',
-				description: 'just a skill md',
-				url: 'skill://solo/SKILL.md',
-			},
-		]);
-	});
-
-	it('returns text content for text files and base64 blobs for binary files', async () => {
-		const skillDir = path.join(root, 'mixed');
-		await mkdir(skillDir, { recursive: true });
-		await writeFile(
-			path.join(skillDir, 'SKILL.md'),
-			'---\nname: mixed\ndescription: text + binary\n---\n# mixed\n',
-			'utf8',
-		);
-		await writeFile(path.join(skillDir, 'note.txt'), 'plain text body', 'utf8');
-		const binBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-		await writeFile(path.join(skillDir, 'pic.png'), binBytes);
-
-		const catalog = await loadSkills(root);
-		const { server, calls } = makeMockServer();
-		registerSkillResources(server, catalog);
-
-		const txt = calls.find((c) => c.uri === 'skill://mixed/note.txt')!;
-		const txtBody = (await txt.handler()).contents[0];
-		expect(txtBody.mimeType).toBe('text/plain');
-		expect(txtBody.text).toBe('plain text body');
-		expect(txtBody.blob).toBeUndefined();
-
-		const png = calls.find((c) => c.uri === 'skill://mixed/pic.png')!;
-		const pngBody = (await png.handler()).contents[0];
-		expect(pngBody.mimeType).toBe('image/png');
-		expect(pngBody.text).toBeUndefined();
-		expect(pngBody.blob).toBe(binBytes.toString('base64'));
+		const archiveReg = calls.find((c) => c.uri === 'skill://beta.tar.gz')!;
+		const archiveBody = (await archiveReg.handler()).contents[0];
+		expect(archiveBody.mimeType).toBe('application/gzip');
+		expect(archiveBody.text).toBeUndefined();
+		expect(archiveBody.blob).toBe(archiveBytes.toString('base64'));
 	});
 });

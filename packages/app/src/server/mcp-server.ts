@@ -99,7 +99,7 @@ export const BOUQUET_FALLBACK: AppSettings = {
 // Experimental Skills extension (SEP-2640).
 // In the deployed Hugging Face Space, mount hf://buckets/huggingface/skills at /mnt/hf-skills.
 // Override via HF_SKILLS_DIR for local tests or alternate layouts.
-const SKILLS_DIR = process.env.HF_SKILLS_DIR ?? '/mnt/hf-skills/skills';
+const SKILLS_DIR = process.env.HF_SKILLS_DIR ?? '/mnt/hf-skills/distribution/latest';
 
 let skillCatalogPromise: Promise<SkillCatalog | null> | null = null;
 const getSkillCatalog = (): Promise<SkillCatalog | null> => {
