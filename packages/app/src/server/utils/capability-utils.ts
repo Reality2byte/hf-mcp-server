@@ -48,6 +48,10 @@ export function registerCapabilities(
 		...(advertiseResources
 			? {
 					resources: {
+						// We do not support resource subscriptions (skills are static —
+						// nothing to notify `resources/updated` about). Advertise explicitly
+						// rather than relying on omission.
+						subscribe: false,
 						listChanged: false,
 					},
 				}

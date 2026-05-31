@@ -19,9 +19,16 @@ import { buildOAuthResourceHeader } from '../utils/oauth-resource.js';
 import { randomUUID } from 'node:crypto';
 import { logSystemEvent } from '../utils/query-logger.js';
 import { rewriteLegacySearchToolCallRequest } from '../utils/repo-search-shim.js';
+import { isClientDenied } from '../../shared/client-denylist.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Resource methods that build the full server and thus expose the Skills surface.
+const RESOURCE_METHODS = new Set(['resources/list', 'resources/read', 'resources/templates/list']);
+// Resource-subscription methods we never support (skills are static — nothing to
+// notify `resources/updated` about). Rejected cheaply before any server is built.
+const UNSUPPORTED_SUBSCRIBE_METHODS = new Set(['resources/subscribe', 'resources/unsubscribe']);
 
 // Analytics session without server (server is null in analytics mode)
 interface AnalyticsSession {
@@ -62,7 +69,7 @@ export class StatelessHttpTransport extends BaseTransport {
 	 * Determines if a request should be handled by the full server
 	 * or can be handled by the stub responder
 	 */
-	private shouldHandle(requestBody: unknown, _clientName?: string): boolean {
+	private shouldHandle(requestBody: unknown, clientName?: string, userAgent?: string): boolean {
 		const body = requestBody as { method?: string } | undefined;
 		const method = body?.method;
 
@@ -78,6 +85,12 @@ export class StatelessHttpTransport extends BaseTransport {
 		]);
 
 		if (method && methodsRequiringFullServer.has(method)) {
+			// Denied clients (e.g. cursor-vscode flooding the resource surface) get no
+			// resources: route their resource list/read to the stub responder so the
+			// full Skills server is never built for them.
+			if (RESOURCE_METHODS.has(method) && isClientDenied(clientName, userAgent)) {
+				return false;
+			}
 			return true;
 		}
 
@@ -155,6 +168,17 @@ export class StatelessHttpTransport extends BaseTransport {
 			| undefined;
 
 		const trackingName = this.extractMethodForTracking(requestBody);
+
+		// Resource subscriptions are never supported (skills are static). Reject these
+		// cheaply before building any server — cursor-vscode floods `resources/subscribe`.
+		const rpcMethod = requestBody?.method;
+		if (rpcMethod && UNSUPPORTED_SUBSCRIBE_METHODS.has(rpcMethod)) {
+			this.trackMethodCall(trackingName, startTime, false);
+			res.status(200).json(
+				JsonRpcErrors.methodNotFound(extractJsonRpcId(req.body), `${rpcMethod} is not supported`)
+			);
+			return;
+		}
 
 		const authResult = await this.validateAuthAndTrackMetrics(headers);
 		if (!authResult.shouldContinue || trackingName === 'tools/call:Authenticate') {
@@ -297,8 +321,8 @@ export class StatelessHttpTransport extends BaseTransport {
 				clientInfo = extractedClientInfo;
 			}
 
-			// Determine which server to use, passing client name for resource method filtering
-			const useFullServer = this.shouldHandle(requestBody, clientInfo?.name);
+			// Determine which server to use, passing client name + user-agent for resource method filtering
+			const useFullServer = this.shouldHandle(requestBody, clientInfo?.name, headers['user-agent']);
 			let directResponse = true;
 
 			if (useFullServer) {
