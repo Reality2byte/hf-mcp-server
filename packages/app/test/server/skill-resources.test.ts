@@ -155,6 +155,33 @@ describe('registerSkillResources', () => {
 		expect(entries['scripts/run.py']).toBe('print("hi")\n');
 	});
 
+	it('does not emit an archive for a single-file skill (SKILL.md only)', async () => {
+		const skillDir = path.join(root, 'solo');
+		await mkdir(skillDir, { recursive: true });
+		await writeFile(
+			path.join(skillDir, 'SKILL.md'),
+			'---\nname: solo\ndescription: just a skill md\n---\n# solo\n',
+			'utf8',
+		);
+
+		const catalog = await loadSkills(root);
+		const { server, calls } = makeMockServer();
+		registerSkillResources(server, catalog);
+
+		expect(calls.some((c) => c.uri === 'skill://solo.tar.gz')).toBe(false);
+
+		const index = calls.find((c) => c.uri === 'skill://index.json')!;
+		const parsed = JSON.parse((await index.handler()).contents[0].text ?? '');
+		expect(parsed.skills).toEqual([
+			{
+				name: 'solo',
+				type: 'skill-md',
+				description: 'just a skill md',
+				url: 'skill://solo/SKILL.md',
+			},
+		]);
+	});
+
 	it('returns text content for text files and base64 blobs for binary files', async () => {
 		const skillDir = path.join(root, 'mixed');
 		await mkdir(skillDir, { recursive: true });

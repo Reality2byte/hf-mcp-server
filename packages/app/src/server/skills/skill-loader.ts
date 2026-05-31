@@ -30,7 +30,7 @@ async function walkFiles(skillDir: string): Promise<SkillFile[]> {
 			} else if (entry.isFile()) {
 				const relPath = path.relative(skillDir, abs).split(path.sep).join('/');
 				const { mimeType, isText } = mimeFor(relPath);
-				out.push({ relPath, absPath: abs, mimeType, isText });
+				out.push({ relPath, absPath: abs, mimeType, isText, mode: lst.mode });
 			}
 		}
 	}

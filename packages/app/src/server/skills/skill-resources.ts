@@ -29,26 +29,38 @@ interface IndexJson {
 	skills: IndexEntry[];
 }
 
+// A skill is worth archiving only when it ships more than just SKILL.md; a
+// single-file skill is already fully covered by its skill-md resource.
+function isMultiFile(skill: Skill): boolean {
+	return skill.files.length > 1;
+}
+
 function buildIndex(catalog: SkillCatalog): IndexJson {
-	// SEP-2640 uses a single-pointer model per entry, so each skill gets two
-	// entries: the `skill-md` pointer (per-file resources, lazy-loaded by
-	// non-shell clients) and an `archive` pointer (one .tar.gz install artifact).
+	// SEP-2640 uses a single-pointer model per entry. Every skill gets a
+	// `skill-md` entry (per-file resources, lazy-loaded by non-shell clients);
+	// multi-file skills additionally get an `archive` entry (one .tar.gz install
+	// artifact for shell-enabled agents).
 	return {
 		$schema: INDEX_SCHEMA,
-		skills: catalog.skills.flatMap((s) => [
-			{
-				name: s.name,
-				type: 'skill-md' as const,
-				description: s.description,
-				url: buildSkillUri(s.name, 'SKILL.md'),
-			},
-			{
-				name: s.name,
-				type: 'archive' as const,
-				description: s.description,
-				url: buildArchiveUri(s.name),
-			},
-		]),
+		skills: catalog.skills.flatMap((s) => {
+			const entries: IndexEntry[] = [
+				{
+					name: s.name,
+					type: 'skill-md',
+					description: s.description,
+					url: buildSkillUri(s.name, 'SKILL.md'),
+				},
+			];
+			if (isMultiFile(s)) {
+				entries.push({
+					name: s.name,
+					type: 'archive',
+					description: s.description,
+					url: buildArchiveUri(s.name),
+				});
+			}
+			return entries;
+		}),
 	};
 }
 
@@ -68,10 +80,14 @@ async function buildSkillArchive(skill: Skill): Promise<Buffer> {
 
 	for (const file of skill.files) {
 		const buf = await fs.readFile(file.absPath);
+		// Preserve the executable bit (normalised to 0o755/0o644 so the bytes stay
+		// deterministic regardless of the source umask) — a skill may ship runnable
+		// scripts that a shell agent installs from the archive.
+		const mode = (file.mode & 0o111) !== 0 ? 0o755 : 0o644;
 		// `relPath` is relative to the skill dir, so SKILL.md lands at the archive
 		// root as SEP-2640 requires (entries are not nested under the skill name).
 		await new Promise<void>((resolve, reject) => {
-			pack.entry({ name: file.relPath, mode: 0o644, mtime: ARCHIVE_MTIME, type: 'file' }, buf, (err) => {
+			pack.entry({ name: file.relPath, mode, mtime: ARCHIVE_MTIME, type: 'file' }, buf, (err) => {
 				if (err) reject(err);
 				else resolve();
 			});
@@ -140,7 +156,9 @@ export function registerSkillResources(server: McpServer, catalog: SkillCatalog)
 		for (const file of skill.files) {
 			registerSkillFile(server, skill, file);
 		}
-		registerSkillArchive(server, skill);
+		if (isMultiFile(skill)) {
+			registerSkillArchive(server, skill);
+		}
 	}
 
 	const indexJson = buildIndex(catalog);
@@ -158,7 +176,8 @@ export function registerSkillResources(server: McpServer, catalog: SkillCatalog)
 	);
 
 	const fileCount = catalog.skills.reduce((acc, s) => acc + s.files.length, 0);
-	// Per-file resources + one .tar.gz archive per skill + the index.json.
-	const resources = fileCount + catalog.skills.length + 1;
+	const archiveCount = catalog.skills.filter(isMultiFile).length;
+	// Per-file resources + one .tar.gz archive per multi-file skill + the index.json.
+	const resources = fileCount + archiveCount + 1;
 	logger.info({ skills: catalog.skills.length, resources }, 'registered skill resources');
 }
