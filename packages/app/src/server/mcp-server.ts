@@ -84,6 +84,9 @@ import { hasReadmeFlag } from '../shared/behavior-flags.js';
 import { registerCapabilities } from './utils/capability-utils.js';
 import { createGradioWidgetResourceConfig } from './resources/gradio-widget-resource.js';
 import { applyResultPostProcessing, type GradioToolCallOptions } from './utils/gradio-tool-caller.js';
+import { loadSkills } from './skills/skill-loader.js';
+import { registerSkillResources } from './skills/skill-resources.js';
+import type { SkillCatalog } from './skills/skill-types.js';
 
 // Fallback settings when API fails (enables all tools)
 export const BOUQUET_FALLBACK: AppSettings = {
@@ -92,6 +95,22 @@ export const BOUQUET_FALLBACK: AppSettings = {
 };
 
 // Bouquet configurations moved to tool-selection-strategy.ts
+
+// Experimental Skills extension (SEP-2640).
+// In the deployed Hugging Face Space, mount hf://buckets/huggingface/skills at /mnt/hf-skills.
+// Override via HF_SKILLS_DIR for local tests or alternate layouts.
+const SKILLS_DIR = process.env.HF_SKILLS_DIR ?? '/mnt/hf-skills/distribution/latest';
+
+let skillCatalogPromise: Promise<SkillCatalog | null> | null = null;
+const getSkillCatalog = (): Promise<SkillCatalog | null> => {
+	if (!skillCatalogPromise) {
+		skillCatalogPromise = loadSkills(SKILLS_DIR).catch((err) => {
+			logger.warn({ err, SKILLS_DIR }, 'failed to load skills, skills disabled');
+			return null;
+		});
+	}
+	return skillCatalogPromise;
+};
 
 /**
  * Creates a ServerFactory function that produces McpServer instances with all tools registered
@@ -200,6 +219,10 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 				throw error;
 			}
 		};
+
+		// Load the experimental skills catalog (cached across sessions). Failure leaves it null and disables skills.
+		const skillCatalog = await getSkillCatalog();
+		const hasSkills = !!skillCatalog?.skills.length;
 
 		/**
 		 *  we will set capabilities below. use of the convenience .tool() registration methods automatically
@@ -1096,6 +1119,11 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			}));
 		}
 
+		// Register Skills (SEP-2640) — `skill://` resources + `skill://index.json`.
+		if (skillCatalog && hasSkills) {
+			registerSkillResources(server, skillCatalog);
+		}
+
 		// Declare the function to apply tool states (we only need to call it if we are
 		// applying the tool states either because we have a Gradio tool call (grNN_) or
 		// we are responding to a ListToolsRequest). This also helps if there is a
@@ -1129,6 +1157,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 
 		registerCapabilities(server, sharedApiClient, {
 			hasResources: sessionInfo?.clientInfo?.name === 'openai-mcp',
+			hasSkills,
 		});
 
 		if (!skipGradio) {

@@ -272,6 +272,14 @@ export abstract class BaseTransport {
 			}
 		}
 
+		// For resources/read, extract the resource URI as well.
+		if (methodName === 'resources/read' && body?.params && typeof body.params === 'object' && 'uri' in body.params) {
+			const resourceUri = body.params.uri;
+			if (typeof resourceUri === 'string') {
+				return `resources/read:${resourceUri}`;
+			}
+		}
+
 		return methodName;
 	}
 
