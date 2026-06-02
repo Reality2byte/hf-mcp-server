@@ -1,13 +1,10 @@
 import fs from 'node:fs/promises';
-import type { Dirent } from 'node:fs';
 import path from 'node:path';
 import { logger } from '../utils/logger.js';
-import { buildSkillUri, mimeFor } from './skill-uri.js';
-import type { SkillCatalog, SkillCompatibilityFile, SkillResource, SkillResourceType } from './skill-types.js';
+import { mimeFor } from './skill-uri.js';
+import type { SkillCatalog, SkillResource, SkillResourceType } from './skill-types.js';
 
 const INDEX_FILE = 'index.json';
-const SOURCE_SKILLS_DIR = 'skills';
-const IGNORED_COMPATIBILITY_NAMES = new Set(['node_modules']);
 
 interface IndexEntry {
 	name: unknown;
@@ -101,80 +98,6 @@ async function loadIndexEntry(rootDir: string, entry: IndexEntry): Promise<Skill
 	};
 }
 
-function findCompatibilitySkillsDir(distributionDir: string): string | null {
-	if (path.basename(distributionDir) !== 'latest' || path.basename(path.dirname(distributionDir)) !== 'distribution') {
-		return null;
-	}
-	const parentDir = path.dirname(path.dirname(distributionDir));
-	return path.join(parentDir, SOURCE_SKILLS_DIR);
-}
-
-async function loadCompatibilitySkillFiles(distributionDir: string): Promise<SkillCompatibilityFile[]> {
-	// Compatibility path: older clients consumed every file under `skills/<name>/...`
-	// as an individual `skill://<name>/...` resource. The canonical distribution is
-	// still `index.json` plus prebuilt archives; this scan only preserves that older
-	// per-file resource surface when the source tree is mounted alongside it.
-	const skillsDir = findCompatibilitySkillsDir(distributionDir);
-	if (!skillsDir) return [];
-	const compatibilitySkillsDir = skillsDir;
-	const out: SkillCompatibilityFile[] = [];
-
-	async function walkSkill(skillName: string, dir: string): Promise<void> {
-		let entries: Dirent[];
-		try {
-			entries = await fs.readdir(dir, { withFileTypes: true });
-		} catch (err) {
-			logger.warn({ dir, err }, 'compatibility skill file walk failed, skipping directory');
-			return;
-		}
-
-		for (const entry of entries) {
-			if (IGNORED_COMPATIBILITY_NAMES.has(entry.name) || entry.name.startsWith('.')) continue;
-			const absPath = path.join(dir, entry.name);
-			const stat = await fs.lstat(absPath);
-			if (stat.isSymbolicLink()) {
-				logger.warn({ absPath }, 'skipping symlink in compatibility skill directory');
-				continue;
-			}
-
-			if (entry.isDirectory()) {
-				await walkSkill(skillName, absPath);
-				continue;
-			}
-			if (!entry.isFile()) continue;
-
-			const skillDir = path.join(compatibilitySkillsDir, skillName);
-			const relPath = path.relative(skillDir, absPath).split(path.sep).join('/');
-			const { mimeType, isText } = mimeFor(relPath);
-			out.push({
-				resourceName: relPath === 'SKILL.md' ? skillName : `${skillName}/${relPath}`,
-				url: buildSkillUri(skillName, relPath),
-				absPath,
-				mimeType,
-				isText,
-			});
-		}
-	}
-
-	let skillDirs: Dirent[];
-	try {
-		skillDirs = await fs.readdir(compatibilitySkillsDir, { withFileTypes: true });
-	} catch (err) {
-		logger.warn(
-			{ skillsDir: compatibilitySkillsDir, err },
-			'compatibility skills directory not found, skipping per-file resources',
-		);
-		return [];
-	}
-
-	for (const entry of skillDirs) {
-		if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-		await walkSkill(entry.name, path.join(compatibilitySkillsDir, entry.name));
-	}
-
-	return out;
-}
-
 export async function loadSkills(rootDir: string): Promise<SkillCatalog> {
 	const indexPath = path.join(rootDir, INDEX_FILE);
 	let indexText: string;
@@ -211,8 +134,6 @@ export async function loadSkills(rootDir: string): Promise<SkillCatalog> {
 		skills.push(skill);
 	}
 
-	const compatibilityFiles = await loadCompatibilitySkillFiles(rootDir);
-
-	logger.info({ rootDir, count: skills.length, compatibilityFiles: compatibilityFiles.length }, 'loaded skills');
-	return { indexPath, indexText, skills, compatibilityFiles };
+	logger.info({ rootDir, count: skills.length }, 'loaded skills');
+	return { indexPath, indexText, skills, compatibilityFiles: [] };
 }

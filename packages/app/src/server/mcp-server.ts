@@ -84,10 +84,9 @@ import { hasReadmeFlag } from '../shared/behavior-flags.js';
 import { registerCapabilities } from './utils/capability-utils.js';
 import { createGradioWidgetResourceConfig } from './resources/gradio-widget-resource.js';
 import { applyResultPostProcessing, type GradioToolCallOptions } from './utils/gradio-tool-caller.js';
-import { loadSkills } from './skills/skill-loader.js';
 import { registerSkillResources } from './skills/skill-resources.js';
 import { isClientDenied } from '../shared/client-denylist.js';
-import type { SkillCatalog } from './skills/skill-types.js';
+import { getSkillCatalog } from './skills/skill-catalog-cache.js';
 
 // Fallback settings when API fails (enables all tools)
 export const BOUQUET_FALLBACK: AppSettings = {
@@ -96,22 +95,6 @@ export const BOUQUET_FALLBACK: AppSettings = {
 };
 
 // Bouquet configurations moved to tool-selection-strategy.ts
-
-// Experimental Skills extension (SEP-2640).
-// In the deployed Hugging Face Space, mount hf://buckets/huggingface/skills at /mnt/hf-skills.
-// Override via HF_SKILLS_DIR for local tests or alternate layouts.
-const SKILLS_DIR = process.env.HF_SKILLS_DIR ?? '/mnt/hf-skills/distribution/latest';
-
-let skillCatalogPromise: Promise<SkillCatalog | null> | null = null;
-const getSkillCatalog = (): Promise<SkillCatalog | null> => {
-	if (!skillCatalogPromise) {
-		skillCatalogPromise = loadSkills(SKILLS_DIR).catch((err) => {
-			logger.warn({ err, SKILLS_DIR }, 'failed to load skills, skills disabled');
-			return null;
-		});
-	}
-	return skillCatalogPromise;
-};
 
 /**
  * Creates a ServerFactory function that produces McpServer instances with all tools registered
