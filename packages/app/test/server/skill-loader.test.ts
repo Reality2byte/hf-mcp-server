@@ -75,7 +75,7 @@ describe('loadSkills', () => {
 		]);
 	});
 
-	it('loads compatibility file resources from the sibling source skills tree', async () => {
+	it('ignores sibling source skills tree resources and only loads distribution index entries', async () => {
 		const bucketRoot = path.join(root, 'bucket');
 		const distributionRoot = path.join(bucketRoot, 'distribution', 'latest');
 		const sourceSkillRoot = path.join(bucketRoot, 'skills', 'alpha');
@@ -102,15 +102,7 @@ describe('loadSkills', () => {
 		const catalog = await loadSkills(distributionRoot);
 
 		expect(catalog.skills.map((s) => s.url)).toEqual(['skill://alpha/SKILL.md']);
-		expect(catalog.compatibilityFiles.map((f) => f.url).sort()).toEqual([
-			'skill://alpha/SKILL.md',
-			'skill://alpha/assets/diagram.png',
-		]);
-		expect(catalog.compatibilityFiles.find((f) => f.url.endsWith('diagram.png'))).toMatchObject({
-			resourceName: 'alpha/assets/diagram.png',
-			mimeType: 'image/png',
-			isText: false,
-		});
+		expect(catalog.compatibilityFiles).toEqual([]);
 	});
 
 	it('returns an empty catalog when the index does not exist', async () => {

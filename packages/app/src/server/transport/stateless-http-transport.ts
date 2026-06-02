@@ -20,6 +20,9 @@ import { randomUUID } from 'node:crypto';
 import { logSystemEvent } from '../utils/query-logger.js';
 import { rewriteLegacySearchToolCallRequest } from '../utils/repo-search-shim.js';
 import { isClientDenied } from '../../shared/client-denylist.js';
+import { getSkillCatalog } from '../skills/skill-catalog-cache.js';
+import { listSkillResources, readSkillResource } from '../skills/skill-resource-data.js';
+import { getProxyToolsConfig } from '../utils/proxy-tools-config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,6 +32,17 @@ const RESOURCE_METHODS = new Set(['resources/list', 'resources/read', 'resources
 // Resource-subscription methods we never support (skills are static — nothing to
 // notify `resources/updated` about). Rejected cheaply before any server is built.
 const UNSUPPORTED_SUBSCRIBE_METHODS = new Set(['resources/subscribe', 'resources/unsubscribe']);
+
+interface JsonRpcRequestBody {
+	method?: string;
+	id?: string | number | null;
+	params?: {
+		uri?: unknown;
+		clientInfo?: unknown;
+		capabilities?: unknown;
+		name?: string;
+	};
+}
 
 // Analytics session without server (server is null in analytics mode)
 interface AnalyticsSession {
@@ -95,6 +109,85 @@ export class StatelessHttpTransport extends BaseTransport {
 		}
 
 		// All other requests can be handled by stub responder
+		return false;
+	}
+
+	private hasProxyAppResources(): boolean {
+		return getProxyToolsConfig().some((config) => {
+			const ui = config.meta?.ui;
+			return (
+				typeof ui === 'object' &&
+				ui !== null &&
+				'resourceUri' in ui &&
+				typeof ui.resourceUri === 'string' &&
+				ui.resourceUri.startsWith('ui://')
+			);
+		});
+	}
+
+	private async tryHandleStaticResourceRequest(
+		req: Request,
+		res: Response,
+		requestBody: JsonRpcRequestBody | undefined,
+		clientInfo: { name: string; version: string } | undefined,
+		startTime: number
+	): Promise<boolean> {
+		const method = requestBody?.method;
+		if (!method || !RESOURCE_METHODS.has(method)) return false;
+
+		// Preserve the full server path for resource surfaces that are not purely static skills.
+		if (clientInfo?.name === 'openai-mcp' || this.hasProxyAppResources()) return false;
+		if (isClientDenied(clientInfo?.name, req.headers['user-agent'])) return false;
+
+		const catalog = await getSkillCatalog();
+		if (!catalog?.skills.length) return false;
+
+		const id = extractJsonRpcId(req.body);
+
+		if (method === 'resources/list') {
+			res.status(200).json({
+				jsonrpc: '2.0',
+				id,
+				result: {
+					resources: listSkillResources(catalog),
+				},
+			});
+			this.trackMethodCall('resources/list', startTime, false, clientInfo);
+			return true;
+		}
+
+		if (method === 'resources/templates/list') {
+			res.status(200).json({
+				jsonrpc: '2.0',
+				id,
+				result: {
+					resourceTemplates: [],
+				},
+			});
+			this.trackMethodCall('resources/templates/list', startTime, false, clientInfo);
+			return true;
+		}
+
+		const uri = requestBody?.params?.uri;
+		if (method === 'resources/read' && typeof uri === 'string' && uri.startsWith('skill://')) {
+			const content = await readSkillResource(catalog, uri);
+			if (!content) {
+				res.status(200).json(JsonRpcErrors.invalidParams(`Unknown resource URI: ${uri}`, id));
+				this.trackMethodCall('resources/read', startTime, true, clientInfo);
+				return true;
+			}
+
+			res.status(200).json({
+				jsonrpc: '2.0',
+				id,
+				result: {
+					contents: [content],
+				},
+			});
+			this.trackMethodCall('resources/read', startTime, false, clientInfo);
+			return true;
+		}
+
 		return false;
 	}
 
@@ -319,6 +412,10 @@ export class StatelessHttpTransport extends BaseTransport {
 			let clientInfo = analyticsSession?.metadata.clientInfo;
 			if (extractedClientInfo) {
 				clientInfo = extractedClientInfo;
+			}
+
+			if (await this.tryHandleStaticResourceRequest(req, res, requestBody, clientInfo, startTime)) {
+				return;
 			}
 
 			// Determine which server to use, passing client name + user-agent for resource method filtering

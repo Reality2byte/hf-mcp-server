@@ -99,7 +99,7 @@ describe('registerSkillResources', () => {
 		expect(archiveReg.metadata.mimeType).toBe('application/gzip');
 	});
 
-	it('registers source-tree files as a clearly separate compatibility resource surface', async () => {
+	it('does not register source-tree files outside the distribution index', async () => {
 		const bucketRoot = path.join(root, 'bucket');
 		const distributionRoot = path.join(bucketRoot, 'distribution', 'latest');
 		const sourceSkillRoot = path.join(bucketRoot, 'skills', 'alpha');
@@ -117,7 +117,6 @@ describe('registerSkillResources', () => {
 
 		expect(calls.map((c) => c.uri).sort()).toEqual([
 			'skill://alpha/SKILL.md',
-			'skill://alpha/assets/notes.txt',
 			'skill://beta.tar.gz',
 			'skill://index.json',
 		]);
@@ -125,12 +124,7 @@ describe('registerSkillResources', () => {
 		const skillMdRegs = calls.filter((c) => c.uri === 'skill://alpha/SKILL.md');
 		expect(skillMdRegs).toHaveLength(1);
 
-		const notes = calls.find((c) => c.uri === 'skill://alpha/assets/notes.txt')!;
-		expect(notes.name).toBe('alpha/assets/notes.txt');
-		expect(notes.metadata.description).toBeUndefined();
-		const notesBody = (await notes.handler()).contents[0];
-		expect(notesBody.mimeType).toBe('text/plain');
-		expect(notesBody.text).toBe('compat notes');
+		expect(calls.find((c) => c.uri === 'skill://alpha/assets/notes.txt')).toBeUndefined();
 	});
 
 	it('serves index.json exactly as provided by the distribution', async () => {
