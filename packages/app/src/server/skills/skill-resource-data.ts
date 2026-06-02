@@ -10,12 +10,14 @@ export interface ListedSkillResource {
 	mimeType?: string;
 }
 
-export interface SkillResourceContent {
+interface BaseSkillResourceContent {
 	uri: string;
 	mimeType: string;
-	text?: string;
-	blob?: string;
 }
+
+export type SkillResourceContent =
+	| (BaseSkillResourceContent & { text: string })
+	| (BaseSkillResourceContent & { blob: string });
 
 export function skillResourceName(skill: SkillResource): string {
 	return skill.type === 'archive' ? `${skill.name}.tar.gz` : skill.name;
