@@ -86,6 +86,7 @@ import { createGradioWidgetResourceConfig } from './resources/gradio-widget-reso
 import { applyResultPostProcessing, type GradioToolCallOptions } from './utils/gradio-tool-caller.js';
 import { loadSkills } from './skills/skill-loader.js';
 import { registerSkillResources } from './skills/skill-resources.js';
+import { isClientDenied } from '../shared/client-denylist.js';
 import type { SkillCatalog } from './skills/skill-types.js';
 
 // Fallback settings when API fails (enables all tools)
@@ -222,7 +223,10 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 
 		// Load the experimental skills catalog (cached across sessions). Failure leaves it null and disables skills.
 		const skillCatalog = await getSkillCatalog();
-		const hasSkills = !!skillCatalog?.skills.length;
+		// Some clients (e.g. cursor-vscode) flood the resource surface; deny them the
+		// Skills resources entirely — not registered and not advertised.
+		const clientDenied = isClientDenied(sessionInfo?.clientInfo?.name, headers?.['user-agent']);
+		const hasSkills = !!skillCatalog?.skills.length && !clientDenied;
 
 		/**
 		 *  we will set capabilities below. use of the convenience .tool() registration methods automatically
@@ -1156,7 +1160,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 		const transportInfo = sharedApiClient.getTransportInfo();
 
 		registerCapabilities(server, sharedApiClient, {
-			hasResources: sessionInfo?.clientInfo?.name === 'openai-mcp',
+			hasResources: !clientDenied && sessionInfo?.clientInfo?.name === 'openai-mcp',
 			hasSkills,
 		});
 
