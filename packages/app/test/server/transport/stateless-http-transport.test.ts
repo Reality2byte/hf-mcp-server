@@ -144,7 +144,14 @@ describe('StatelessHttpTransport', () => {
 	});
 
 	describe('unsupported resource subscriptions', () => {
-		it('includes subscribe and unsubscribe resource URIs in tracked method names', () => {
+		it('includes resource URIs in tracked method names', () => {
+			expect(
+				(transport as any).extractMethodForTracking({
+					method: 'resources/read',
+					params: { uri: 'skill://example/SKILL.md' },
+				})
+			).toBe('resources/read:skill://example/SKILL.md');
+
 			expect(
 				(transport as any).extractMethodForTracking({
 					method: 'resources/subscribe',
