@@ -144,6 +144,22 @@ describe('StatelessHttpTransport', () => {
 	});
 
 	describe('unsupported resource subscriptions', () => {
+		it('includes subscribe and unsubscribe resource URIs in tracked method names', () => {
+			expect(
+				(transport as any).extractMethodForTracking({
+					method: 'resources/subscribe',
+					params: { uri: 'skill://example/SKILL.md' },
+				})
+			).toBe('resources/subscribe:skill://example/SKILL.md');
+
+			expect(
+				(transport as any).extractMethodForTracking({
+					method: 'resources/unsubscribe',
+					params: { uri: 'skill://example/SKILL.md' },
+				})
+			).toBe('resources/unsubscribe:skill://example/SKILL.md');
+		});
+
 		it('attributes early resources/subscribe rejections to known analytics session client info', async () => {
 			process.env.ANALYTICS_MODE = 'true';
 			const mockServerFactory = vi.fn() as unknown as ServerFactory;
@@ -172,7 +188,7 @@ describe('StatelessHttpTransport', () => {
 
 			await (transport as any).handleJsonRpcRequest(req, res);
 
-			const methodMetrics = transport.getMetrics().methods.get('resources/subscribe');
+			const methodMetrics = transport.getMetrics().methods.get('resources/subscribe:skill://example/SKILL.md');
 			expect(methodMetrics?.count).toBe(1);
 			expect(methodMetrics?.byClient.get(clientInfo.name)?.count).toBe(1);
 			expect(mockServerFactory).not.toHaveBeenCalled();
