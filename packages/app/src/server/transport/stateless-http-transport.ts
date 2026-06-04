@@ -266,10 +266,15 @@ export class StatelessHttpTransport extends BaseTransport {
 		// cheaply before building any server — cursor-vscode floods `resources/subscribe`.
 		const rpcMethod = requestBody?.method;
 		if (rpcMethod && UNSUPPORTED_SUBSCRIBE_METHODS.has(rpcMethod)) {
-			this.trackMethodCall(trackingName, startTime, false);
-			res.status(200).json(
-				JsonRpcErrors.methodNotFound(extractJsonRpcId(req.body), `${rpcMethod} is not supported`)
-			);
+			const earlySessionId = headers['mcp-session-id'];
+			const earlyClientInfo =
+				this.extractClientInfoFromRequest(requestBody) ??
+				(typeof earlySessionId === 'string'
+					? this.analyticsSessions.get(earlySessionId)?.metadata.clientInfo
+					: undefined);
+
+			this.trackMethodCall(trackingName, startTime, false, earlyClientInfo);
+			res.status(200).json(JsonRpcErrors.methodNotFound(extractJsonRpcId(req.body), `${rpcMethod} is not supported`));
 			return;
 		}
 
@@ -315,7 +320,7 @@ export class StatelessHttpTransport extends BaseTransport {
 					// Log details if temp logging is active
 					if (this.tempLogCounter > 0) {
 						const logNumber = this.tempLogOriginalCount - this.tempLogCounter + 1;
-						
+
 						// Redact HF token if present - show only last 5 chars
 						let hfTokenInfo: string | undefined;
 						const hfToken = headers['authorization'] || headers['hf-token'] || headers['x-hf-token'];
@@ -327,7 +332,7 @@ export class StatelessHttpTransport extends BaseTransport {
 								hfTokenInfo = '[PRESENT BUT TOO SHORT]';
 							}
 						}
-						
+
 						console.log(`[TEMPLOG ${logNumber}/${this.tempLogOriginalCount}] Session Resume Failed:`, {
 							sessionId: sessionId,
 							timestamp: new Date().toISOString(),
