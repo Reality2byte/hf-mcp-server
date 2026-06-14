@@ -148,6 +148,7 @@ export const USE_SPACE_TOOL_ID = 'use_space';
 export const DOCS_SEMANTIC_SEARCH_TOOL_ID = DOCS_SEMANTIC_SEARCH_CONFIG.name;
 export const DOC_FETCH_TOOL_ID = DOC_FETCH_CONFIG.name;
 export const HF_JOBS_TOOL_ID = 'hf_jobs';
+export const HF_SANDBOX_TOOL_ID = 'hf_sandbox';
 export const DYNAMIC_SPACE_TOOL_ID = 'dynamic_space';
 
 export const ALL_BUILTIN_TOOL_IDS = [

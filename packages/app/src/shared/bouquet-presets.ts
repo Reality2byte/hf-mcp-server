@@ -4,6 +4,7 @@ import {
 	HUB_REPO_DETAILS_TOOL_ID,
 	USE_SPACE_TOOL_ID,
 	HF_JOBS_TOOL_ID,
+	HF_SANDBOX_TOOL_ID,
 	DYNAMIC_SPACE_TOOL_ID,
 	REPO_SEARCH_TOOL_ID,
 	CREATE_REPO_TOOL_ID,
@@ -64,6 +65,10 @@ export const BOUQUETS: Record<string, AppSettings> = {
 		builtInTools: [HF_JOBS_TOOL_ID],
 		spaceTools: [],
 	},
+	sandbox: {
+		builtInTools: [HF_SANDBOX_TOOL_ID],
+		spaceTools: [],
+	},
 	write: {
 		builtInTools: [CREATE_REPO_TOOL_ID],
 		spaceTools: [],
@@ -101,7 +106,8 @@ const PRESET_META: Array<Omit<BouquetPreset, 'builtInTools'>> = [
 	{
 		key: 'skills',
 		label: 'Skills Toolkit',
-		description: 'Tools that work well with Hugging Face Skills (https://github.com/huggingface/skills). Pair with an MCP Skills Extension-aware client to load `skill://` resources directly from this server.',
+		description:
+			'Tools that work well with Hugging Face Skills (https://github.com/huggingface/skills). Pair with an MCP Skills Extension-aware client to load `skill://` resources directly from this server.',
 		category: 'core',
 		supportsBouquet: true,
 		supportsMix: true,
@@ -191,6 +197,14 @@ const PRESET_META: Array<Omit<BouquetPreset, 'builtInTools'>> = [
 		key: 'jobs',
 		label: 'Run and Manage Jobs',
 		description: 'Run, monitor and schedule jobs on Hugging Face infrastructure.',
+		category: 'advanced',
+		supportsBouquet: true,
+		supportsMix: true,
+	},
+	{
+		key: 'sandbox',
+		label: 'Sandbox',
+		description: 'Create and use interactive Hugging Face Jobs sandboxes.',
 		category: 'advanced',
 		supportsBouquet: true,
 		supportsMix: true,
