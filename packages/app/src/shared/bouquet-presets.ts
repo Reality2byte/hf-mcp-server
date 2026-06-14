@@ -4,7 +4,6 @@ import {
 	HUB_REPO_DETAILS_TOOL_ID,
 	USE_SPACE_TOOL_ID,
 	HF_JOBS_TOOL_ID,
-	HF_SANDBOX_TOOL_ID,
 	DYNAMIC_SPACE_TOOL_ID,
 	REPO_SEARCH_TOOL_ID,
 	CREATE_REPO_TOOL_ID,
@@ -66,7 +65,7 @@ export const BOUQUETS: Record<string, AppSettings> = {
 		spaceTools: [],
 	},
 	sandbox: {
-		builtInTools: [HF_SANDBOX_TOOL_ID],
+		builtInTools: [...TOOL_ID_GROUPS.sandbox],
 		spaceTools: [],
 	},
 	write: {

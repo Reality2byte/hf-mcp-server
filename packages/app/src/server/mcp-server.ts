@@ -60,6 +60,8 @@ import {
 	type DocFetchParams,
 	HF_JOBS_TOOL_CONFIG,
 	HfJobsTool,
+	HF_SANDBOX_EXEC_TOOL_CONFIG,
+	HfSandboxExecTool,
 	HF_SANDBOX_TOOL_CONFIG,
 	HfSandboxTool,
 	getDynamicSpaceToolConfig,
@@ -991,6 +993,40 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					async () => {
 						const sandboxTool = new HfSandboxTool(hfToken, isAuthenticated, username);
 						return sandboxTool.execute(params);
+					}
+				);
+
+				return {
+					content: [{ type: 'text', text: result.formatted }],
+					...(result.isError && { isError: true }),
+				};
+			}
+		);
+
+		toolInstances[HF_SANDBOX_EXEC_TOOL_CONFIG.name] = server.tool(
+			HF_SANDBOX_EXEC_TOOL_CONFIG.name,
+			HF_SANDBOX_EXEC_TOOL_CONFIG.description,
+			HF_SANDBOX_EXEC_TOOL_CONFIG.schema.shape,
+			HF_SANDBOX_EXEC_TOOL_CONFIG.annotations,
+			async (params: z.infer<typeof HF_SANDBOX_EXEC_TOOL_CONFIG.schema>) => {
+				const isAuthenticated = !!hfToken;
+				const result = await runWithQueryLogging(
+					logSearchQuery,
+					{
+						methodName: HF_SANDBOX_EXEC_TOOL_CONFIG.name,
+						query: params.cmd,
+						parameters: redactSandboxParameters(params),
+						baseOptions: getLoggingOptions(),
+						successOptions: (sandboxResult) => ({
+							totalResults: sandboxResult.totalResults,
+							resultsShared: sandboxResult.resultsShared,
+							responseCharCount: sandboxResult.formatted.length,
+							success: !sandboxResult.isError,
+						}),
+					},
+					async () => {
+						const sandboxExecTool = new HfSandboxExecTool(hfToken, isAuthenticated);
+						return sandboxExecTool.execute(params);
 					}
 				);
 

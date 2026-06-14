@@ -1,16 +1,19 @@
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { JobsApiClient } from './jobs/api-client.js';
-import type { JobInfo, JobSpec } from './jobs/types.js';
-import { parseTimeout } from './jobs/commands/utils.js';
+import type { JobInfo, JobSpec, JobVolume } from './jobs/types.js';
+import { parseTimeout, parseVolumes } from './jobs/commands/utils.js';
 import type { ToolResult } from './types/tool-result.js';
 import { fetchWithProfile, NETWORK_FETCH_PROFILES } from './network/fetch-profile.js';
 
 const SANDBOX_HANDLE_VERSION = 'hfsb1';
 const SANDBOX_PORT = 8000;
+const SANDBOX_ROOT = '/sandbox';
+const DEFAULT_BUCKET_MOUNT_PATH = '/data';
 const DEFAULT_IMAGE = 'python:3.12';
 const DEFAULT_FLAVOR = 'cpu-basic';
 const DEFAULT_TIMEOUT = '1h';
+const VOLUME_FORMAT = 'hf://[models|datasets|spaces|buckets]/OWNER/NAME[/PATH]:/MOUNT_PATH[:ro|:rw]';
 const TOKEN_MIN_LENGTH = 32;
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]+$/;
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,62}$/;
@@ -128,44 +131,80 @@ class Handler(BaseHTTPRequestHandler):
 ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 `;
 
-const createArgsSchema = z.object({
-	image: z.string().optional().default(DEFAULT_IMAGE),
-	flavor: z.string().optional().default(DEFAULT_FLAVOR),
-	timeout: z.string().optional().default(DEFAULT_TIMEOUT),
-	namespace: z.string().optional(),
-	name: z.string().optional(),
-	sandbox_token: z.string().optional(),
-	forward_hf_token: z.boolean().optional().default(false),
-});
+const createArgsSchema = z
+	.object({
+		image: z.string().optional().default(DEFAULT_IMAGE),
+		flavor: z.string().optional().default(DEFAULT_FLAVOR),
+		timeout: z.string().optional().default(DEFAULT_TIMEOUT),
+		namespace: z.string().optional(),
+		name: z.string().optional(),
+		sandbox_token: z.string().optional(),
+		forward_hf_token: z.boolean().optional().default(false),
+		bucket: z
+			.string()
+			.optional()
+			.describe(
+				`Convenience bucket mount in OWNER/NAME format. Mounts at bucket_mount_path, default ${DEFAULT_BUCKET_MOUNT_PATH}.`
+			),
+		bucket_mode: z.enum(['ro', 'rw']).optional().default('rw').describe('Access mode for bucket convenience mount.'),
+		bucket_mount_path: z
+			.string()
+			.optional()
+			.default(DEFAULT_BUCKET_MOUNT_PATH)
+			.describe('Absolute mount path for bucket convenience mount.'),
+		volumes: z
+			.array(z.string())
+			.optional()
+			.describe(`Volume mounts using hf:// URLs. Format: ${VOLUME_FORMAT}. Type prefixes are plural.`),
+	})
+	.strict();
 
-const execArgsSchema = z.object({
-	handle: z.string(),
-	command: z.array(z.string()).min(1),
-	workdir: z.string().optional(),
-	stdin: z.string().optional(),
-	timeout: z.number().int().positive().optional().default(600),
-});
+const execArgsSchema = z
+	.object({
+		handle: z.string(),
+		command: z.array(z.string()).min(1),
+		workdir: z.string().optional(),
+		stdin: z.string().optional(),
+		timeout: z.number().int().positive().optional().default(600),
+	})
+	.strict();
+
+const shellExecArgsSchema = z
+	.object({
+		handle: z.string().describe('Portable sandbox handle returned by hf_sandbox create.'),
+		cmd: z.string().min(1).describe('Shell command to execute inside the sandbox. Runs via /bin/sh -lc.'),
+		workdir: z.string().optional().describe(`Working directory inside the sandbox. Defaults to ${SANDBOX_ROOT}.`),
+		stdin: z.string().optional().describe('Optional stdin to pass to the command.'),
+		timeout: z.number().int().positive().optional().default(600).describe('Command timeout in seconds.'),
+	})
+	.strict();
 
 const fileEncodingSchema = z.enum(['utf-8', 'base64']).optional().default('utf-8');
 
-const writeArgsSchema = z.object({
-	handle: z.string(),
-	path: z.string().min(1),
-	content: z.string(),
-	encoding: fileEncodingSchema,
-});
+const writeArgsSchema = z
+	.object({
+		handle: z.string(),
+		path: z.string().min(1),
+		content: z.string(),
+		encoding: fileEncodingSchema,
+	})
+	.strict();
 
-const readArgsSchema = z.object({
-	handle: z.string(),
-	path: z.string().min(1),
-	encoding: fileEncodingSchema,
-});
+const readArgsSchema = z
+	.object({
+		handle: z.string(),
+		path: z.string().min(1),
+		encoding: fileEncodingSchema,
+	})
+	.strict();
 
-const handleArgsSchema = z.object({
-	handle: z.string(),
-});
+const handleArgsSchema = z
+	.object({
+		handle: z.string(),
+	})
+	.strict();
 
-const operations = ['create', 'exec', 'write', 'read', 'status', 'terminate'] as const;
+const operations = ['create', 'write', 'read', 'status', 'terminate'] as const;
 type SandboxOperation = (typeof operations)[number];
 
 export interface SandboxHandle {
@@ -191,7 +230,11 @@ export interface SandboxJobsClient {
 export const HF_SANDBOX_TOOL_CONFIG = {
 	name: 'hf_sandbox',
 	description:
-		'Create and use interactive Hugging Face Jobs sandboxes. Supports create, exec, read, write, status, and terminate with portable stateless handles.',
+		'Create and manage interactive Hugging Face Jobs sandboxes. Supports create, read, write, status, and terminate with portable stateless handles. Use hf_sandbox_exec to run shell commands in a sandbox. ' +
+		`Mount Hub repos with volumes using ${VOLUME_FORMAT}; type prefixes must be plural. Examples: ` +
+		'["hf://buckets/user/bucket:/data:rw"], ["hf://datasets/org/dataset:/data:ro"], ["hf://models/org/model:/model"]. ' +
+		'For buckets, create also accepts bucket, bucket_mode, and bucket_mount_path as a convenience. ' +
+		`The default working directory is ${SANDBOX_ROOT}, which is fast ephemeral container storage; mounted buckets use FUSE and are better for persisted artifacts than build-heavy work.`,
 	schema: z.object({
 		operation: z
 			.enum(operations)
@@ -206,8 +249,56 @@ export const HF_SANDBOX_TOOL_CONFIG = {
 	},
 } as const;
 
+export const HF_SANDBOX_EXEC_TOOL_CONFIG = {
+	name: 'hf_sandbox_exec',
+	description:
+		'Execute shell commands inside a Hugging Face Jobs sandbox. Provide a portable sandbox handle and a shell command string; returns stdout, stderr, and returncode.',
+	schema: shellExecArgsSchema,
+	annotations: {
+		title: 'Hugging Face Sandbox Exec',
+		readOnlyHint: false,
+		openWorldHint: true,
+	},
+} as const;
+
 function formatJson(value: unknown): string {
 	return `\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``;
+}
+
+function normalizeSandboxVolumes(args: z.infer<typeof createArgsSchema>): JobVolume[] | undefined {
+	const volumeSpecs = [...(args.volumes ?? [])];
+	if (args.bucket) {
+		volumeSpecs.push(`hf://buckets/${args.bucket}:${args.bucket_mount_path}:${args.bucket_mode}`);
+	}
+
+	return parseVolumes(volumeSpecs);
+}
+
+function parseStoredSandboxVolumes(job: JobInfo): JobVolume[] {
+	const storedVolumes = job.environment?.HF_SANDBOX_VOLUMES;
+	if (!storedVolumes) {
+		return [];
+	}
+
+	try {
+		const parsed = JSON.parse(storedVolumes) as unknown;
+		if (!Array.isArray(parsed)) {
+			return [];
+		}
+		return parsed.filter((volume): volume is JobVolume => {
+			if (!volume || typeof volume !== 'object') {
+				return false;
+			}
+			const candidate = volume as Partial<JobVolume>;
+			return (
+				typeof candidate.type === 'string' &&
+				typeof candidate.source === 'string' &&
+				typeof candidate.mountPath === 'string'
+			);
+		});
+	} catch {
+		return [];
+	}
 }
 
 function randomSuffix(): string {
@@ -419,7 +510,14 @@ export class HfSandboxTool {
 		if (!params.operation) {
 			return {
 				formatted:
-					'# Hugging Face Sandbox\n\nAvailable operations: create, exec, write, read, status, terminate.\n\nHandles are portable bearer capabilities. Do not share them in logs or URLs.',
+					'# Hugging Face Sandbox\n\n' +
+					'Available operations: create, write, read, status, terminate. Use hf_sandbox_exec for shell commands.\n\n' +
+					`Sandbox commands run from ${SANDBOX_ROOT} by default. This is fast ephemeral container storage and is deleted with the sandbox Job. ` +
+					'Use mounted Hub volumes for persisted inputs or outputs; for build-heavy work, prefer building in /sandbox and copying final artifacts to the mounted bucket.\n\n' +
+					`Mount Hub repos with create args volumes: ["${VOLUME_FORMAT}"]. Type prefixes are plural: models, datasets, spaces, buckets. ` +
+					'Examples: ["hf://buckets/user/bucket:/data:rw"], ["hf://datasets/org/dataset:/data:ro"], ["hf://models/org/model:/model"]. ' +
+					`For buckets only, you can use {"bucket": "user/bucket", "bucket_mode": "rw", "bucket_mount_path": "${DEFAULT_BUCKET_MOUNT_PATH}"}.\n\n` +
+					'Handles are portable bearer capabilities. Do not share them in logs or URLs.',
 				totalResults: 1,
 				resultsShared: 1,
 			};
@@ -467,10 +565,6 @@ export class HfSandboxTool {
 		switch (operation) {
 			case 'create':
 				return this.create(createArgsSchema.parse(args));
-			case 'exec': {
-				const parsed = execArgsSchema.parse(args);
-				return this.rpcClient.exec(parseSandboxHandle(parsed.handle), this.requireToken(), parsed);
-			}
 			case 'write': {
 				const parsed = writeArgsSchema.parse(args);
 				return this.rpcClient.write(parseSandboxHandle(parsed.handle), this.requireToken(), parsed);
@@ -506,6 +600,7 @@ export class HfSandboxTool {
 		if (args.forward_hf_token) {
 			secrets.HF_TOKEN = this.requireToken();
 		}
+		const volumes = normalizeSandboxVolumes(args);
 
 		const jobSpec: JobSpec = {
 			dockerImage: args.image,
@@ -516,7 +611,8 @@ export class HfSandboxTool {
 				HF_SANDBOX_NAME: name,
 				HF_SANDBOX_HANDLE_VERSION: '1',
 				HF_SANDBOX_PORT: String(SANDBOX_PORT),
-				HF_SANDBOX_ROOT: '/sandbox',
+				HF_SANDBOX_ROOT: SANDBOX_ROOT,
+				...(volumes ? { HF_SANDBOX_VOLUMES: JSON.stringify(volumes) } : {}),
 			},
 			secrets,
 			labels: {
@@ -525,6 +621,9 @@ export class HfSandboxTool {
 			},
 			expose: { ports: [SANDBOX_PORT] },
 		};
+		if (volumes) {
+			jobSpec.volumes = volumes;
+		}
 
 		const job = await this.jobsClient.runJob(jobSpec, namespace);
 		const handle = formatSandboxHandle({
@@ -541,6 +640,7 @@ export class HfSandboxTool {
 			url: getExposeUrl(job, job.id, SANDBOX_PORT),
 			handle,
 			job_url: getJobUrl(namespace, job.id),
+			volumes: volumes ?? [],
 		};
 	}
 
@@ -565,6 +665,7 @@ export class HfSandboxTool {
 			job_url: getJobUrl(handle.namespace, handle.jobId),
 			status: job.status,
 			health,
+			volumes: parseStoredSandboxVolumes(job),
 		};
 	}
 
@@ -577,5 +678,50 @@ export class HfSandboxTool {
 			terminated: true,
 			job_url: getJobUrl(handle.namespace, handle.jobId),
 		};
+	}
+}
+
+export class HfSandboxExecTool {
+	private rpcClient: SandboxRpcClient;
+	private hfToken?: string;
+	private isAuthenticated: boolean;
+
+	constructor(hfToken?: string, isAuthenticated?: boolean, rpcClient?: SandboxRpcClient) {
+		this.hfToken = hfToken;
+		this.isAuthenticated = isAuthenticated ?? !!hfToken;
+		this.rpcClient = rpcClient ?? new HttpSandboxRpcClient();
+	}
+
+	async execute(params: z.infer<typeof shellExecArgsSchema>): Promise<ToolResult> {
+		if (!this.isAuthenticated || !this.hfToken) {
+			return authRequiredResult();
+		}
+
+		try {
+			const parsed = shellExecArgsSchema.parse(params);
+			const result = await this.rpcClient.exec(parseSandboxHandle(parsed.handle), this.hfToken, {
+				handle: parsed.handle,
+				command: ['/bin/sh', '-lc', parsed.cmd],
+				workdir: parsed.workdir,
+				stdin: parsed.stdin,
+				timeout: parsed.timeout,
+			});
+
+			return {
+				formatted: formatJson(result),
+				totalResults: 1,
+				resultsShared: 1,
+			};
+		} catch (error) {
+			if (error instanceof z.ZodError) {
+				return validationErrorResult(error, HF_SANDBOX_EXEC_TOOL_CONFIG.name);
+			}
+			return {
+				formatted: `Error executing sandbox command: ${error instanceof Error ? error.message : String(error)}`,
+				totalResults: 0,
+				resultsShared: 0,
+				isError: true,
+			};
+		}
 	}
 }

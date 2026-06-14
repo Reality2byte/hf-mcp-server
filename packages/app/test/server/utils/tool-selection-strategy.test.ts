@@ -10,6 +10,7 @@ import type { TransportInfo } from '../../../src/shared/transport-info.js';
 import {
 	ALL_BUILTIN_TOOL_IDS,
 	CREATE_REPO_TOOL_ID,
+	HF_SANDBOX_EXEC_TOOL_ID,
 	HF_SANDBOX_TOOL_ID,
 	REPO_SEARCH_TOOL_ID,
 	TOOL_ID_GROUPS,
@@ -103,6 +104,7 @@ describe('BOUQUETS configuration', () => {
 			expect(bouquet.builtInTools).toEqual(ALL_BUILTIN_TOOL_IDS);
 			expect(bouquet.spaceTools).toEqual([]);
 			expect(bouquet.builtInTools).not.toContain(HF_SANDBOX_TOOL_ID);
+			expect(bouquet.builtInTools).not.toContain(HF_SANDBOX_EXEC_TOOL_ID);
 		}
 	});
 
@@ -110,7 +112,7 @@ describe('BOUQUETS configuration', () => {
 		const bouquet = BOUQUETS.sandbox;
 		expect(bouquet).toBeDefined();
 		if (bouquet) {
-			expect(bouquet.builtInTools).toEqual([HF_SANDBOX_TOOL_ID]);
+			expect(bouquet.builtInTools).toEqual([...TOOL_ID_GROUPS.sandbox]);
 			expect(bouquet.spaceTools).toEqual([]);
 		}
 	});
@@ -218,7 +220,7 @@ describe('ToolSelectionStrategy', () => {
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.BOUQUET_OVERRIDE);
-			expect(result.enabledToolIds).toEqual([HF_SANDBOX_TOOL_ID]);
+			expect(result.enabledToolIds).toEqual([...TOOL_ID_GROUPS.sandbox]);
 			expect(result.reason).toBe('Bouquet override: sandbox');
 		});
 
@@ -300,7 +302,7 @@ describe('ToolSelectionStrategy', () => {
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.MIX);
-			expect(result.enabledToolIds).toEqual([REPO_SEARCH_TOOL_ID, HF_SANDBOX_TOOL_ID]);
+			expect(result.enabledToolIds).toEqual([REPO_SEARCH_TOOL_ID, HF_SANDBOX_TOOL_ID, HF_SANDBOX_EXEC_TOOL_ID]);
 		});
 
 		it('should mix search tools with user settings', async () => {
@@ -516,7 +518,9 @@ describe('ToolSelectionStrategy', () => {
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.FALLBACK);
-			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools([...ALL_BUILTIN_TOOL_IDS, HF_SANDBOX_TOOL_ID]));
+			expect(result.enabledToolIds).toEqual(
+				normalizeBuiltInTools([...ALL_BUILTIN_TOOL_IDS, HF_SANDBOX_TOOL_ID, HF_SANDBOX_EXEC_TOOL_ID])
+			);
 			expect(result.mixedBouquet).toEqual(['sandbox']);
 		});
 	});

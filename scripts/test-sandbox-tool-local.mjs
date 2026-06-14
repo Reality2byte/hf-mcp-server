@@ -18,12 +18,15 @@ try {
 
 	const defaultTools = await listTools(baseUrl, '');
 	assert(!defaultTools.includes('hf_sandbox'), 'hf_sandbox must not be exposed without sandbox mix/bouquet');
+	assert(!defaultTools.includes('hf_sandbox_exec'), 'hf_sandbox_exec must not be exposed without sandbox mix/bouquet');
 
 	const mixTools = await listTools(baseUrl, '?mix=sandbox');
 	assert(mixTools.includes('hf_sandbox'), 'hf_sandbox must be exposed with ?mix=sandbox');
+	assert(mixTools.includes('hf_sandbox_exec'), 'hf_sandbox_exec must be exposed with ?mix=sandbox');
 
 	const bouquetTools = await listTools(baseUrl, '?bouquet=sandbox');
 	assert(bouquetTools.includes('hf_sandbox'), 'hf_sandbox must be exposed with ?bouquet=sandbox');
+	assert(bouquetTools.includes('hf_sandbox_exec'), 'hf_sandbox_exec must be exposed with ?bouquet=sandbox');
 	assert(!bouquetTools.includes('hf_jobs'), 'sandbox bouquet should not also expose hf_jobs');
 	assert(!bouquetTools.includes('hub_repo_search'), 'sandbox bouquet should not expose default search tools');
 

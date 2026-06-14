@@ -30,13 +30,24 @@ async function sandbox(operation, args) {
 	return parseJsonCodeBlock(text);
 }
 
+async function sandboxExec(args) {
+	const result = await callTool(baseUrl, '?mix=sandbox', 'hf_sandbox_exec', args, token);
+	const text = textContent(result);
+	if (result.isError) {
+		throw new Error(`hf_sandbox_exec failed: ${text}`);
+	}
+	return parseJsonCodeBlock(text);
+}
+
 try {
 	await waitForHttp(`${baseUrl}/mcp`);
 
 	const defaultTools = await listTools(baseUrl, '', token);
 	assert(!defaultTools.includes('hf_sandbox'), 'hf_sandbox must not be exposed without sandbox mix/bouquet');
+	assert(!defaultTools.includes('hf_sandbox_exec'), 'hf_sandbox_exec must not be exposed without sandbox mix/bouquet');
 	const sandboxTools = await listTools(baseUrl, '?mix=sandbox', token);
 	assert(sandboxTools.includes('hf_sandbox'), 'hf_sandbox must be exposed with ?mix=sandbox');
+	assert(sandboxTools.includes('hf_sandbox_exec'), 'hf_sandbox_exec must be exposed with ?mix=sandbox');
 
 	const createResult = await sandbox('create', {
 		name: `sandbox-${Date.now().toString(36)}`,
@@ -60,9 +71,9 @@ try {
 	}
 	assert(status?.health?.ok === true, `sandbox did not become healthy: ${JSON.stringify(status)}`);
 
-	const execResult = await sandbox('exec', {
+	const execResult = await sandboxExec({
 		handle,
-		command: ['python', '-c', 'print(6 * 7)'],
+		cmd: 'python -c "print(6 * 7)"',
 	});
 	assert(execResult.returncode === 0, `exec returned ${execResult.returncode}: ${execResult.stderr}`);
 	assert(execResult.stdout.trim() === '42', `unexpected exec stdout: ${execResult.stdout}`);
