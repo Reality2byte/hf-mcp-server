@@ -209,7 +209,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 		// Some clients (e.g. cursor-vscode) flood the resource surface; deny them the
 		// Skills resources entirely — not registered and not advertised.
 		const clientDenied = isClientDenied(sessionInfo?.clientInfo?.name, headers?.['user-agent']);
-		const hasSkills = !!skillCatalog?.skills.length && !clientDenied;
+		const hasSkills = !!skillCatalog?.entries.length && !clientDenied;
 
 		/**
 		 *  we will set capabilities below. use of the convenience .tool() registration methods automatically

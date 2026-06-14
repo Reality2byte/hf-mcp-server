@@ -48,8 +48,35 @@ export function mimeFor(relPath: string): { mimeType: string; isText: boolean } 
 	return { mimeType: 'application/octet-stream', isText: false };
 }
 
-export function buildSkillUri(skillName: string, relPath: string): string {
-	const normalised = relPath.replaceAll('\\', '/');
-	const encodedPath = normalised.split('/').map(encodeURIComponent).join('/');
-	return `skill://${encodeURIComponent(skillName)}/${encodedPath}`;
+/** mimeType marking a directory resource (per SEP-2640 `resources/directory/read`). */
+export const DIRECTORY_MIME = 'inode/directory';
+
+function encodeSegments(value: string): string {
+	return value
+		.replaceAll('\\', '/')
+		.split('/')
+		.filter((segment) => segment.length > 0)
+		.map(encodeURIComponent)
+		.join('/');
+}
+
+/**
+ * Build a `skill://` resource URI. `skillPath` may be a single segment (`git-workflow`)
+ * or nested (`acme/billing/refunds`); `relPath` is the file path relative to the skill
+ * directory root. Each segment is URL-encoded individually.
+ */
+export function buildSkillUri(skillPath: string, relPath: string): string {
+	const encodedSkill = encodeSegments(skillPath);
+	const encodedPath = encodeSegments(relPath);
+	return `skill://${encodedSkill}/${encodedPath}`;
+}
+
+/**
+ * Build a directory resource URI (no trailing slash). `relDir` is the directory path
+ * relative to the skill root; an empty `relDir` yields the skill root directory URI.
+ */
+export function buildSkillDirUri(skillPath: string, relDir: string): string {
+	const encodedSkill = encodeSegments(skillPath);
+	const encodedDir = encodeSegments(relDir);
+	return encodedDir ? `skill://${encodedSkill}/${encodedDir}` : `skill://${encodedSkill}`;
 }

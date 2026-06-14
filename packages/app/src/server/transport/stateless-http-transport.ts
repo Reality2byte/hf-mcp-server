@@ -21,14 +21,20 @@ import { logSystemEvent } from '../utils/query-logger.js';
 import { rewriteLegacySearchToolCallRequest } from '../utils/repo-search-shim.js';
 import { isClientDenied } from '../../shared/client-denylist.js';
 import { getSkillCatalog } from '../skills/skill-catalog-cache.js';
-import { listSkillResources, readSkillResource } from '../skills/skill-resource-data.js';
+import { listSkillResources, readSkillResource, readSkillDirectory } from '../skills/skill-resource-data.js';
+import { RESOURCES_DIRECTORY_READ_METHOD } from '../skills/skill-directory-schema.js';
 import { getProxyToolsConfig } from '../utils/proxy-tools-config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Resource methods that build the full server and thus expose the Skills surface.
-const RESOURCE_METHODS = new Set(['resources/list', 'resources/read', 'resources/templates/list']);
+const RESOURCE_METHODS = new Set([
+	'resources/list',
+	'resources/read',
+	'resources/templates/list',
+	RESOURCES_DIRECTORY_READ_METHOD,
+]);
 // Resource-subscription methods we never support (skills are static — nothing to
 // notify `resources/updated` about). Rejected cheaply before any server is built.
 const UNSUPPORTED_SUBSCRIBE_METHODS = new Set(['resources/subscribe', 'resources/unsubscribe']);
@@ -38,6 +44,7 @@ interface JsonRpcRequestBody {
 	id?: string | number | null;
 	params?: {
 		uri?: unknown;
+		cursor?: unknown;
 		clientInfo?: unknown;
 		capabilities?: unknown;
 		name?: string;
@@ -140,7 +147,7 @@ export class StatelessHttpTransport extends BaseTransport {
 		if (isClientDenied(clientInfo?.name, req.headers['user-agent'])) return false;
 
 		const catalog = await getSkillCatalog();
-		if (!catalog?.skills.length) return false;
+		if (!catalog?.entries.length) return false;
 
 		const id = extractJsonRpcId(req.body);
 
@@ -185,6 +192,24 @@ export class StatelessHttpTransport extends BaseTransport {
 				},
 			});
 			this.trackMethodCall('resources/read', startTime, false, clientInfo);
+			return true;
+		}
+
+		if (method === RESOURCES_DIRECTORY_READ_METHOD && typeof uri === 'string' && uri.startsWith('skill://')) {
+			const cursor = typeof requestBody?.params?.cursor === 'string' ? requestBody.params.cursor : undefined;
+			const listing = readSkillDirectory(catalog, uri, cursor);
+			if (!listing) {
+				res.status(200).json(JsonRpcErrors.invalidParams(`Not a directory resource: ${uri}`, id));
+				this.trackMethodCall(RESOURCES_DIRECTORY_READ_METHOD, startTime, true, clientInfo);
+				return true;
+			}
+
+			res.status(200).json({
+				jsonrpc: '2.0',
+				id,
+				result: listing,
+			});
+			this.trackMethodCall(RESOURCES_DIRECTORY_READ_METHOD, startTime, false, clientInfo);
 			return true;
 		}
 

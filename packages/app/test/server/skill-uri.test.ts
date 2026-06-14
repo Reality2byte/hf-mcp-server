@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSkillUri, mimeFor } from '../../src/server/skills/skill-uri.js';
+import { buildSkillDirUri, buildSkillUri, DIRECTORY_MIME, mimeFor } from '../../src/server/skills/skill-uri.js';
 
 describe('buildSkillUri', () => {
 	it('produces a skill uri for a single file', () => {
@@ -12,6 +12,26 @@ describe('buildSkillUri', () => {
 
 	it('encodes skill names and path segments', () => {
 		expect(buildSkillUri('my skill', 'assets/foo bar(1).png')).toBe('skill://my%20skill/assets/foo%20bar(1).png');
+	});
+
+	it('encodes each segment of a nested skill path', () => {
+		expect(buildSkillUri('acme/billing/refunds', 'SKILL.md')).toBe('skill://acme/billing/refunds/SKILL.md');
+	});
+});
+
+describe('buildSkillDirUri', () => {
+	it('returns the skill root directory uri with no trailing slash', () => {
+		expect(buildSkillDirUri('my-skill', '')).toBe('skill://my-skill');
+		expect(buildSkillDirUri('acme/billing/refunds', '')).toBe('skill://acme/billing/refunds');
+	});
+
+	it('appends a relative directory path', () => {
+		expect(buildSkillDirUri('my-skill', 'references')).toBe('skill://my-skill/references');
+		expect(buildSkillDirUri('my-skill', 'templates/regional')).toBe('skill://my-skill/templates/regional');
+	});
+
+	it('exposes the directory mime constant', () => {
+		expect(DIRECTORY_MIME).toBe('inode/directory');
 	});
 });
 

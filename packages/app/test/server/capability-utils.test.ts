@@ -24,7 +24,7 @@ describe('registerCapabilities', () => {
 		registerCapabilities(server, apiClient, { hasSkills: true });
 		const caps = getCaps();
 		expect(caps.resources).toEqual({ subscribe: false, listChanged: false });
-		expect(caps.extensions).toEqual({ 'io.modelcontextprotocol/skills': {} });
+		expect(caps.extensions).toEqual({ 'io.modelcontextprotocol/skills': { directoryRead: true } });
 	});
 
 	it('advertises no resources or skills extension for a denied client (hasSkills/hasResources false)', () => {
