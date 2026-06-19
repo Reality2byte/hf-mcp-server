@@ -246,7 +246,7 @@ The server respects the following environment variables:
 - `SEARCH_ENABLES_FETCH`: When set to `true`, automatically enables the `hf_doc_fetch` tool whenever `hf_doc_search` is enabled
 - `PROXY_TOOLS_CSV`: Optional CSV that defines Streamable HTTP proxy tool sources (see below).
 - `GRADIO_SKIP_INITIALIZE`: When set to `true`, Gradio MCP calls skip the `initialize` handshake and issue `tools/call` directly.
-- `HF_SKILLS_DIR`: Local directory containing a prebuilt Agent Skills distribution (`index.json` plus referenced `SKILL.md` and `.tar.gz` files). Defaults to `/mnt/hf-skills/distribution/latest`, which is intended for a Hugging Face Space volume mounted from `hf://buckets/huggingface/skills`.
+- `HF_SKILLS_DIR`: Local directory containing a prebuilt skills distribution in the [SEP-2640](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640) index format (a `skill://index.json` whose entries carry verbatim `frontmatter`, an optional `url` + `digest`, and an `archives[]` array, alongside the expanded `SKILL.md`/supporting-file tree and `.tar.gz` archives). The server walks each skill directory and exposes every file as an individual `skill://` resource, supports `resources/directory/read` for scoped navigation, and advertises the `io.modelcontextprotocol/skills` extension with `directoryRead: true`. Defaults to `/mnt/hf-skills/distribution/latest`, intended for a Hugging Face Space volume mounted from `hf://buckets/huggingface/skills`.
 
 To expose the shared Hugging Face skills catalog from a Space, mount the bucket and keep `HF_SKILLS_DIR` pointed at its latest distribution directory:
 

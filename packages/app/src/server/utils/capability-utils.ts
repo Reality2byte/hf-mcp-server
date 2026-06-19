@@ -59,7 +59,13 @@ export function registerCapabilities(
 		...(hasSkills
 			? {
 					extensions: {
-						'io.modelcontextprotocol/skills': {},
+						// SEP-2640 capability declaration. We implement the optional
+						// `resources/directory/read` method, so advertise `directoryRead: true`.
+						// The non-empty object also sidesteps the empty-object → `[]` JSON
+						// serialization gotcha reported in experimental-ext-skills PR #95.
+						'io.modelcontextprotocol/skills': {
+							directoryRead: true,
+						},
 					},
 				}
 			: {}),
