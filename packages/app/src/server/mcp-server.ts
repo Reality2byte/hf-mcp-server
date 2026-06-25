@@ -181,7 +181,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 				if (typeof result !== 'object' || result === null || !('isError' in result)) {
 					return undefined;
 				}
-				if (!Boolean((result as { isError?: boolean }).isError)) {
+				if (!(result as { isError?: boolean }).isError) {
 					return undefined;
 				}
 				if ('formatted' in result && typeof (result as { formatted?: unknown }).formatted === 'string') {
