@@ -767,15 +767,16 @@ function getNullableUnionSchema(jsonSchemaProperty: JsonSchemaProperty): JsonSch
 
 	const nonNullVariants = variants.filter((variant) => variant.type !== 'null');
 	const hasNullVariant = nonNullVariants.length !== variants.length;
-	if (!hasNullVariant || nonNullVariants.length !== 1) {
+	const nonNullVariant = nonNullVariants[0];
+	if (!hasNullVariant || nonNullVariants.length !== 1 || !nonNullVariant) {
 		return undefined;
 	}
 
 	const { anyOf: _anyOf, oneOf: _oneOf, ...base } = jsonSchemaProperty;
 	return {
 		...base,
-		...nonNullVariants[0],
-		description: jsonSchemaProperty.description ?? nonNullVariants[0].description,
+		...nonNullVariant,
+		description: jsonSchemaProperty.description ?? nonNullVariant.description,
 		default: jsonSchemaProperty.default,
 	};
 }
