@@ -747,8 +747,11 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 
 				// Prepare safe logging parameters without relying on strong typing
 				const repoIdsParam = (params as { repo_ids?: unknown }).repo_ids;
-				const repoIds = Array.isArray(repoIdsParam) ? repoIdsParam : [];
-				const firstRepoId = typeof repoIds[0] === 'string' ? (repoIds[0] as string) : '';
+				const repoIds = Array.isArray(repoIdsParam)
+					? repoIdsParam.filter((repoId): repoId is string => typeof repoId === 'string')
+					: [];
+				const joinedRepoIds = repoIds.join(', ');
+				const loggedRepoIds = joinedRepoIds.length > 500 ? `${joinedRepoIds.slice(0, 497)}...` : joinedRepoIds;
 				const repoType = (params as { repo_type?: unknown }).repo_type as unknown;
 				const repoTypeSafe =
 					repoType === 'model' || repoType === 'dataset' || repoType === 'space' ? repoType : undefined;
@@ -765,8 +768,9 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					logPromptQuery,
 					{
 						methodName: HUB_REPO_DETAILS_TOOL_CONFIG.name,
-						query: firstRepoId,
+						query: loggedRepoIds,
 						parameters: {
+							repo_ids: repoIds,
 							count: repoIds.length,
 							repo_type: repoTypeSafe,
 							include_readme: includeReadme,
