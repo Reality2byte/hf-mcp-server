@@ -242,7 +242,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 		};
 		const toolSelection = await toolSelectionStrategy.selectTools(toolSelectionContext);
 		const hfFsInstruction = toolSelection.enabledToolIds.includes(HF_FS_TOOL_ID)
-			? '\nWhen using hf_fs, public hf:// file URIs can be converted to browser URLs by replacing hf://buckets/OWNER/NAME/PATH with https://huggingface.co/buckets/OWNER/NAME/resolve/PATH; for models, datasets, and spaces, use https://huggingface.co[/datasets|/spaces]/OWNER/NAME/resolve/main/PATH. URL-encode each path segment; private URLs require authorization.'
+			? '\nhf:// URIs can be converted to browser URLs by replacing hf://buckets/OWNER/NAME/PATH with https://huggingface.co/buckets/OWNER/NAME/resolve/PATH; for models, datasets, and spaces, use https://huggingface.co[/datasets|/spaces]/OWNER/NAME/resolve/main/PATH. URL-encode each path segment.'
 			: '';
 
 		/**
@@ -262,11 +262,12 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			},
 			{
 				instructions:
-					"You have tools for using the Hugging Face Hub. arXiv paper id's are often " +
+					'You have tools for using the Hugging Face Hub. ' +
+					userInfo +
+					hfFsInstruction +
+					" arXiv paper id's are often " +
 					'used as references between datasets, models and papers. There are over 100 tags in use, ' +
 					"common tags include 'Text Generation', 'Transformers', 'Image Classification' and so on.\n" +
-					userInfo +
-					hfFsInstruction,
 			}
 		);
 
