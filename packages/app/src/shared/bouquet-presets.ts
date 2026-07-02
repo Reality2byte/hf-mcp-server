@@ -2,6 +2,7 @@ import {
 	ALL_BUILTIN_TOOL_IDS,
 	TOOL_ID_GROUPS,
 	HUB_REPO_DETAILS_TOOL_ID,
+	HF_FS_TOOL_ID,
 	USE_SPACE_TOOL_ID,
 	HF_JOBS_TOOL_ID,
 	DYNAMIC_SPACE_TOOL_ID,
@@ -27,6 +28,10 @@ export const BOUQUETS: Record<string, AppSettings> = {
 	},
 	docs: {
 		builtInTools: [...TOOL_ID_GROUPS.docs],
+		spaceTools: [],
+	},
+	files: {
+		builtInTools: [HF_FS_TOOL_ID],
 		spaceTools: [],
 	},
 	skills: {
@@ -131,6 +136,14 @@ const PRESET_META: Array<Omit<BouquetPreset, 'builtInTools'>> = [
 		key: 'docs',
 		label: 'Hugging Face Documentation',
 		description: 'Documentation Search and Fetch tools.',
+		category: 'core',
+		supportsBouquet: true,
+		supportsMix: true,
+	},
+	{
+		key: 'files',
+		label: 'Hub Files',
+		description: 'List, read, and inspect Hub repository and bucket files via hf:// URIs.',
 		category: 'core',
 		supportsBouquet: true,
 		supportsMix: true,
@@ -280,6 +293,10 @@ const TOOL_DESCRIPTIONS: Record<string, Omit<ConfigEntryDescription, 'id' | 'kin
 	space_files: {
 		label: 'Space Files',
 		description: 'Browse the file structure of a Space repository.',
+	},
+	hf_fs: {
+		label: 'HF Filesystem',
+		description: 'List, read, or inspect Hub repository and bucket files via hf:// URIs.',
 	},
 	use_space: {
 		label: 'Use Space',

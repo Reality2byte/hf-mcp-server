@@ -573,13 +573,16 @@ export function registerRemoteTools(
 		);
 
 		// Register the tool
-		const theTool = server.tool(
+		const theTool = server.registerTool(
 			outwardFacingName,
-			description,
-			schemaShape,
 			{
-				openWorldHint: true,
 				title: title,
+				description,
+				inputSchema: schemaShape,
+				annotations: {
+					openWorldHint: true,
+					title: title,
+				},
 			},
 			handler
 		);

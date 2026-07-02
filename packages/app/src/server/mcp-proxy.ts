@@ -242,10 +242,12 @@ function buildProxyToolSchemaShape(
 function registerQwenImagePrompt(server: McpServer) {
 	logger.debug('Registering Qwen Image prompt enhancer');
 
-	server.prompt(
+	server.registerPrompt(
 		QWEN_IMAGE_PROMPT_CONFIG.name,
-		QWEN_IMAGE_PROMPT_CONFIG.description,
-		QWEN_IMAGE_PROMPT_CONFIG.schema.shape,
+		{
+			description: QWEN_IMAGE_PROMPT_CONFIG.description,
+			argsSchema: QWEN_IMAGE_PROMPT_CONFIG.schema.shape,
+		},
 		async (params) => {
 			// Build the enhanced prompt with the user's input
 			const enhancedPrompt = `
@@ -398,11 +400,14 @@ export const createProxyServerFactory = (
 
 		if (fileSource && hfToken && !fileListingProvidedByProxy) {
 			try {
-				server.tool(
+				server.registerTool(
 					LIST_FILES_TOOL_CONFIG.name,
-					LIST_FILES_TOOL_CONFIG.description,
-					LIST_FILES_TOOL_CONFIG.schema.shape,
-					LIST_FILES_TOOL_CONFIG.annotations,
+					{
+						title: LIST_FILES_TOOL_CONFIG.annotations.title,
+						description: LIST_FILES_TOOL_CONFIG.description,
+						inputSchema: LIST_FILES_TOOL_CONFIG.schema.shape,
+						annotations: LIST_FILES_TOOL_CONFIG.annotations,
+					},
 					async (params: ListFilesParams) => {
 						const tool = new ListFilesTool(hfToken, fileSource);
 						const markdown = await tool.generateDetailedMarkdown(params.fileType);
