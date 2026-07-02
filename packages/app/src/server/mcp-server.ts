@@ -267,7 +267,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					hfFsInstruction +
 					" arXiv paper id's are often " +
 					'used as references between datasets, models and papers. There are over 100 tags in use, ' +
-					"common tags include 'Text Generation', 'Transformers', 'Image Classification' and so on.\n" +
+					"common tags include 'Text Generation', 'Transformers', 'Image Classification' and so on.\n",
 			}
 		);
 
