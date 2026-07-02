@@ -32,10 +32,14 @@ import {
 	HUB_REPO_DETAILS_TOOL_CONFIG,
 	HubInspectTool,
 	type HubInspectParams,
+	HF_FILES_FLAG,
 	HF_FS_TOOL_ID,
 	HfFsTool,
 	formatHfFsMarkdown,
 	type HfFsParams,
+	HfFsWriteTool,
+	formatHfFsWriteMarkdown,
+	type HfFsWriteParams,
 	DuplicateSpaceTool,
 	formatDuplicateResult,
 	type DuplicateSpaceParams,
@@ -230,6 +234,17 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 		const clientDenied = isClientDenied(sessionInfo?.clientInfo?.name, headers?.['user-agent']);
 		const hasSkills = !!skillCatalog?.entries.length && !clientDenied;
 
+		// Get tool selection before creating the server so instructions can match advertised tools.
+		const toolSelectionContext: ToolSelectionContext = {
+			headers,
+			userSettings,
+			hfToken,
+		};
+		const toolSelection = await toolSelectionStrategy.selectTools(toolSelectionContext);
+		const hfFsInstruction = toolSelection.enabledToolIds.includes(HF_FS_TOOL_ID)
+			? '\nhf:// URIs can be converted to browser URLs by replacing hf://buckets/OWNER/NAME/PATH with https://huggingface.co/buckets/OWNER/NAME/resolve/PATH; for models, datasets, and spaces, use https://huggingface.co[/datasets|/spaces]/OWNER/NAME/resolve/main/PATH. URL-encode each path segment.'
+			: '';
+
 		/**
 		 *  we will set capabilities below. tool registrations automatically set tools: {listChanged: true}.
 		 */
@@ -247,10 +262,12 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			},
 			{
 				instructions:
-					"You have tools for using the Hugging Face Hub. arXiv paper id's are often " +
+					'You have tools for using the Hugging Face Hub. ' +
+					userInfo +
+					hfFsInstruction +
+					" arXiv paper id's are often " +
 					'used as references between datasets, models and papers. There are over 100 tags in use, ' +
-					"common tags include 'Text Generation', 'Transformers', 'Image Classification' and so on.\n" +
-					userInfo,
+					"common tags include 'Text Generation', 'Transformers', 'Image Classification' and so on.\n",
 			}
 		);
 
@@ -259,13 +276,6 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			disable(): void;
 		}
 
-		// Get tool selection first (needed for runtime configuration like ALLOW_README_INCLUDE)
-		const toolSelectionContext: ToolSelectionContext = {
-			headers,
-			userSettings,
-			hfToken,
-		};
-		const toolSelection = await toolSelectionStrategy.selectTools(toolSelectionContext);
 		const rawNoImageHeader = headers?.['x-mcp-no-image-content'];
 		const noImageContentHeaderEnabled =
 			typeof rawNoImageHeader === 'string' && rawNoImageHeader.trim().toLowerCase() === 'true';
@@ -886,6 +896,57 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 				};
 			}
 		);
+
+		if (hfToken && toolSelection.enabledToolIds.includes(HF_FILES_FLAG)) {
+			const hfFsWriteToolConfig = HfFsWriteTool.createToolConfig();
+			server.registerTool(
+				hfFsWriteToolConfig.name,
+				{
+					title: hfFsWriteToolConfig.title,
+					description: hfFsWriteToolConfig.description,
+					inputSchema: hfFsWriteToolConfig.schema.shape,
+					outputSchema: hfFsWriteToolConfig.outputSchema.shape,
+					annotations: hfFsWriteToolConfig.annotations,
+				},
+				async (params: HfFsWriteParams) => {
+					const result = await runWithQueryLogging(
+						logPromptQuery,
+						{
+							methodName: hfFsWriteToolConfig.name,
+							query: params.uri,
+							parameters: {
+								op: params.op,
+								uri: params.uri,
+								branch: params.branch,
+								message: params.message,
+								content_type:
+									params.op === 'put'
+										? params.text !== undefined
+											? 'text'
+											: params.base64 !== undefined
+												? 'base64'
+												: undefined
+										: undefined,
+							},
+							baseOptions: getLoggingOptions(),
+							successOptions: (writeResult) => ({
+								totalResults: 1,
+								resultsShared: 1,
+								responseCharCount: formatHfFsWriteMarkdown(writeResult).length,
+							}),
+						},
+						async () => {
+							const tool = new HfFsWriteTool(hfToken, undefined);
+							return await tool.run(params);
+						}
+					);
+					return {
+						structuredContent: { ...result },
+						content: [{ type: 'text', text: formatHfFsWriteMarkdown(result) }],
+					};
+				}
+			);
+		}
 
 		toolInstances[DOCS_SEMANTIC_SEARCH_CONFIG.name] = server.registerTool(
 			DOCS_SEMANTIC_SEARCH_CONFIG.name,
