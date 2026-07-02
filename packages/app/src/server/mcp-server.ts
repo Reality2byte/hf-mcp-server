@@ -32,6 +32,10 @@ import {
 	HUB_REPO_DETAILS_TOOL_CONFIG,
 	HubInspectTool,
 	type HubInspectParams,
+	HF_FS_TOOL_ID,
+	HfFsTool,
+	formatHfFsMarkdown,
+	type HfFsParams,
 	DuplicateSpaceTool,
 	formatDuplicateResult,
 	type DuplicateSpaceParams,
@@ -77,7 +81,7 @@ import type { McpApiClient } from './utils/mcp-api-client.js';
 import type { WebServer } from './web-server.js';
 import { logger } from './utils/logger.js';
 import { logSearchQuery, logPromptQuery, logGradioEvent, type QueryLoggerOptions } from './utils/query-logger.js';
-import { DEFAULT_SPACE_TOOLS, type AppSettings } from '../shared/settings.js';
+import type { AppSettings } from '../shared/settings.js';
 import { extractAuthBouquetAndMix } from './utils/auth-utils.js';
 import {
 	AUTHENTICATED_BUILTIN_TOOL_IDS,
@@ -92,10 +96,10 @@ import { registerSkillResources } from './skills/skill-resources.js';
 import { isClientDenied } from '../shared/client-denylist.js';
 import { getSkillCatalog } from './skills/skill-catalog-cache.js';
 
-// Fallback settings when API fails (enables all tools)
+// Fallback settings when API/user settings are unavailable.
 export const BOUQUET_FALLBACK: AppSettings = {
-	builtInTools: [...TOOL_ID_GROUPS.hf_api],
-	spaceTools: DEFAULT_SPACE_TOOLS,
+	builtInTools: [...TOOL_ID_GROUPS.hf_api, HF_FS_TOOL_ID],
+	spaceTools: [],
 };
 
 // Bouquet configurations moved to tool-selection-strategy.ts
@@ -227,8 +231,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 		const hasSkills = !!skillCatalog?.entries.length && !clientDenied;
 
 		/**
-		 *  we will set capabilities below. use of the convenience .tool() registration methods automatically
-		 * sets tools: {listChanged: true} .
+		 *  we will set capabilities below. tool registrations automatically set tools: {listChanged: true}.
 		 */
 		const server = new McpServer(
 			{
@@ -275,11 +278,14 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			: 'Hugging Face tools are being used anonymously and may be rate limited. Call this tool for instructions on joining and authenticating.';
 
 		const response = userDetails ? `You are authenticated as ${username ?? 'unknown'}.` : CONFIG_GUIDANCE;
-		server.tool(
+		server.registerTool(
 			'hf_whoami',
-			whoDescription,
-			{},
-			{ readOnlyHint: true, openWorldHint: false, title: 'Hugging Face User Info' },
+			{
+				title: 'Hugging Face User Info',
+				description: whoDescription,
+				inputSchema: {},
+				annotations: { readOnlyHint: true, openWorldHint: false, title: 'Hugging Face User Info' },
+			},
 			() => {
 				return { content: [{ type: 'text', text: response }] };
 			}
@@ -287,21 +293,26 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 
 		/** always leave tool active so flow can complete / allow uid change */
 		if (process.env.AUTHENTICATE_TOOL === 'true') {
-			server.tool(
+			server.registerTool(
 				'Authenticate',
-				'Authenticate with Hugging Face',
-				{},
-				{ title: 'Hugging Face Authentication' },
+				{
+					title: 'Hugging Face Authentication',
+					description: 'Authenticate with Hugging Face',
+					inputSchema: {},
+					annotations: { title: 'Hugging Face Authentication' },
+				},
 				() => {
 					return { content: [{ type: 'text', text: 'You have successfully authenticated' }] };
 				}
 			);
 		}
 
-		server.prompt(
+		server.registerPrompt(
 			USER_SUMMARY_PROMPT_CONFIG.name,
-			USER_SUMMARY_PROMPT_CONFIG.description,
-			USER_SUMMARY_PROMPT_CONFIG.schema.shape,
+			{
+				description: USER_SUMMARY_PROMPT_CONFIG.description,
+				argsSchema: USER_SUMMARY_PROMPT_CONFIG.schema.shape,
+			},
 			async (params: UserSummaryParams) => {
 				const summaryText = await runWithQueryLogging(
 					logPromptQuery,
@@ -337,10 +348,12 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			}
 		);
 
-		server.prompt(
+		server.registerPrompt(
 			PAPER_SUMMARY_PROMPT_CONFIG.name,
-			PAPER_SUMMARY_PROMPT_CONFIG.description,
-			PAPER_SUMMARY_PROMPT_CONFIG.schema.shape,
+			{
+				description: PAPER_SUMMARY_PROMPT_CONFIG.description,
+				argsSchema: PAPER_SUMMARY_PROMPT_CONFIG.schema.shape,
+			},
 			async (params: PaperSummaryParams) => {
 				const summaryText = await runWithQueryLogging(
 					logPromptQuery,
@@ -376,10 +389,12 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			}
 		);
 
-		server.prompt(
+		server.registerPrompt(
 			MODEL_DETAIL_PROMPT_CONFIG.name,
-			MODEL_DETAIL_PROMPT_CONFIG.description,
-			MODEL_DETAIL_PROMPT_CONFIG.schema.shape,
+			{
+				description: MODEL_DETAIL_PROMPT_CONFIG.description,
+				argsSchema: MODEL_DETAIL_PROMPT_CONFIG.schema.shape,
+			},
 			async (params: ModelDetailParams) => {
 				const result = await runWithQueryLogging(
 					logPromptQuery,
@@ -415,10 +430,12 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			}
 		);
 
-		server.prompt(
+		server.registerPrompt(
 			DATASET_DETAIL_PROMPT_CONFIG.name,
-			DATASET_DETAIL_PROMPT_CONFIG.description,
-			DATASET_DETAIL_PROMPT_CONFIG.schema.shape,
+			{
+				description: DATASET_DETAIL_PROMPT_CONFIG.description,
+				argsSchema: DATASET_DETAIL_PROMPT_CONFIG.schema.shape,
+			},
 			async (params: DatasetDetailParams) => {
 				const result = await runWithQueryLogging(
 					logPromptQuery,
@@ -454,11 +471,14 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			}
 		);
 
-		toolInstances[SEMANTIC_SEARCH_TOOL_CONFIG.name] = server.tool(
+		toolInstances[SEMANTIC_SEARCH_TOOL_CONFIG.name] = server.registerTool(
 			SEMANTIC_SEARCH_TOOL_CONFIG.name,
-			SEMANTIC_SEARCH_TOOL_CONFIG.description,
-			SEMANTIC_SEARCH_TOOL_CONFIG.schema.shape,
-			SEMANTIC_SEARCH_TOOL_CONFIG.annotations,
+			{
+				title: SEMANTIC_SEARCH_TOOL_CONFIG.annotations.title,
+				description: SEMANTIC_SEARCH_TOOL_CONFIG.description,
+				inputSchema: SEMANTIC_SEARCH_TOOL_CONFIG.schema.shape,
+				annotations: SEMANTIC_SEARCH_TOOL_CONFIG.annotations,
+			},
 			async (params: SearchParams) => {
 				const result = await runWithQueryLogging(
 					logSearchQuery,
@@ -485,11 +505,14 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			}
 		);
 
-		toolInstances[MODEL_SEARCH_TOOL_CONFIG.name] = server.tool(
+		toolInstances[MODEL_SEARCH_TOOL_CONFIG.name] = server.registerTool(
 			MODEL_SEARCH_TOOL_CONFIG.name,
-			MODEL_SEARCH_TOOL_CONFIG.description,
-			MODEL_SEARCH_TOOL_CONFIG.schema.shape,
-			MODEL_SEARCH_TOOL_CONFIG.annotations,
+			{
+				title: MODEL_SEARCH_TOOL_CONFIG.annotations.title,
+				description: MODEL_SEARCH_TOOL_CONFIG.description,
+				inputSchema: MODEL_SEARCH_TOOL_CONFIG.schema.shape,
+				annotations: MODEL_SEARCH_TOOL_CONFIG.annotations,
+			},
 			async (params: ModelSearchParams) => {
 				const filters: string[] = [];
 				if (params.task) filters.push(params.task);
@@ -528,11 +551,14 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			}
 		);
 
-		toolInstances[REPO_SEARCH_TOOL_CONFIG.name] = server.tool(
+		toolInstances[REPO_SEARCH_TOOL_CONFIG.name] = server.registerTool(
 			REPO_SEARCH_TOOL_CONFIG.name,
-			REPO_SEARCH_TOOL_CONFIG.description,
-			REPO_SEARCH_TOOL_CONFIG.schema.shape,
-			REPO_SEARCH_TOOL_CONFIG.annotations,
+			{
+				title: REPO_SEARCH_TOOL_CONFIG.annotations.title,
+				description: REPO_SEARCH_TOOL_CONFIG.description,
+				inputSchema: REPO_SEARCH_TOOL_CONFIG.schema.shape,
+				annotations: REPO_SEARCH_TOOL_CONFIG.annotations,
+			},
 			async (params: RepoSearchParams) => {
 				const result = await runWithQueryLogging(
 					logSearchQuery,
@@ -591,11 +617,14 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			}
 		);
 
-		toolInstances[MODEL_DETAIL_TOOL_CONFIG.name] = server.tool(
+		toolInstances[MODEL_DETAIL_TOOL_CONFIG.name] = server.registerTool(
 			MODEL_DETAIL_TOOL_CONFIG.name,
-			MODEL_DETAIL_TOOL_CONFIG.description,
-			MODEL_DETAIL_TOOL_CONFIG.schema.shape,
-			MODEL_DETAIL_TOOL_CONFIG.annotations,
+			{
+				title: MODEL_DETAIL_TOOL_CONFIG.annotations.title,
+				description: MODEL_DETAIL_TOOL_CONFIG.description,
+				inputSchema: MODEL_DETAIL_TOOL_CONFIG.schema.shape,
+				annotations: MODEL_DETAIL_TOOL_CONFIG.annotations,
+			},
 			async (params: ModelDetailParams) => {
 				const result = await runWithQueryLogging(
 					logPromptQuery,
@@ -621,11 +650,14 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			}
 		);
 
-		toolInstances[PAPER_SEARCH_TOOL_CONFIG.name] = server.tool(
+		toolInstances[PAPER_SEARCH_TOOL_CONFIG.name] = server.registerTool(
 			PAPER_SEARCH_TOOL_CONFIG.name,
-			PAPER_SEARCH_TOOL_CONFIG.description,
-			PAPER_SEARCH_TOOL_CONFIG.schema.shape,
-			PAPER_SEARCH_TOOL_CONFIG.annotations,
+			{
+				title: PAPER_SEARCH_TOOL_CONFIG.annotations.title,
+				description: PAPER_SEARCH_TOOL_CONFIG.description,
+				inputSchema: PAPER_SEARCH_TOOL_CONFIG.schema.shape,
+				annotations: PAPER_SEARCH_TOOL_CONFIG.annotations,
+			},
 			async (params: z.infer<typeof PAPER_SEARCH_TOOL_CONFIG.schema>) => {
 				const result = await runWithQueryLogging(
 					logSearchQuery,
@@ -651,11 +683,14 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			}
 		);
 
-		toolInstances[DATASET_SEARCH_TOOL_CONFIG.name] = server.tool(
+		toolInstances[DATASET_SEARCH_TOOL_CONFIG.name] = server.registerTool(
 			DATASET_SEARCH_TOOL_CONFIG.name,
-			DATASET_SEARCH_TOOL_CONFIG.description,
-			DATASET_SEARCH_TOOL_CONFIG.schema.shape,
-			DATASET_SEARCH_TOOL_CONFIG.annotations,
+			{
+				title: DATASET_SEARCH_TOOL_CONFIG.annotations.title,
+				description: DATASET_SEARCH_TOOL_CONFIG.description,
+				inputSchema: DATASET_SEARCH_TOOL_CONFIG.schema.shape,
+				annotations: DATASET_SEARCH_TOOL_CONFIG.annotations,
+			},
 			async (params: DatasetSearchParams) => {
 				const repoParams: Partial<RepoSearchParams> = {
 					query: params.query,
@@ -690,11 +725,14 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			}
 		);
 
-		toolInstances[DATASET_DETAIL_TOOL_CONFIG.name] = server.tool(
+		toolInstances[DATASET_DETAIL_TOOL_CONFIG.name] = server.registerTool(
 			DATASET_DETAIL_TOOL_CONFIG.name,
-			DATASET_DETAIL_TOOL_CONFIG.description,
-			DATASET_DETAIL_TOOL_CONFIG.schema.shape,
-			DATASET_DETAIL_TOOL_CONFIG.annotations,
+			{
+				title: DATASET_DETAIL_TOOL_CONFIG.annotations.title,
+				description: DATASET_DETAIL_TOOL_CONFIG.description,
+				inputSchema: DATASET_DETAIL_TOOL_CONFIG.schema.shape,
+				annotations: DATASET_DETAIL_TOOL_CONFIG.annotations,
+			},
 			async (params: DatasetDetailParams) => {
 				const result = await runWithQueryLogging(
 					logPromptQuery,
@@ -733,11 +771,13 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					return rest as unknown as z.ZodRawShape;
 				})();
 
-		toolInstances[HUB_REPO_DETAILS_TOOL_CONFIG.name] = server.tool(
+		toolInstances[HUB_REPO_DETAILS_TOOL_CONFIG.name] = server.registerTool(
 			HUB_REPO_DETAILS_TOOL_CONFIG.name,
-			hubInspectDescription,
-			hubInspectSchemaShape,
-			HUB_REPO_DETAILS_TOOL_CONFIG.annotations,
+			{
+				description: hubInspectDescription,
+				inputSchema: hubInspectSchemaShape,
+				annotations: HUB_REPO_DETAILS_TOOL_CONFIG.annotations,
+			},
 			async (params: Record<string, unknown>) => {
 				// Re-evaluate flag dynamically to reflect UI changes without restarting server
 				const currentSelection = await toolSelectionStrategy.selectTools(toolSelectionContext);
@@ -747,8 +787,11 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 
 				// Prepare safe logging parameters without relying on strong typing
 				const repoIdsParam = (params as { repo_ids?: unknown }).repo_ids;
-				const repoIds = Array.isArray(repoIdsParam) ? repoIdsParam : [];
-				const firstRepoId = typeof repoIds[0] === 'string' ? (repoIds[0] as string) : '';
+				const repoIds = Array.isArray(repoIdsParam)
+					? repoIdsParam.filter((repoId): repoId is string => typeof repoId === 'string')
+					: [];
+				const joinedRepoIds = repoIds.join(', ');
+				const loggedRepoIds = joinedRepoIds.length > 500 ? `${joinedRepoIds.slice(0, 497)}...` : joinedRepoIds;
 				const repoType = (params as { repo_type?: unknown }).repo_type as unknown;
 				const repoTypeSafe =
 					repoType === 'model' || repoType === 'dataset' || repoType === 'space' ? repoType : undefined;
@@ -765,8 +808,9 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					logPromptQuery,
 					{
 						methodName: HUB_REPO_DETAILS_TOOL_CONFIG.name,
-						query: firstRepoId,
+						query: loggedRepoIds,
 						parameters: {
+							repo_ids: repoIds,
 							count: repoIds.length,
 							repo_type: repoTypeSafe,
 							include_readme: includeReadme,
@@ -794,11 +838,63 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			}
 		);
 
-		toolInstances[DOCS_SEMANTIC_SEARCH_CONFIG.name] = server.tool(
+		const hfFsToolConfig = HfFsTool.createToolConfig(username);
+		toolInstances[hfFsToolConfig.name] = server.registerTool(
+			hfFsToolConfig.name,
+			{
+				title: hfFsToolConfig.title,
+				description: hfFsToolConfig.description,
+				inputSchema: hfFsToolConfig.schema.shape,
+				outputSchema: hfFsToolConfig.outputSchema.shape,
+				annotations: hfFsToolConfig.annotations,
+			},
+			async (params: HfFsParams) => {
+				const result = await runWithQueryLogging(
+					logPromptQuery,
+					{
+						methodName: hfFsToolConfig.name,
+						query: params.uri,
+						parameters: {
+							op: params.op,
+							uri: params.uri,
+							glob: params.glob,
+							recursive: params.recursive,
+							entry_type: params.entry_type,
+							max_bytes: params.max_bytes,
+							offset: params.offset,
+							limit: params.limit,
+						},
+						baseOptions: getLoggingOptions(),
+						successOptions: (fsResult) => {
+							const shared =
+								fsResult.op === 'ls' ? fsResult.entries.length : fsResult.op === 'stat' && !fsResult.exists ? 0 : 1;
+							return {
+								totalResults: fsResult.op === 'ls' ? fsResult.entries.length : shared,
+								resultsShared: shared,
+								responseCharCount: formatHfFsMarkdown(fsResult).length,
+							};
+						},
+					},
+					async () => {
+						const tool = new HfFsTool(hfToken, undefined);
+						return await tool.run(params);
+					}
+				);
+				return {
+					structuredContent: { ...result },
+					content: [{ type: 'text', text: formatHfFsMarkdown(result) }],
+				};
+			}
+		);
+
+		toolInstances[DOCS_SEMANTIC_SEARCH_CONFIG.name] = server.registerTool(
 			DOCS_SEMANTIC_SEARCH_CONFIG.name,
-			DOCS_SEMANTIC_SEARCH_CONFIG.description,
-			DOCS_SEMANTIC_SEARCH_CONFIG.schema.shape,
-			DOCS_SEMANTIC_SEARCH_CONFIG.annotations,
+			{
+				title: DOCS_SEMANTIC_SEARCH_CONFIG.annotations.title,
+				description: DOCS_SEMANTIC_SEARCH_CONFIG.description,
+				inputSchema: DOCS_SEMANTIC_SEARCH_CONFIG.schema.shape,
+				annotations: DOCS_SEMANTIC_SEARCH_CONFIG.annotations,
+			},
 			async (params: DocSearchParams) => {
 				const result = await runWithQueryLogging(
 					logSearchQuery,
@@ -824,11 +920,14 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			}
 		);
 
-		toolInstances[DOC_FETCH_CONFIG.name] = server.tool(
+		toolInstances[DOC_FETCH_CONFIG.name] = server.registerTool(
 			DOC_FETCH_CONFIG.name,
-			DOC_FETCH_CONFIG.description,
-			DOC_FETCH_CONFIG.schema.shape,
-			DOC_FETCH_CONFIG.annotations,
+			{
+				title: DOC_FETCH_CONFIG.annotations.title,
+				description: DOC_FETCH_CONFIG.description,
+				inputSchema: DOC_FETCH_CONFIG.schema.shape,
+				annotations: DOC_FETCH_CONFIG.annotations,
+			},
 			async (params: DocFetchParams) => {
 				const results = await runWithQueryLogging(
 					logSearchQuery,
@@ -855,11 +954,14 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 		);
 
 		const duplicateToolConfig = DuplicateSpaceTool.createToolConfig(username);
-		toolInstances[duplicateToolConfig.name] = server.tool(
+		toolInstances[duplicateToolConfig.name] = server.registerTool(
 			duplicateToolConfig.name,
-			duplicateToolConfig.description,
-			duplicateToolConfig.schema.shape,
-			duplicateToolConfig.annotations,
+			{
+				title: duplicateToolConfig.annotations.title,
+				description: duplicateToolConfig.description,
+				inputSchema: duplicateToolConfig.schema.shape,
+				annotations: duplicateToolConfig.annotations,
+			},
 			async (params: DuplicateSpaceParams) => {
 				const duplicateSpace = new DuplicateSpaceTool(hfToken, username);
 				const result = await duplicateSpace.duplicate(params);
@@ -870,11 +972,14 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 		);
 
 		const spaceInfoToolConfig = SpaceInfoTool.createToolConfig(username);
-		toolInstances[spaceInfoToolConfig.name] = server.tool(
+		toolInstances[spaceInfoToolConfig.name] = server.registerTool(
 			spaceInfoToolConfig.name,
-			spaceInfoToolConfig.description,
-			spaceInfoToolConfig.schema.shape,
-			spaceInfoToolConfig.annotations,
+			{
+				title: spaceInfoToolConfig.annotations.title,
+				description: spaceInfoToolConfig.description,
+				inputSchema: spaceInfoToolConfig.schema.shape,
+				annotations: spaceInfoToolConfig.annotations,
+			},
 			async (params: SpaceInfoParams) => {
 				const spaceInfoTool = new SpaceInfoTool(hfToken, username);
 				const result = await formatSpaceInfoResult(spaceInfoTool, params);
@@ -885,11 +990,14 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 		);
 
 		const spaceFilesToolConfig = SpaceFilesTool.createToolConfig(username);
-		toolInstances[spaceFilesToolConfig.name] = server.tool(
+		toolInstances[spaceFilesToolConfig.name] = server.registerTool(
 			spaceFilesToolConfig.name,
-			spaceFilesToolConfig.description,
-			spaceFilesToolConfig.schema.shape,
-			spaceFilesToolConfig.annotations,
+			{
+				title: spaceFilesToolConfig.annotations.title,
+				description: spaceFilesToolConfig.description,
+				inputSchema: spaceFilesToolConfig.schema.shape,
+				annotations: spaceFilesToolConfig.annotations,
+			},
 			async (params: SpaceFilesParams) => {
 				const spaceFilesTool = new SpaceFilesTool(hfToken, username);
 				const result = await spaceFilesTool.listFiles(params);
@@ -899,11 +1007,14 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			}
 		);
 
-		toolInstances[USE_SPACE_TOOL_CONFIG.name] = server.tool(
+		toolInstances[USE_SPACE_TOOL_CONFIG.name] = server.registerTool(
 			USE_SPACE_TOOL_CONFIG.name,
-			USE_SPACE_TOOL_CONFIG.description,
-			USE_SPACE_TOOL_CONFIG.schema.shape,
-			USE_SPACE_TOOL_CONFIG.annotations,
+			{
+				title: USE_SPACE_TOOL_CONFIG.annotations.title,
+				description: USE_SPACE_TOOL_CONFIG.description,
+				inputSchema: USE_SPACE_TOOL_CONFIG.schema.shape,
+				annotations: USE_SPACE_TOOL_CONFIG.annotations,
+			},
 			async (params: UseSpaceParams) => {
 				const result = await runWithQueryLogging(
 					logPromptQuery,
@@ -929,11 +1040,14 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			}
 		);
 
-		toolInstances[HF_JOBS_TOOL_CONFIG.name] = server.tool(
+		toolInstances[HF_JOBS_TOOL_CONFIG.name] = server.registerTool(
 			HF_JOBS_TOOL_CONFIG.name,
-			HF_JOBS_TOOL_CONFIG.description,
-			HF_JOBS_TOOL_CONFIG.schema.shape,
-			HF_JOBS_TOOL_CONFIG.annotations,
+			{
+				title: HF_JOBS_TOOL_CONFIG.annotations.title,
+				description: HF_JOBS_TOOL_CONFIG.description,
+				inputSchema: HF_JOBS_TOOL_CONFIG.schema.shape,
+				annotations: HF_JOBS_TOOL_CONFIG.annotations,
+			},
 			async (params: z.infer<typeof HF_JOBS_TOOL_CONFIG.schema>) => {
 				// Jobs require authentication - check if user has token
 				const isAuthenticated = !!hfToken;
@@ -979,11 +1093,14 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			);
 		};
 
-		toolInstances[HF_SANDBOX_TOOL_CONFIG.name] = server.tool(
+		toolInstances[HF_SANDBOX_TOOL_CONFIG.name] = server.registerTool(
 			HF_SANDBOX_TOOL_CONFIG.name,
-			HF_SANDBOX_TOOL_CONFIG.description,
-			HF_SANDBOX_TOOL_CONFIG.schema.shape,
-			HF_SANDBOX_TOOL_CONFIG.annotations,
+			{
+				title: HF_SANDBOX_TOOL_CONFIG.annotations.title,
+				description: HF_SANDBOX_TOOL_CONFIG.description,
+				inputSchema: HF_SANDBOX_TOOL_CONFIG.schema.shape,
+				annotations: HF_SANDBOX_TOOL_CONFIG.annotations,
+			},
 			async (params: z.infer<typeof HF_SANDBOX_TOOL_CONFIG.schema>) => {
 				const isAuthenticated = !!hfToken;
 				const loggedOperation = params.operation ?? 'no-operation';
@@ -1014,11 +1131,14 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			}
 		);
 
-		toolInstances[HF_SANDBOX_EXEC_TOOL_CONFIG.name] = server.tool(
+		toolInstances[HF_SANDBOX_EXEC_TOOL_CONFIG.name] = server.registerTool(
 			HF_SANDBOX_EXEC_TOOL_CONFIG.name,
-			HF_SANDBOX_EXEC_TOOL_CONFIG.description,
-			HF_SANDBOX_EXEC_TOOL_CONFIG.schema.shape,
-			HF_SANDBOX_EXEC_TOOL_CONFIG.annotations,
+			{
+				title: HF_SANDBOX_EXEC_TOOL_CONFIG.annotations.title,
+				description: HF_SANDBOX_EXEC_TOOL_CONFIG.description,
+				inputSchema: HF_SANDBOX_EXEC_TOOL_CONFIG.schema.shape,
+				annotations: HF_SANDBOX_EXEC_TOOL_CONFIG.annotations,
+			},
 			async (params: z.infer<typeof HF_SANDBOX_EXEC_TOOL_CONFIG.schema>) => {
 				const isAuthenticated = !!hfToken;
 				const result = await runWithQueryLogging(
@@ -1050,11 +1170,14 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 
 		// Get dynamic config based on environment (uses DYNAMIC_SPACE_DATA env var)
 		const dynamicSpaceToolConfig = getDynamicSpaceToolConfig();
-		toolInstances[dynamicSpaceToolConfig.name] = server.tool(
+		toolInstances[dynamicSpaceToolConfig.name] = server.registerTool(
 			dynamicSpaceToolConfig.name,
-			dynamicSpaceToolConfig.description,
-			dynamicSpaceToolConfig.schema.shape,
-			dynamicSpaceToolConfig.annotations,
+			{
+				title: dynamicSpaceToolConfig.annotations.title,
+				description: dynamicSpaceToolConfig.description,
+				inputSchema: dynamicSpaceToolConfig.schema.shape,
+				annotations: dynamicSpaceToolConfig.annotations,
+			},
 			async (params: SpaceArgs, extra) => {
 				// Check if invoke operation is disabled by gradio=none
 				const { gradio } = extractAuthBouquetAndMix(headers);

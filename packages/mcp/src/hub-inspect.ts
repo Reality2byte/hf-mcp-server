@@ -10,6 +10,7 @@ const HUB_INSPECT_OPERATIONS = ['overview', 'dataset_structure', 'dataset_previe
 
 export const HUB_REPO_DETAILS_TOOL_CONFIG = {
 	name: 'hub_repo_details',
+	title: 'Hub Repository Details',
 	description:
 		'Get details for one or more Hugging Face repos (model, dataset, or space). ' +
 		'Auto-detects type unless specified. For datasets, use operations: overview, dataset_structure, dataset_preview. ' +
@@ -42,10 +43,13 @@ export const HUB_REPO_DETAILS_TOOL_CONFIG = {
 				'Dataset Viewer split. Required for dataset_preview when the dataset has multiple config/split options. Discover via dataset_structure.'
 			),
 		offset: z.number().int().nonnegative().optional().describe('Row offset for dataset_preview. Defaults to 0.'),
-		limit: z.number().int().optional().describe('Row count for dataset_preview. Defaults to 5 and is clamped to 1-100.'),
+		limit: z
+			.number()
+			.int()
+			.optional()
+			.describe('Row count for dataset_preview. Defaults to 5 and is clamped to 1-100.'),
 	}),
 	annotations: {
-		title: 'Hub Repo Details',
 		destructiveHint: false,
 		readOnlyHint: true,
 		openWorldHint: false,
@@ -91,14 +95,12 @@ export class HubInspectTool {
 		};
 	}
 
-	private async inspectSingle(
-		repoId: string,
-		params: HubInspectParams,
-		includeReadme: boolean
-	): Promise<string> {
+	private async inspectSingle(repoId: string, params: HubInspectParams, includeReadme: boolean): Promise<string> {
 		const type = params.repo_type;
 		const operations = normalizeOperations(params.operations);
-		const hasDatasetOperation = operations.some((operation) => operation === 'dataset_structure' || operation === 'dataset_preview');
+		const hasDatasetOperation = operations.some(
+			(operation) => operation === 'dataset_structure' || operation === 'dataset_preview'
+		);
 
 		// If caller constrained the type, do only that
 		if (type === 'model') {

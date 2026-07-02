@@ -1,12 +1,12 @@
 import { z } from 'zod';
 import { HfApiCall } from './hf-api-call.js';
-import { formatDate, formatNumber } from './utilities.js';
+import { fitsWithinCharBudget, formatDate, formatNumber, maxCharsForTokenBudget } from './utilities.js';
 import type { ToolResult } from './types/tool-result.js';
 
 const TAGS_TO_RETURN = 20;
 const TOKEN_CAP = 12_500;
 const CHARS_PER_TOKEN = 3;
-const MAX_OUTPUT_CHARS = TOKEN_CAP * CHARS_PER_TOKEN;
+const MAX_OUTPUT_CHARS = maxCharsForTokenBudget(TOKEN_CAP, CHARS_PER_TOKEN);
 
 const REPO_TYPES = ['model', 'dataset', 'space'] as const;
 export type RepoType = (typeof REPO_TYPES)[number];
@@ -242,7 +242,7 @@ function formatSearchResults(
 
 	const tryAppendLines = (nextLines: string[]): boolean => {
 		const candidate = [...lines, ...nextLines].join('\n');
-		if (candidate.length > MAX_OUTPUT_CHARS) {
+		if (!fitsWithinCharBudget(candidate, MAX_OUTPUT_CHARS)) {
 			return false;
 		}
 
@@ -301,11 +301,11 @@ function formatSearchResults(
 			`Included ${resultsShared.toString()} of ${totalResults.toString()} repositories. Narrow the query, reduce limit, or filter repo_types to see more.`,
 		];
 
-		while (lines.length > 0 && [...lines, ...truncationLines].join('\n').length > MAX_OUTPUT_CHARS) {
+		while (lines.length > 0 && !fitsWithinCharBudget([...lines, ...truncationLines].join('\n'), MAX_OUTPUT_CHARS)) {
 			lines.pop();
 		}
 
-		if ([...lines, ...truncationLines].join('\n').length <= MAX_OUTPUT_CHARS) {
+		if (fitsWithinCharBudget([...lines, ...truncationLines].join('\n'), MAX_OUTPUT_CHARS)) {
 			lines.push(...truncationLines);
 		}
 	}

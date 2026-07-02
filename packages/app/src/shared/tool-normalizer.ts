@@ -1,4 +1,10 @@
-import { HUB_REPO_DETAILS_TOOL_ID, MODEL_DETAIL_TOOL_ID, DATASET_DETAIL_TOOL_ID } from '@llmindset/hf-mcp';
+import {
+	HF_FILES_FLAG,
+	HF_FS_TOOL_ID,
+	HUB_REPO_DETAILS_TOOL_ID,
+	MODEL_DETAIL_TOOL_ID,
+	DATASET_DETAIL_TOOL_ID,
+} from '@llmindset/hf-mcp';
 import { mapLegacySearchToolId } from './repo-search-migration.js';
 
 /**
@@ -12,6 +18,16 @@ export function normalizeBuiltInTools(ids: readonly string[]): string[] {
 	let addHubInspect = false;
 
 	for (const rawId of ids) {
+		if (rawId === HF_FILES_FLAG) {
+			for (const id of [HF_FILES_FLAG, HF_FS_TOOL_ID]) {
+				if (!seen.has(id)) {
+					seen.add(id);
+					normalized.push(id);
+				}
+			}
+			continue;
+		}
+
 		const normalizedToolId = mapLegacySearchToolId(rawId);
 
 		if (normalizedToolId === MODEL_DETAIL_TOOL_ID || normalizedToolId === DATASET_DETAIL_TOOL_ID) {

@@ -12,6 +12,7 @@ export * from './create-repo.js';
 export * from './dataset-detail.js';
 export * from './dataset-viewer-inspect.js';
 export * from './hub-inspect.js';
+export * from './hf-fs.js';
 export * from './duplicate-space.js';
 export * from './space-info.js';
 export * from './space-files.js';

@@ -64,7 +64,7 @@ export function escapeMarkdown(text: string): string {
 }
 
 // Token estimation constants
-const CHARS_PER_TOKEN = 3.3; // based on anthropic tokenizer for "how to load a image to image model in transformers"
+export const DEFAULT_CHARS_PER_TOKEN = 3.3; // based on anthropic tokenizer for "how to load a image to image model in transformers"
 //  data: 121973 chars = 36711 tokens
 
 /**
@@ -73,5 +73,19 @@ const CHARS_PER_TOKEN = 3.3; // based on anthropic tokenizer for "how to load a 
  * @returns Estimated number of tokens
  */
 export function estimateTokens(text: string): number {
-	return Math.ceil(text.length / CHARS_PER_TOKEN);
+	return Math.ceil(text.length / DEFAULT_CHARS_PER_TOKEN);
+}
+
+/**
+ * Convert an approximate token budget to a character budget.
+ */
+export function maxCharsForTokenBudget(tokenBudget: number, charsPerToken = DEFAULT_CHARS_PER_TOKEN): number {
+	return Math.floor(tokenBudget * charsPerToken);
+}
+
+/**
+ * Check whether a formatted value fits under a character budget.
+ */
+export function fitsWithinCharBudget(value: string, maxChars: number): boolean {
+	return value.length <= maxChars;
 }

@@ -10,6 +10,7 @@ import type { TransportInfo } from '../../../src/shared/transport-info.js';
 import {
 	ALL_BUILTIN_TOOL_IDS,
 	CREATE_REPO_TOOL_ID,
+	HF_FS_TOOL_ID,
 	HF_SANDBOX_EXEC_TOOL_ID,
 	HF_SANDBOX_TOOL_ID,
 	REPO_SEARCH_TOOL_ID,
@@ -113,6 +114,15 @@ describe('BOUQUETS configuration', () => {
 		expect(bouquet).toBeDefined();
 		if (bouquet) {
 			expect(bouquet.builtInTools).toEqual([...TOOL_ID_GROUPS.sandbox]);
+			expect(bouquet.spaceTools).toEqual([]);
+		}
+	});
+
+	it('should expose hf_fs through files bouquet', () => {
+		const bouquet = BOUQUETS.files;
+		expect(bouquet).toBeDefined();
+		if (bouquet) {
+			expect(bouquet.builtInTools).toEqual([HF_FS_TOOL_ID]);
 			expect(bouquet.spaceTools).toEqual([]);
 		}
 	});
@@ -224,6 +234,19 @@ describe('ToolSelectionStrategy', () => {
 			expect(result.reason).toBe('Bouquet override: sandbox');
 		});
 
+		it('should use bouquet override for files bouquet', async () => {
+			const context: ToolSelectionContext = {
+				headers: { 'x-mcp-bouquet': 'files' },
+				hfToken: 'test-token',
+			};
+
+			const result = await strategy.selectTools(context);
+
+			expect(result.mode).toBe(ToolSelectionMode.BOUQUET_OVERRIDE);
+			expect(result.enabledToolIds).toEqual([HF_FS_TOOL_ID]);
+			expect(result.reason).toBe('Bouquet override: files');
+		});
+
 		it('should ignore invalid bouquet names', async () => {
 			const context: ToolSelectionContext = {
 				headers: { 'x-mcp-bouquet': 'invalid_bouquet' },
@@ -324,6 +347,26 @@ describe('ToolSelectionStrategy', () => {
 
 			const expectedTools = [...new Set([...userSettings.builtInTools, ...TOOL_ID_GROUPS.search])];
 			expect(result.enabledToolIds).toEqual(expectedTools);
+		});
+
+		it('should mix files tool with user settings', async () => {
+			const userSettings: AppSettings = {
+				builtInTools: [REPO_SEARCH_TOOL_ID],
+				spaceTools: [],
+			};
+
+			const context: ToolSelectionContext = {
+				headers: { 'x-mcp-mix': 'files' },
+				userSettings,
+				hfToken: 'test-token',
+			};
+
+			const result = await strategy.selectTools(context);
+
+			expect(result.mode).toBe(ToolSelectionMode.MIX);
+			expect(result.reason).toBe('User settings + mix(files)');
+			expect(result.mixedBouquet).toEqual(['files']);
+			expect(result.enabledToolIds).toEqual([REPO_SEARCH_TOOL_ID, HF_FS_TOOL_ID]);
 		});
 
 		it('should deduplicate tools when mixing', async () => {
@@ -496,6 +539,43 @@ describe('ToolSelectionStrategy', () => {
 
 			expect(result.mode).toBe(ToolSelectionMode.EXTERNAL_API);
 			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(userSettings.builtInTools));
+			expect(result.reason).toBe('External API user settings');
+		});
+
+		it('should preserve hf_files external flag while enabling hf_fs', async () => {
+			const externalConfig: ApiClientConfig = {
+				type: 'external',
+				externalUrl: 'https://api.example.com/settings',
+				hfToken: 'test-token',
+			};
+
+			const externalTransportInfo: TransportInfo = {
+				transport: 'streamableHttpJson',
+				port: 3000,
+				defaultHfTokenSet: false,
+				jsonResponseEnabled: true,
+				externalApiMode: true,
+				stdioClient: null,
+			};
+
+			const externalApiClient = new McpApiClient(externalConfig, externalTransportInfo);
+			const externalStrategy = new ToolSelectionStrategy(externalApiClient);
+
+			const userSettings: AppSettings = {
+				builtInTools: ['hf_files'],
+				spaceTools: [],
+			};
+
+			const context: ToolSelectionContext = {
+				headers: {},
+				userSettings,
+				hfToken: 'test-token',
+			};
+
+			const result = await externalStrategy.selectTools(context);
+
+			expect(result.mode).toBe(ToolSelectionMode.EXTERNAL_API);
+			expect(result.enabledToolIds).toEqual(['hf_files', HF_FS_TOOL_ID]);
 			expect(result.reason).toBe('External API user settings');
 		});
 

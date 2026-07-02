@@ -4,6 +4,7 @@ import { formatBytes, escapeMarkdown } from './utilities.js';
 import { HfApiError } from './hf-api-call.js';
 import { explain } from './error-messages.js';
 import { getFileIcon } from './file-icons.js';
+import { classifyTextFilePath } from './text-file-policy.js';
 
 export type FileTypeFilter = 'all' | 'image' | 'audio' | 'text';
 
@@ -58,21 +59,6 @@ const AUDIO_EXTENSIONS = new Set([
 	'.ra',
 ]);
 
-const TEXT_EXTENSIONS = new Set([
-	'.txt',
-	'.md',
-	'.json',
-	'.xml',
-	'.csv',
-	'.tsv',
-	'.yaml',
-	'.yml',
-	'.html',
-	'.css',
-	'.js',
-	'.py',
-]);
-
 function getFileExtension(path: string): string {
 	const lastDot = path.lastIndexOf('.');
 	return lastDot === -1 ? '' : path.substring(lastDot).toLowerCase();
@@ -87,7 +73,7 @@ function isAudioFile(path: string): boolean {
 }
 
 function isTextFile(path: string): boolean {
-	return TEXT_EXTENSIONS.has(getFileExtension(path));
+	return classifyTextFilePath(path) === 'text';
 }
 
 function matchesFileType(file: FileWithUrl, fileType: FileTypeFilter): boolean {
