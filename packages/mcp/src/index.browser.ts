@@ -85,6 +85,19 @@ export const HUB_REPO_DETAILS_TOOL_CONFIG: BrowserToolConfig = {
 	},
 };
 
+export const HF_FS_TOOL_CONFIG: BrowserToolConfig = {
+	name: 'hf_fs',
+	description:
+		'List repositories, buckets, or files in Hugging Face model, dataset, Space, and bucket repositories using hf:// URIs. ' +
+		'Use owner URIs like hf://models/openai or hf://buckets/evalstate to list repos or buckets; use repo/file URIs with ls, cat, and stat for files.',
+	annotations: {
+		title: 'Hugging Face Filesystem',
+		destructiveHint: false,
+		readOnlyHint: true,
+		openWorldHint: true,
+	},
+};
+
 export const DUPLICATE_SPACE_TOOL_CONFIG: BrowserToolConfig = {
 	name: 'duplicate_space',
 	description: '',
@@ -141,6 +154,8 @@ export const PAPER_SEARCH_TOOL_ID = PAPER_SEARCH_TOOL_CONFIG.name;
 export const DATASET_SEARCH_TOOL_ID = 'dataset_search';
 export const DATASET_DETAIL_TOOL_ID = 'dataset_details';
 export const HUB_REPO_DETAILS_TOOL_ID = HUB_REPO_DETAILS_TOOL_CONFIG.name;
+export const HF_FS_TOOL_ID = HF_FS_TOOL_CONFIG.name;
+export const HF_FILES_FLAG = 'hf_files' as const;
 export const DUPLICATE_SPACE_TOOL_ID = DUPLICATE_SPACE_TOOL_CONFIG.name;
 export const SPACE_INFO_TOOL_ID = 'space_info';
 export const SPACE_FILES_TOOL_ID = SPACE_FILES_TOOL_CONFIG.name;
@@ -162,6 +177,7 @@ export const ALL_BUILTIN_TOOL_IDS = [
 	DATASET_SEARCH_TOOL_ID,
 	DATASET_DETAIL_TOOL_ID,
 	HUB_REPO_DETAILS_TOOL_ID,
+	HF_FS_TOOL_ID,
 	DUPLICATE_SPACE_TOOL_ID,
 	SPACE_INFO_TOOL_ID,
 	SPACE_FILES_TOOL_ID,

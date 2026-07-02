@@ -2,11 +2,15 @@ import { z } from 'zod';
 import {
 	HUB_URL,
 	downloadFile,
+	datasetInfo,
+	HubApiError,
 	listDatasets,
 	listFiles,
 	listModels,
 	listSpaces,
+	modelInfo,
 	pathsInfo,
+	spaceInfo,
 	whoAmI,
 } from '@huggingface/hub';
 import type {
@@ -19,15 +23,23 @@ import type {
 	SpaceEntry,
 } from '@huggingface/hub';
 import picomatch from 'picomatch';
-import { fitsWithinCharBudget, maxCharsForTokenBudget } from './utilities.js';
+import { safeFetch } from './network/safe-fetch.js';
+import { createHuggingFaceHubPolicy } from './network/url-policy.js';
+import { assertTextFilePath, decodeTextFileContent } from './text-file-policy.js';
+import { escapeMarkdown, fitsWithinCharBudget, formatBytes, maxCharsForTokenBudget } from './utilities.js';
 
 const HF_FS_OPERATIONS = ['ls', 'cat', 'stat'] as const;
 const HF_FS_ENTRY_TYPES = ['file', 'dir', 'repo', 'bucket'] as const;
+const HF_FS_STAT_TYPES = ['namespace', 'repo', 'dir', 'file', 'missing'] as const;
 const HF_URI_TYPES = ['models', 'datasets', 'spaces', 'buckets'] as const;
+const HF_REPO_TYPES = ['model', 'dataset', 'space', 'bucket'] as const;
+const SPECIAL_REFS_REVISION_RE = /^refs\/(?:convert\/[\w.-]+|pr\/\d+)/;
+const UNSUPPORTED_RAW_SLASH_REVISION_RE = /^refs\/(?:heads|tags)\//;
 const DEFAULT_LS_LIMIT = 1000;
 const MAX_LS_LIMIT = 10_000;
 const DEFAULT_CAT_MAX_BYTES = 20_000;
 const APPROX_CHARS_PER_TOKEN = 4;
+const MAX_UTF8_SEQUENCE_BYTES = 4;
 export const HF_FS_MAX_OUTPUT_TOKENS = 20_000;
 export const HF_FS_MAX_OUTPUT_CHARS = maxCharsForTokenBudget(HF_FS_MAX_OUTPUT_TOKENS, APPROX_CHARS_PER_TOKEN);
 const MAX_CAT_BYTES = HF_FS_MAX_OUTPUT_CHARS;
@@ -35,8 +47,10 @@ const MAX_CAT_BYTES = HF_FS_MAX_OUTPUT_CHARS;
 export const HF_FILES_FLAG = 'hf_files' as const;
 
 function hfFsUriDescription(username?: string): string {
-	const ownerDefault = username ? ` Defaults owner: '${username}').` : '';
-	return `Hugging Face URI in the form hf://models|datasets|spaces|buckets[/OWNER[/NAME[/PATH]]]. Owner-only ls lists repos or buckets.${ownerDefault}`;
+	const ownerHint = username
+		? ` An omitted owner defaults to ${username}.`
+		: ' anonymous requests must include an owner.';
+	return `Hugging Face URI in the form hf://models|datasets|spaces|buckets[/OWNER[/NAME[/PATH]]]. Owner-only ls lists repos or buckets.${ownerHint}`;
 }
 
 function createHfFsSchema(username?: string) {
@@ -46,7 +60,13 @@ function createHfFsSchema(username?: string) {
 		glob: z.string().optional(),
 		recursive: z.boolean().optional().default(false),
 		entry_type: z.enum(HF_FS_ENTRY_TYPES).optional(),
-		max_bytes: z.number().int().nonnegative().max(MAX_CAT_BYTES).optional().describe(`cat max read length.`),
+		max_bytes: z
+			.number()
+			.int()
+			.nonnegative()
+			.max(MAX_CAT_BYTES)
+			.optional()
+			.describe(`cat max read length. 0 means the maximum allowed ${MAX_CAT_BYTES.toString()} bytes.`),
 		offset: z.number().int().nonnegative().optional().describe('cat read start offset.'),
 		limit: z
 			.number()
@@ -54,7 +74,7 @@ function createHfFsSchema(username?: string) {
 			.nonnegative()
 			.max(MAX_LS_LIMIT)
 			.optional()
-			.describe(`ls max list size. Default ${DEFAULT_LS_LIMIT.toString()}.`),
+			.describe(`ls max list size. Default ${DEFAULT_LS_LIMIT.toString()}. 0 means the maximum allowed ${MAX_LS_LIMIT.toString()}.`),
 	});
 }
 
@@ -63,6 +83,7 @@ export const HF_FS_TOOL_CONFIG = {
 	title: 'Hugging Face Files',
 	description: 'Read and list files and repos on Hugging Face',
 	schema: createHfFsSchema(),
+	outputSchema: createHfFsOutputSchema(),
 	annotations: {
 		destructiveHint: false,
 		readOnlyHint: true,
@@ -79,6 +100,52 @@ type HfFsToolConfig = Omit<typeof HF_FS_TOOL_CONFIG, 'description' | 'schema'> &
 export type HfFsParams = z.input<typeof HF_FS_TOOL_CONFIG.schema>;
 export type HfFsOperation = (typeof HF_FS_OPERATIONS)[number];
 export type HfFsEntryType = (typeof HF_FS_ENTRY_TYPES)[number];
+
+function createHfFsOutputSchema() {
+	const entrySchema = z.object({
+		type: z.enum(HF_FS_ENTRY_TYPES),
+		path: z.string(),
+		uri: z.string().optional(),
+		repo_type: z.enum(HF_REPO_TYPES).optional(),
+		size: z.number().optional(),
+		total_files: z.number().optional(),
+		lfs: z.boolean().optional(),
+		private: z.boolean().optional(),
+		gated: z.union([z.literal(false), z.enum(['auto', 'manual'])]).optional(),
+		likes: z.number().optional(),
+		downloads: z.number().optional(),
+		task: z.string().optional(),
+		sdk: z.string().optional(),
+		created_at: z.string().optional(),
+		updated_at: z.string().optional(),
+	});
+
+	return z.object({
+		uri: z.string(),
+		op: z.enum(HF_FS_OPERATIONS),
+		entries: z.array(entrySchema).optional(),
+		path: z.string().optional(),
+		content: z.string().optional(),
+		bytes: z.number().optional(),
+		exists: z.boolean().optional(),
+		type: z.enum(HF_FS_STAT_TYPES).optional(),
+		namespace: z.string().optional(),
+		size: z.number().optional(),
+		lfs: z.boolean().optional(),
+		truncated: z.boolean().optional(),
+		truncation_reason: z.enum(['entry_limit', 'max_bytes']).optional(),
+		truncation_message: z.string().optional(),
+		next_offset: z.number().optional(),
+	});
+}
+
+function normalizedLsLimit(limit: number | undefined): number {
+	return limit === undefined ? DEFAULT_LS_LIMIT : limit === 0 ? MAX_LS_LIMIT : limit;
+}
+
+function normalizedCatMaxBytes(maxBytes: number | undefined): number {
+	return maxBytes === undefined ? DEFAULT_CAT_MAX_BYTES : maxBytes === 0 ? MAX_CAT_BYTES : maxBytes;
+}
 
 export interface HfFsEntry {
 	type: HfFsEntryType;
@@ -103,7 +170,7 @@ export interface HfFsLsResult {
 	op: 'ls';
 	entries: HfFsEntry[];
 	truncated?: boolean;
-	truncation_reason?: 'entry_limit' | 'output_tokens';
+	truncation_reason?: 'entry_limit';
 	truncation_message?: string;
 	next_offset?: number;
 }
@@ -115,7 +182,7 @@ export interface HfFsCatResult {
 	content: string;
 	bytes: number;
 	truncated: boolean;
-	truncation_reason?: 'max_bytes' | 'output_tokens';
+	truncation_reason?: 'max_bytes';
 	truncation_message?: string;
 	next_offset?: number;
 }
@@ -177,11 +244,11 @@ export class HfFsTool {
 
 	static createToolConfig(username?: string): HfFsToolConfig {
 		const ownerHint = username
-			? `URIs without an owner, such as hf://models, default to ${username}.`
-			: 'Anonymous requests must include an owner, such as hf://models/openai.';
+			? ` URIs without an owner default to ${username}.`
+			: ' Anonymous requests must include an owner.';
 		return {
 			...HF_FS_TOOL_CONFIG,
-			description: `Read-only: list or read files from a Hugging Face repo or bucket. ${ownerHint}`,
+			description: `List or read files from a Hugging Face repo or bucket.${ownerHint}`,
 			schema: createHfFsSchema(username),
 		};
 	}
@@ -204,7 +271,7 @@ export class HfFsTool {
 		}
 
 		const offset = params.offset ?? 0;
-		const limit = params.limit ?? DEFAULT_LS_LIMIT;
+		const limit = normalizedLsLimit(params.limit);
 		const matcher = params.glob ? picomatch(params.glob, { dot: true }) : undefined;
 		const entries: HfFsEntry[] = [];
 		let matchedCount = 0;
@@ -240,12 +307,6 @@ export class HfFsTool {
 				break;
 			}
 
-			const nextEntries = [...entries, entry];
-			if (!fitsOutputBudget(buildLsResult(params.uri, nextEntries, offset, true, 'output_tokens'))) {
-				truncated = true;
-				break;
-			}
-
 			entries.push(entry);
 			matchedCount += 1;
 		}
@@ -255,7 +316,7 @@ export class HfFsTool {
 			entries,
 			offset,
 			truncated,
-			truncated && entries.length >= limit ? 'entry_limit' : 'output_tokens'
+			truncated ? 'entry_limit' : undefined
 		);
 	}
 
@@ -275,6 +336,7 @@ export class HfFsTool {
 		if (stat.type !== 'file') {
 			throw new Error(`cat requires a file path, got ${stat.type}: ${parsed.path}`);
 		}
+		assertTextFilePath(parsed.path);
 
 		const blob = await downloadFile({
 			repo: parsed.repo,
@@ -288,24 +350,20 @@ export class HfFsTool {
 		}
 
 		const offset = params.offset ?? 0;
-		const maxBytes = Math.min(params.max_bytes ?? DEFAULT_CAT_MAX_BYTES, MAX_CAT_BYTES);
+		const maxBytes = normalizedCatMaxBytes(params.max_bytes);
 		const end = Math.min(offset + maxBytes, blob.size);
-		const slice = blob.slice(offset, end);
-		const bytes = new Uint8Array(await slice.arrayBuffer());
-		const truncated = end < blob.size;
+		const range = await decodeTextFileByteRange(parsed.path, blob, offset, end);
+		const truncated = range.end < blob.size;
 
-		return trimCatResultToBudget(
-			{
-				uri: params.uri,
-				op: 'cat',
-				path: parsed.path,
-				content: new TextDecoder('utf-8').decode(bytes),
-				bytes: bytes.byteLength,
-				truncated,
-				...(truncated ? { truncation_reason: 'max_bytes', next_offset: end } : {}),
-			},
-			offset
-		);
+		return {
+			uri: params.uri,
+			op: 'cat',
+			path: parsed.path,
+			content: range.content,
+			bytes: range.bytes,
+			truncated,
+			...(truncated ? { truncation_reason: 'max_bytes', next_offset: range.end } : {}),
+		};
 	}
 
 	private async stat(params: HfFsParams): Promise<HfFsStatResult> {
@@ -323,13 +381,7 @@ export class HfFsTool {
 		}
 
 		if (!parsed.path) {
-			return {
-				uri: params.uri,
-				op: 'stat',
-				exists: true,
-				type: 'repo',
-				path: '',
-			};
+			return await this.statRepoRoot(params.uri, parsed);
 		}
 
 		const [path] = await pathsInfo({
@@ -362,16 +414,92 @@ export class HfFsTool {
 		};
 	}
 
+	private async statRepoRoot(uri: string, parsed: ParsedRepoHfUri): Promise<HfFsStatResult> {
+		const exists = await this.repoRootExists(parsed);
+		return {
+			uri,
+			op: 'stat',
+			exists,
+			type: exists ? 'repo' : 'missing',
+			path: '',
+		};
+	}
+
+	private async repoRootExists(parsed: ParsedRepoHfUri): Promise<boolean> {
+		try {
+			switch (parsed.repoType) {
+				case 'model':
+					await modelInfo({
+						name: parsed.repoId,
+						...(parsed.revision ? { revision: parsed.revision } : {}),
+						...(this.hubUrl ? { hubUrl: this.hubUrl } : {}),
+						...(this.accessToken ? { accessToken: this.accessToken } : {}),
+						fetch: this.safeHubFetch,
+					});
+					return true;
+				case 'dataset':
+					await datasetInfo({
+						name: parsed.repoId,
+						...(parsed.revision ? { revision: parsed.revision } : {}),
+						...(this.hubUrl ? { hubUrl: this.hubUrl } : {}),
+						...(this.accessToken ? { accessToken: this.accessToken } : {}),
+						fetch: this.safeHubFetch,
+					});
+					return true;
+				case 'space':
+					await spaceInfo({
+						name: parsed.repoId,
+						...(parsed.revision ? { revision: parsed.revision } : {}),
+						...(this.hubUrl ? { hubUrl: this.hubUrl } : {}),
+						...(this.accessToken ? { accessToken: this.accessToken } : {}),
+						fetch: this.safeHubFetch,
+					});
+					return true;
+				case 'bucket':
+					return await this.bucketExists(parsed.repoId);
+			}
+		} catch (error) {
+			if (isNotFoundError(error)) {
+				return false;
+			}
+			throw error;
+		}
+	}
+
+	private readonly safeHubFetch: typeof fetch = async (url, requestInit) => {
+		const safeUrl = typeof url === 'string' || url instanceof URL ? url : url.url;
+		const { response } = await safeFetch(safeUrl, {
+			urlPolicy: createHuggingFaceHubPolicy(),
+			requestInit,
+		});
+		return response;
+	};
+
+	private async bucketExists(repoId: string): Promise<boolean> {
+		const [namespace] = repoId.split('/');
+		if (!namespace) {
+			return false;
+		}
+
+		for await (const bucket of this.listBuckets(namespace)) {
+			if (bucket.id === repoId) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private async lsNamespace(params: HfFsParams, parsed: ParsedNamespaceHfUri): Promise<HfFsLsResult> {
 		const namespace = await this.resolveNamespace(parsed);
 		const offset = params.offset ?? 0;
-		const limit = params.limit ?? DEFAULT_LS_LIMIT;
+		const limit = normalizedLsLimit(params.limit);
 		const matcher = params.glob ? picomatch(params.glob, { dot: true }) : undefined;
 		const entries: HfFsEntry[] = [];
 		let matchedCount = 0;
 		let truncated = false;
 
-		for await (const entry of this.listNamespaceEntries(parsed.repoType, namespace, limit + offset + 1)) {
+		const namespaceFetchLimit = matcher ? undefined : limit + offset + 1;
+		for await (const entry of this.listNamespaceEntries(parsed.repoType, namespace, namespaceFetchLimit)) {
 			if (params.entry_type && entry.type !== params.entry_type) {
 				continue;
 			}
@@ -389,12 +517,6 @@ export class HfFsTool {
 				break;
 			}
 
-			const nextEntries = [...entries, entry];
-			if (!fitsOutputBudget(buildLsResult(params.uri, nextEntries, offset, true, 'output_tokens'))) {
-				truncated = true;
-				break;
-			}
-
 			entries.push(entry);
 			matchedCount += 1;
 		}
@@ -404,7 +526,7 @@ export class HfFsTool {
 			entries,
 			offset,
 			truncated,
-			truncated && entries.length >= limit ? 'entry_limit' : 'output_tokens'
+			truncated ? 'entry_limit' : undefined
 		);
 	}
 
@@ -427,13 +549,13 @@ export class HfFsTool {
 		return identity.name;
 	}
 
-	private async *listNamespaceEntries(repoType: RepoType, namespace: string, limit: number): AsyncGenerator<HfFsEntry> {
+	private async *listNamespaceEntries(repoType: RepoType, namespace: string, limit?: number): AsyncGenerator<HfFsEntry> {
 		switch (repoType) {
 			case 'model':
 				for await (const model of listModels({
 					search: { owner: namespace },
 					sort: 'lastModified',
-					limit,
+					...(limit === undefined ? {} : { limit }),
 					...(this.hubUrl ? { hubUrl: this.hubUrl } : {}),
 					...(this.accessToken ? { accessToken: this.accessToken } : {}),
 				})) {
@@ -444,7 +566,7 @@ export class HfFsTool {
 				for await (const dataset of listDatasets({
 					search: { owner: namespace },
 					sort: 'lastModified',
-					limit,
+					...(limit === undefined ? {} : { limit }),
 					...(this.hubUrl ? { hubUrl: this.hubUrl } : {}),
 					...(this.accessToken ? { accessToken: this.accessToken } : {}),
 				})) {
@@ -471,10 +593,13 @@ export class HfFsTool {
 
 	private async *listBuckets(namespace: string): AsyncGenerator<ApiBucketEntry> {
 		const url = `${this.hubUrl ?? HUB_URL}/api/buckets/${encodeURIComponent(namespace)}`;
-		const response = await fetch(url, {
-			headers: {
-				accept: 'application/json',
-				...(this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : {}),
+		const { response } = await safeFetch(url, {
+			urlPolicy: createHuggingFaceHubPolicy(),
+			requestInit: {
+				headers: {
+					accept: 'application/json',
+					...(this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : {}),
+				},
 			},
 		});
 		if (!response.ok) {
@@ -492,12 +617,148 @@ export function formatHfFsResult(result: HfFsResult): string {
 	return JSON.stringify(result, null, 2);
 }
 
+export function formatHfFsMarkdown(result: HfFsResult, maxChars = HF_FS_MAX_OUTPUT_CHARS): string {
+	return trimMarkdownToBudget(renderHfFsMarkdown(result), maxChars);
+}
+
+function renderHfFsMarkdown(result: HfFsResult): string {
+	switch (result.op) {
+		case 'ls':
+			return renderLsMarkdown(result);
+		case 'cat':
+			return renderCatMarkdown(result);
+		case 'stat':
+			return renderStatMarkdown(result);
+	}
+}
+
+function renderLsMarkdown(result: HfFsLsResult): string {
+	const lines = [`# hf_fs ls`, ``, `URI: ${inlineCode(result.uri)}`, ``, `| Type | Path | Size | Details |`, `|---|---|---:|---|`];
+	for (const entry of result.entries) {
+		lines.push(
+			`| ${escapeMarkdown(entry.type)} | ${escapeMarkdown(entry.path)} | ${entry.size === undefined ? '' : escapeMarkdown(formatBytes(entry.size))} | ${escapeMarkdown(entryDetails(entry))} |`
+		);
+	}
+	if (result.truncated) {
+		lines.push('', result.truncation_message ?? `Result truncated. Resume with offset ${String(result.next_offset ?? 0)}.`);
+	}
+	return lines.join('\n');
+}
+
+function renderCatMarkdown(result: HfFsCatResult): string {
+	const lines = [`# hf_fs cat`, ``, `Path: ${inlineCode(result.path)}`, `Bytes: ${result.bytes.toString()}`, ``];
+	lines.push(result.content);
+	if (result.truncated) {
+		lines.push('', result.truncation_message ?? `Content truncated. Resume with offset ${String(result.next_offset ?? 0)}.`);
+	}
+	return lines.join('\n');
+}
+
+function renderStatMarkdown(result: HfFsStatResult): string {
+	const lines = [
+		`# hf_fs stat`,
+		``,
+		`- URI: ${inlineCode(result.uri)}`,
+		`- Exists: ${result.exists ? 'yes' : 'no'}`,
+		`- Type: ${inlineCode(result.type)}`,
+		`- Path: ${inlineCode(result.path)}`,
+	];
+	if (result.namespace) {
+		lines.push(`- Namespace: ${inlineCode(result.namespace)}`);
+	}
+	if (result.size !== undefined) {
+		lines.push(`- Size: ${formatBytes(result.size)}`);
+	}
+	if (result.lfs !== undefined) {
+		lines.push(`- LFS: ${result.lfs ? 'yes' : 'no'}`);
+	}
+	return lines.join('\n');
+}
+
+function entryDetails(entry: HfFsEntry): string {
+	const details = [
+		entry.repo_type ? `repo=${entry.repo_type}` : undefined,
+		entry.private === undefined ? undefined : entry.private ? 'private' : 'public',
+		entry.gated ? `gated=${entry.gated}` : undefined,
+		entry.lfs === undefined ? undefined : entry.lfs ? 'lfs' : 'non-lfs',
+		entry.total_files === undefined ? undefined : `files=${entry.total_files.toString()}`,
+		entry.likes === undefined ? undefined : `likes=${entry.likes.toString()}`,
+		entry.downloads === undefined ? undefined : `downloads=${entry.downloads.toString()}`,
+		entry.task ? `task=${entry.task}` : undefined,
+		entry.sdk ? `sdk=${entry.sdk}` : undefined,
+		entry.updated_at ? `updated=${entry.updated_at}` : undefined,
+		entry.created_at ? `created=${entry.created_at}` : undefined,
+	].filter((detail): detail is string => detail !== undefined);
+	return details.join(', ');
+}
+
+function trimMarkdownToBudget(markdown: string, maxChars: number): string {
+	if (fitsWithinCharBudget(markdown, maxChars)) {
+		return markdown;
+	}
+
+	const suffix = `\n\n_Markdown view truncated to fit the hf_fs output budget of approximately ${HF_FS_MAX_OUTPUT_TOKENS.toString()} tokens. structuredContent contains the full returned result._`;
+	if (suffix.length >= maxChars) {
+		return suffix.slice(0, maxChars);
+	}
+	return `${markdown.slice(0, maxChars - suffix.length).trimEnd()}${suffix}`;
+}
+
+function inlineCode(value: string): string {
+	return `\`${value.replace(/`/g, '\\`')}\``;
+}
+
+interface DecodedTextByteRange {
+	content: string;
+	bytes: number;
+	start: number;
+	end: number;
+}
+
+async function decodeTextFileByteRange(
+	filePath: string,
+	blob: Blob,
+	offset: number,
+	end: number
+): Promise<DecodedTextByteRange> {
+	if (offset >= blob.size || end <= offset) {
+		return { content: '', bytes: 0, start: offset, end: offset };
+	}
+
+	const windowStart = Math.max(0, offset - (MAX_UTF8_SEQUENCE_BYTES - 1));
+	const windowEnd = Math.min(blob.size, end + (MAX_UTF8_SEQUENCE_BYTES - 1));
+	const windowBytes = new Uint8Array(await blob.slice(windowStart, windowEnd).arrayBuffer());
+	const byteAt = (absoluteOffset: number): number | undefined => windowBytes[absoluteOffset - windowStart];
+
+	let rangeStart = offset;
+	while (rangeStart > windowStart && isUtf8ContinuationByte(byteAt(rangeStart))) {
+		rangeStart -= 1;
+	}
+
+	let rangeEnd = end;
+	while (rangeEnd < blob.size && rangeEnd < windowEnd && isUtf8ContinuationByte(byteAt(rangeEnd))) {
+		rangeEnd += 1;
+	}
+
+	const bytes = windowBytes.slice(rangeStart - windowStart, rangeEnd - windowStart);
+	const content = decodeTextFileContent(filePath, bytes);
+	return { content, bytes: bytes.byteLength, start: rangeStart, end: rangeEnd };
+}
+
+function isUtf8ContinuationByte(byte: number | undefined): boolean {
+	return byte !== undefined && byte >= 0x80 && byte <= 0xbf;
+}
+
+function isNotFoundError(error: unknown): boolean {
+	return error instanceof HubApiError && error.statusCode === 404;
+}
+
 function buildLsResult(
 	uri: string,
 	entries: HfFsEntry[],
 	offset: number,
 	truncated: boolean,
-	truncationReason: HfFsLsResult['truncation_reason']
+	truncationReason?: HfFsLsResult['truncation_reason']
 ): HfFsLsResult {
 	return {
 		uri,
@@ -508,55 +769,10 @@ function buildLsResult(
 					truncated,
 					truncation_reason: truncationReason,
 					truncation_message:
-						truncationReason === 'entry_limit'
-							? `Result truncated after reaching the entry limit. Resume with offset ${(
-									offset + entries.length
-								).toString()}.`
-							: `Result truncated to stay under the hf_fs output budget of approximately ${HF_FS_MAX_OUTPUT_TOKENS.toString()} tokens. Resume with offset ${(
-									offset + entries.length
-								).toString()}.`,
+						`Result truncated after reaching the entry limit. Resume with offset ${(offset + entries.length).toString()}.`,
 					next_offset: offset + entries.length,
 				}
 			: {}),
-	};
-}
-
-function fitsOutputBudget(result: HfFsResult): boolean {
-	return fitsWithinCharBudget(formatHfFsResult(result), HF_FS_MAX_OUTPUT_CHARS);
-}
-
-function trimCatResultToBudget(result: HfFsCatResult, offset: number): HfFsCatResult {
-	if (fitsOutputBudget(result)) {
-		return result;
-	}
-
-	let content = result.content;
-	while (content.length > 0) {
-		const overage = formatHfFsResult({ ...result, content }).length - HF_FS_MAX_OUTPUT_CHARS;
-		if (overage <= 0) {
-			const bytes = new TextEncoder().encode(content).byteLength;
-			const nextOffset = offset + bytes;
-			return {
-				...result,
-				content,
-				bytes,
-				truncated: true,
-				truncation_reason: 'output_tokens',
-				truncation_message: `Content truncated to stay under the hf_fs output budget of approximately ${HF_FS_MAX_OUTPUT_TOKENS.toString()} tokens. Resume with offset ${nextOffset.toString()}.`,
-				next_offset: nextOffset,
-			};
-		}
-		content = content.slice(0, Math.max(0, content.length - overage - 256));
-	}
-
-	return {
-		...result,
-		content: '',
-		bytes: 0,
-		truncated: true,
-		truncation_reason: 'output_tokens',
-		truncation_message: `Content omitted to stay under the hf_fs output budget of approximately ${HF_FS_MAX_OUTPUT_TOKENS.toString()} tokens.`,
-		next_offset: offset,
 	};
 }
 
@@ -675,13 +891,19 @@ function parseRepoUri(body: string, repoType: RepoType): ParsedHfUri {
 }
 
 function splitRevisionAndPath(revAndPath: string): { revision: string; path: string } {
-	const specialRefMatch = /^refs\/(?:pr\/\d+|convert\/[^/]+)(?:\/|$)/.exec(revAndPath);
+	const specialRefMatch = SPECIAL_REFS_REVISION_RE.exec(revAndPath);
 	if (specialRefMatch) {
-		const revision = specialRefMatch[0].replace(/\/$/, '');
+		const revision = specialRefMatch[0];
 		return {
 			revision,
 			path: revAndPath.slice(revision.length).replace(/^\//, ''),
 		};
+	}
+
+	if (UNSUPPORTED_RAW_SLASH_REVISION_RE.test(revAndPath)) {
+		throw new Error(
+			"Revision names containing '/' must be percent-encoded in hf:// URIs unless they are refs/pr/N or refs/convert/NAME. For example, use refs%2Fheads%2Ffeature instead of refs/heads/feature."
+		);
 	}
 
 	const slashIndex = revAndPath.indexOf('/');
