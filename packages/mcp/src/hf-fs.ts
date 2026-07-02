@@ -47,10 +47,8 @@ const MAX_CAT_BYTES = HF_FS_MAX_OUTPUT_CHARS;
 export const HF_FILES_FLAG = 'hf_files' as const;
 
 function hfFsUriDescription(username?: string): string {
-	const ownerHint = username
-		? ` An omitted owner defaults to ${username}.`
-		: ' anonymous requests must include an owner.';
-	return `Hugging Face URI in the form hf://models|datasets|spaces|buckets[/OWNER[/NAME[/PATH]]]. Owner-only ls lists repos or buckets.${ownerHint}`;
+	const ownerHint = username ? `Authenticated OWNER is ${username}.` : '';
+	return `Hugging Face URI in the form hf://models|datasets|spaces|buckets/OWNER[/NAME[/PATH]]. ${ownerHint}`;
 }
 
 function createHfFsSchema(username?: string) {
@@ -74,7 +72,9 @@ function createHfFsSchema(username?: string) {
 			.nonnegative()
 			.max(MAX_LS_LIMIT)
 			.optional()
-			.describe(`ls max list size. Default ${DEFAULT_LS_LIMIT.toString()}. 0 means the maximum allowed ${MAX_LS_LIMIT.toString()}.`),
+			.describe(
+				`ls max list size. Default ${DEFAULT_LS_LIMIT.toString()}. 0 means the maximum allowed ${MAX_LS_LIMIT.toString()}.`
+			),
 	});
 }
 
@@ -311,13 +311,7 @@ export class HfFsTool {
 			matchedCount += 1;
 		}
 
-		return buildLsResult(
-			params.uri,
-			entries,
-			offset,
-			truncated,
-			truncated ? 'entry_limit' : undefined
-		);
+		return buildLsResult(params.uri, entries, offset, truncated, truncated ? 'entry_limit' : undefined);
 	}
 
 	private async cat(params: HfFsParams): Promise<HfFsCatResult> {
@@ -521,13 +515,7 @@ export class HfFsTool {
 			matchedCount += 1;
 		}
 
-		return buildLsResult(
-			params.uri,
-			entries,
-			offset,
-			truncated,
-			truncated ? 'entry_limit' : undefined
-		);
+		return buildLsResult(params.uri, entries, offset, truncated, truncated ? 'entry_limit' : undefined);
 	}
 
 	private async resolveNamespace(parsed: ParsedNamespaceHfUri): Promise<string> {
@@ -549,7 +537,11 @@ export class HfFsTool {
 		return identity.name;
 	}
 
-	private async *listNamespaceEntries(repoType: RepoType, namespace: string, limit?: number): AsyncGenerator<HfFsEntry> {
+	private async *listNamespaceEntries(
+		repoType: RepoType,
+		namespace: string,
+		limit?: number
+	): AsyncGenerator<HfFsEntry> {
 		switch (repoType) {
 			case 'model':
 				for await (const model of listModels({
@@ -633,14 +625,24 @@ function renderHfFsMarkdown(result: HfFsResult): string {
 }
 
 function renderLsMarkdown(result: HfFsLsResult): string {
-	const lines = [`# hf_fs ls`, ``, `URI: ${inlineCode(result.uri)}`, ``, `| Type | Path | Size | Details |`, `|---|---|---:|---|`];
+	const lines = [
+		`# hf_fs ls`,
+		``,
+		`URI: ${inlineCode(result.uri)}`,
+		``,
+		`| Type | Path | Size | Details |`,
+		`|---|---|---:|---|`,
+	];
 	for (const entry of result.entries) {
 		lines.push(
 			`| ${escapeMarkdown(entry.type)} | ${escapeMarkdown(entry.path)} | ${entry.size === undefined ? '' : escapeMarkdown(formatBytes(entry.size))} | ${escapeMarkdown(entryDetails(entry))} |`
 		);
 	}
 	if (result.truncated) {
-		lines.push('', result.truncation_message ?? `Result truncated. Resume with offset ${String(result.next_offset ?? 0)}.`);
+		lines.push(
+			'',
+			result.truncation_message ?? `Result truncated. Resume with offset ${String(result.next_offset ?? 0)}.`
+		);
 	}
 	return lines.join('\n');
 }
@@ -649,7 +651,10 @@ function renderCatMarkdown(result: HfFsCatResult): string {
 	const lines = [`# hf_fs cat`, ``, `Path: ${inlineCode(result.path)}`, `Bytes: ${result.bytes.toString()}`, ``];
 	lines.push(result.content);
 	if (result.truncated) {
-		lines.push('', result.truncation_message ?? `Content truncated. Resume with offset ${String(result.next_offset ?? 0)}.`);
+		lines.push(
+			'',
+			result.truncation_message ?? `Content truncated. Resume with offset ${String(result.next_offset ?? 0)}.`
+		);
 	}
 	return lines.join('\n');
 }
@@ -768,8 +773,7 @@ function buildLsResult(
 			? {
 					truncated,
 					truncation_reason: truncationReason,
-					truncation_message:
-						`Result truncated after reaching the entry limit. Resume with offset ${(offset + entries.length).toString()}.`,
+					truncation_message: `Result truncated after reaching the entry limit. Resume with offset ${(offset + entries.length).toString()}.`,
 					next_offset: offset + entries.length,
 				}
 			: {}),

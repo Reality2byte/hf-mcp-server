@@ -45,18 +45,25 @@ async function* entries<T>(items: T[]): AsyncGenerator<T> {
 }
 
 describe('HfFsTool config', () => {
-	it('describes omitted owner behavior with the authenticated username when available', () => {
+	it('keeps URI schema guidance simple while exposing authenticated owner context', () => {
 		const config = HfFsTool.createToolConfig('alice');
 
 		expect(config.description).toContain('default to alice');
-		expect(config.schema.shape.uri.description).toContain('omitted owner defaults to alice');
+		expect(config.schema.shape.uri.description).toContain(
+			'hf://models|datasets|spaces|buckets/OWNER[/NAME[/PATH]]'
+		);
+		expect(config.schema.shape.uri.description).toContain('Authenticated OWNER is alice');
+		expect(config.schema.shape.uri.description).not.toContain('omitted owner');
 	});
 
-	it('describes owner requirements for anonymous users', () => {
+	it('does not add anonymous owner-omission wording to the URI schema', () => {
 		const config = HfFsTool.createToolConfig();
 
 		expect(config.description).toContain('Anonymous requests must include an owner');
-		expect(config.schema.shape.uri.description).toContain('anonymous requests must include an owner');
+		expect(config.schema.shape.uri.description).toContain(
+			'hf://models|datasets|spaces|buckets/OWNER[/NAME[/PATH]]'
+		);
+		expect(config.schema.shape.uri.description).not.toContain('anonymous requests must include an owner');
 	});
 });
 
