@@ -12,6 +12,7 @@ import {
 	CREATE_REPO_TOOL_ID,
 	HF_FS_TOOL_ID,
 	HF_SANDBOX_EXEC_TOOL_ID,
+	HF_SANDBOX_FS_TOOL_ID,
 	HF_SANDBOX_TOOL_ID,
 	REPO_SEARCH_TOOL_ID,
 	TOOL_ID_GROUPS,
@@ -325,7 +326,12 @@ describe('ToolSelectionStrategy', () => {
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.MIX);
-			expect(result.enabledToolIds).toEqual([REPO_SEARCH_TOOL_ID, HF_SANDBOX_TOOL_ID, HF_SANDBOX_EXEC_TOOL_ID]);
+			expect(result.enabledToolIds).toEqual([
+				REPO_SEARCH_TOOL_ID,
+				HF_SANDBOX_TOOL_ID,
+				HF_SANDBOX_EXEC_TOOL_ID,
+				HF_SANDBOX_FS_TOOL_ID,
+			]);
 		});
 
 		it('should mix search tools with user settings', async () => {
@@ -481,7 +487,7 @@ describe('ToolSelectionStrategy', () => {
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.INTERNAL_API);
-			expect(result.enabledToolIds).toEqual([HF_SANDBOX_TOOL_ID, HF_SANDBOX_EXEC_TOOL_ID]);
+			expect(result.enabledToolIds).toEqual([HF_SANDBOX_TOOL_ID, HF_SANDBOX_EXEC_TOOL_ID, HF_SANDBOX_FS_TOOL_ID]);
 		});
 
 		it('should use provided user settings in internal API mode', async () => {
@@ -612,7 +618,7 @@ describe('ToolSelectionStrategy', () => {
 			const result = await externalStrategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.EXTERNAL_API);
-			expect(result.enabledToolIds).toEqual([HF_SANDBOX_TOOL_ID, HF_SANDBOX_EXEC_TOOL_ID]);
+			expect(result.enabledToolIds).toEqual([HF_SANDBOX_TOOL_ID, HF_SANDBOX_EXEC_TOOL_ID, HF_SANDBOX_FS_TOOL_ID]);
 			expect(result.reason).toBe('External API user settings');
 		});
 	});
@@ -654,7 +660,7 @@ describe('ToolSelectionStrategy', () => {
 
 			expect(result.mode).toBe(ToolSelectionMode.FALLBACK);
 			expect(result.enabledToolIds).toEqual(
-				normalizeBuiltInTools([...ALL_BUILTIN_TOOL_IDS, HF_SANDBOX_TOOL_ID, HF_SANDBOX_EXEC_TOOL_ID])
+				normalizeBuiltInTools([...ALL_BUILTIN_TOOL_IDS, HF_SANDBOX_TOOL_ID, HF_SANDBOX_EXEC_TOOL_ID, HF_SANDBOX_FS_TOOL_ID])
 			);
 			expect(result.mixedBouquet).toEqual(['sandbox']);
 		});
