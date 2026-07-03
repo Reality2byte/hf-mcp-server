@@ -138,6 +138,7 @@ describe('HfSandboxTool', () => {
 		expect(result.url).toBe('https://custom--49983.hf.jobs');
 		expect(result.job_url).toBe('https://huggingface.co/jobs/evalstate/6a2bfe87871c005b5352b2d1');
 		expect(result.volumes).toEqual(STORED_VOLUMES);
+		expect(result.message).toBeUndefined();
 
 		expect(jobsClient.runJob).toHaveBeenCalledOnce();
 		const [jobSpec, namespace] = vi.mocked(jobsClient.runJob).mock.calls[0] as [JobSpec, string];
@@ -168,6 +169,68 @@ describe('HfSandboxTool', () => {
 		]);
 		expect(jobSpec.command[0]).toBe('/bin/sh');
 		expect(jobSpec.command[2]).toContain('sbx-server');
+	});
+
+	it('waits for sandbox health during create', async () => {
+		const rpcClient = createRpcClient();
+		const tool = new HfSandboxTool('hf-token', true, 'evalstate', createJobsClient(), rpcClient);
+
+		await tool.run({ op: 'create', name: 'steady-bridge' });
+
+		expect(rpcClient.health).toHaveBeenCalledWith(
+			expect.objectContaining({
+				url: 'https://custom--49983.hf.jobs',
+				hfToken: 'hf-token',
+				sandboxToken: expect.stringMatching(/^[0-9a-f]{64}$/),
+			}),
+			expect.objectContaining({ timeoutSeconds: expect.any(Number) })
+		);
+	});
+
+	it('emits startup progress while creating a sandbox', async () => {
+		const rpcClient = createRpcClient();
+		const tool = new HfSandboxTool('hf-token', true, 'evalstate', createJobsClient(), rpcClient);
+		const onProgress = vi.fn();
+
+		await tool.run({ op: 'create', name: 'steady-bridge' }, { onProgress });
+
+		expect(onProgress).toHaveBeenCalledWith(
+			expect.objectContaining({
+				event: 'create',
+				message: expect.stringMatching(/resolving namespace/),
+			})
+		);
+		expect(onProgress).toHaveBeenCalledWith(
+			expect.objectContaining({
+				event: 'create',
+				message: expect.stringMatching(/checking startup health \(attempt 1\)/),
+			})
+		);
+		expect(onProgress).toHaveBeenCalledWith(
+			expect.objectContaining({
+				event: 'create',
+				message: expect.stringMatching(/server is ready/),
+			})
+		);
+	});
+
+	it('returns a startup message if create health is not ready within 10 seconds', async () => {
+		vi.useFakeTimers();
+		try {
+			const rpcClient = createRpcClient();
+			vi.mocked(rpcClient.health).mockRejectedValue(new Error('Sandbox RPC /health failed with 503'));
+			const tool = new HfSandboxTool('hf-token', true, 'evalstate', createJobsClient(), rpcClient);
+
+			const pending = tool.run({ op: 'create', name: 'steady-bridge' });
+			await vi.advanceTimersByTimeAsync(10_000);
+			const result = (await pending) as SandboxCreateResult;
+
+			expect(result.handle).toBe(HANDLE);
+			expect(result.message).toMatch(/may still be starting/);
+			expect(rpcClient.health).toHaveBeenCalledTimes(20);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('supports bucket convenience args for read-write mounts', async () => {
@@ -321,6 +384,16 @@ describe('HfSandboxExecTool', () => {
 		await expect(tool.run({ handle: HANDLE, cmd: 'sleep 120', timeout: 56 })).rejects.toThrow(
 			/foreground exec timeout must be <= 55 seconds/
 		);
+	});
+
+	it('passes foreground progress callbacks to the RPC client', async () => {
+		const rpcClient = createRpcClient();
+		const tool = new HfSandboxExecTool('hf-token', true, 'evalstate', createJobsClient(), rpcClient);
+		const onProgress = vi.fn();
+
+		await tool.run({ handle: HANDLE, cmd: 'echo hi' }, { onProgress });
+
+		expect(rpcClient.exec).toHaveBeenCalledWith(expect.anything(), expect.anything(), { onProgress });
 	});
 
 	it('starts detached processes without a default timeout', async () => {

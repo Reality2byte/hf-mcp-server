@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult, ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js';
+import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type { z } from 'zod';
 import { createRequire } from 'module';
 import { performance } from 'node:perf_hooks';
@@ -77,6 +78,7 @@ import {
 	type HfSandboxParams,
 	type HfSandboxExecParams,
 	type HfSandboxFsParams,
+	type SandboxProgress,
 	getDynamicSpaceToolConfig,
 	SpaceTool,
 	type SpaceArgs,
@@ -1161,6 +1163,57 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 				})
 			);
 		};
+		const createSandboxProgressRelay = (
+			extra: RequestHandlerExtra<ServerRequest, ServerNotification> | undefined
+		): ((progress: SandboxProgress) => Promise<void>) | undefined => {
+			const progressToken = extra?._meta?.progressToken;
+			logger.trace({ hasExtra: Boolean(extra), progressToken: progressToken ?? null }, 'Sandbox progress setup');
+			if (progressToken === undefined || (typeof progressToken !== 'number' && typeof progressToken !== 'string')) {
+				logger.trace({ hasExtra: Boolean(extra) }, 'Sandbox progress relay disabled');
+				return undefined;
+			}
+
+			let progressCount = 0;
+			let disabled = false;
+
+			return async (progress: SandboxProgress): Promise<void> => {
+				if (disabled || !extra) {
+					return;
+				}
+				if (extra.signal?.aborted) {
+					disabled = true;
+					return;
+				}
+
+				progressCount += 1;
+				try {
+					logger.trace({ progressToken, progress }, 'Relaying sandbox progress');
+					const params: {
+						progressToken: number | string;
+						progress: number;
+						total?: number;
+						message?: string;
+					} = {
+						progressToken,
+						progress: progress.progress ?? progressCount,
+					};
+					if (progress.total !== undefined) {
+						params.total = progress.total;
+					}
+					if (progress.message !== undefined) {
+						params.message = `${String(progressCount)}. ${progress.message}`;
+					}
+
+					await extra.sendNotification({
+						method: 'notifications/progress',
+						params,
+					});
+				} catch (error) {
+					disabled = true;
+					logger.trace({ error }, 'Sandbox progress relay failed');
+				}
+			};
+		};
 
 		const sandboxToolConfig = HfSandboxTool.createToolConfig(username);
 		toolInstances[sandboxToolConfig.name] = server.registerTool(
@@ -1172,8 +1225,9 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 				outputSchema: sandboxToolConfig.outputSchema.shape,
 				annotations: sandboxToolConfig.annotations,
 			},
-			async (params: HfSandboxParams) => {
+			async (params: HfSandboxParams, extra) => {
 				const isAuthenticated = !!hfToken;
+				const onProgress = createSandboxProgressRelay(extra);
 				const result = await runWithQueryLogging(
 					logSearchQuery,
 					{
@@ -1189,7 +1243,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					},
 					async () => {
 						const sandboxTool = new HfSandboxTool(hfToken, isAuthenticated, username);
-						return sandboxTool.run(params);
+						return sandboxTool.run(params, onProgress ? { onProgress } : undefined);
 					}
 				);
 
@@ -1210,8 +1264,9 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 				outputSchema: sandboxExecToolConfig.outputSchema.shape,
 				annotations: sandboxExecToolConfig.annotations,
 			},
-			async (params: HfSandboxExecParams) => {
+			async (params: HfSandboxExecParams, extra) => {
 				const isAuthenticated = !!hfToken;
+				const onProgress = createSandboxProgressRelay(extra);
 				const result = await runWithQueryLogging(
 					logSearchQuery,
 					{
@@ -1227,7 +1282,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					},
 					async () => {
 						const sandboxExecTool = new HfSandboxExecTool(hfToken, isAuthenticated, username);
-						return sandboxExecTool.run(params);
+						return sandboxExecTool.run(params, onProgress ? { onProgress } : undefined);
 					}
 				);
 

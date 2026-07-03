@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { createHmac, randomBytes } from 'node:crypto';
+import { TextDecoder } from 'node:util';
 import { z } from 'zod';
 import { JobsApiClient } from './jobs/api-client.js';
 import type { JobInfo, JobSpec, JobStatus, JobVolume } from './jobs/types.js';
@@ -15,7 +16,10 @@ const DEFAULT_FLAVOR = 'cpu-basic';
 const DEFAULT_TIMEOUT = '1h';
 const DEFAULT_EXEC_TIMEOUT = 30;
 const MAX_FOREGROUND_EXEC_TIMEOUT = 55;
+const CREATE_HEALTH_TIMEOUT_MS = 10_000;
+const CREATE_HEALTH_POLL_MS = 500;
 const FOREGROUND_EXEC_HTTP_GRACE_SECONDS = 5;
+const EXEC_PROGRESS_MIN_INTERVAL_MS = 2_000;
 const VOLUME_FORMAT = 'hf://[models|datasets|spaces|buckets]/OWNER/NAME[/PATH]:/MOUNT_PATH[:ro|:rw]';
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,62}$/;
 const HOST_SAFE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
@@ -195,6 +199,45 @@ export interface SandboxExecResult {
 	duration_ms: number;
 }
 
+interface SandboxExecAccumulator extends SandboxExecResult {
+	sawExit: boolean;
+}
+
+export type SandboxExecEvent =
+	| { event: 'start'; pid?: number }
+	| { event: 'stdout' | 'stderr'; data?: string }
+	| { event: 'ping' }
+	| {
+			event: 'exit';
+			exit_code?: number | null;
+			signal?: number | string | null;
+			timed_out?: boolean;
+			duration_ms?: number;
+	  };
+
+export interface SandboxProgress {
+	progress?: number;
+	total?: number;
+	message?: string;
+	event: string;
+}
+
+export interface SandboxExecProgress extends SandboxProgress {
+	event: SandboxExecEvent['event'];
+}
+
+export interface SandboxOptions {
+	onProgress?: (progress: SandboxProgress) => void | Promise<void>;
+}
+
+export interface SandboxExecOptions {
+	onProgress?: (progress: SandboxExecProgress) => void | Promise<void>;
+}
+
+export interface SandboxHealthOptions {
+	timeoutSeconds?: number;
+}
+
 export interface SandboxProcess {
 	id: string;
 	pid: number;
@@ -215,8 +258,8 @@ export interface SandboxFsEntry {
 }
 
 export interface SandboxRpcClient {
-	health(conn: SandboxConnection): Promise<unknown>;
-	exec(conn: SandboxConnection, args: SandboxExecRequest): Promise<SandboxExecResult>;
+	health(conn: SandboxConnection, options?: SandboxHealthOptions): Promise<unknown>;
+	exec(conn: SandboxConnection, args: SandboxExecRequest, options?: SandboxExecOptions): Promise<SandboxExecResult>;
 	execDetached(conn: SandboxConnection, args: SandboxExecRequest & { tag?: string }): Promise<SandboxProcess>;
 	listProcesses(conn: SandboxConnection): Promise<SandboxProcess[]>;
 	killProcess(conn: SandboxConnection, processId: string): Promise<void>;
@@ -237,55 +280,182 @@ export function normalizeSandboxHealth(payload: unknown): Record<string, unknown
 	return { ...record, ok };
 }
 
-export function parseSandboxExecEvents(text: string): SandboxExecResult {
-	let stdout = '';
-	let stderr = '';
-	let returncode: number | null = null;
-	let signal: number | string | null = null;
-	let timedOut = false;
-	let durationMs = 0;
-	let sawExit = false;
+function createExecAccumulator(): SandboxExecAccumulator {
+	return {
+		returncode: null,
+		stdout: '',
+		stderr: '',
+		signal: null,
+		timed_out: false,
+		duration_ms: 0,
+		sawExit: false,
+	};
+}
 
-	for (const line of text.split(/\r?\n/)) {
-		if (!line) {
-			continue;
-		}
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(line);
-		} catch {
-			// A partially transmitted trailing line means the connection dropped;
-			// the missing exit event below reports it.
-			continue;
-		}
-		if (typeof parsed !== 'object' || parsed === null) {
-			continue;
-		}
-		const event = parsed as {
-			event?: string;
-			data?: string;
-			exit_code?: number | null;
-			signal?: number | string | null;
-			timed_out?: boolean;
-			duration_ms?: number;
-		};
-		if (event.event === 'stdout') {
-			stdout += event.data ?? '';
-		} else if (event.event === 'stderr') {
-			stderr += event.data ?? '';
-		} else if (event.event === 'exit') {
-			sawExit = true;
-			returncode = event.exit_code ?? null;
-			signal = event.signal ?? null;
-			timedOut = event.timed_out ?? false;
-			durationMs = event.duration_ms ?? 0;
-		}
+function parseSandboxExecEventLine(line: string): SandboxExecEvent | null {
+	if (!line) {
+		return null;
 	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(line);
+	} catch {
+		// A partially transmitted trailing line means the connection dropped;
+		// the missing exit event below reports it.
+		return null;
+	}
+	if (typeof parsed !== 'object' || parsed === null) {
+		return null;
+	}
+	const event = parsed as SandboxExecEvent;
+	if (
+		event.event === 'start' ||
+		event.event === 'stdout' ||
+		event.event === 'stderr' ||
+		event.event === 'ping' ||
+		event.event === 'exit'
+	) {
+		return event;
+	}
+	return null;
+}
 
-	if (!sawExit) {
+function applySandboxExecEvent(accumulator: SandboxExecAccumulator, event: SandboxExecEvent): void {
+	if (event.event === 'stdout') {
+		accumulator.stdout += event.data ?? '';
+	} else if (event.event === 'stderr') {
+		accumulator.stderr += event.data ?? '';
+	} else if (event.event === 'exit') {
+		accumulator.sawExit = true;
+		accumulator.returncode = event.exit_code ?? null;
+		accumulator.signal = event.signal ?? null;
+		accumulator.timed_out = event.timed_out ?? false;
+		accumulator.duration_ms = event.duration_ms ?? 0;
+	}
+}
+
+function finishSandboxExecResult(accumulator: SandboxExecAccumulator): SandboxExecResult {
+	if (!accumulator.sawExit) {
 		throw new Error('connection lost while running command');
 	}
-	return { returncode, stdout, stderr, signal, timed_out: timedOut, duration_ms: durationMs };
+	const { sawExit: _sawExit, ...result } = accumulator;
+	return result;
+}
+
+export function parseSandboxExecEvents(text: string): SandboxExecResult {
+	const accumulator = createExecAccumulator();
+
+	for (const line of text.split(/\r?\n/)) {
+		const event = parseSandboxExecEventLine(line);
+		if (event) {
+			applySandboxExecEvent(accumulator, event);
+		}
+	}
+
+	return finishSandboxExecResult(accumulator);
+}
+
+function sandboxExecProgressFromEvent(event: SandboxExecEvent): SandboxExecProgress | null {
+	switch (event.event) {
+		case 'start':
+			return { event: 'start', progress: 0, message: `Started process${event.pid ? ` ${String(event.pid)}` : ''}.` };
+		case 'stdout':
+		case 'stderr': {
+			const stream = event.event;
+			const text = (event.data ?? '').replace(/\s+$/u, '');
+			const lines = text.split(/\r?\n/).filter(Boolean);
+			const lastLine = lines[lines.length - 1];
+			return {
+				event: stream,
+				message: lastLine ? `${stream}: ${lastLine.slice(0, 160)}` : `Received ${stream} output.`,
+			};
+		}
+		case 'ping':
+			return { event: 'ping', message: 'Command is still running.' };
+		case 'exit':
+			return {
+				event: 'exit',
+				message: event.timed_out
+					? `Command timed out after ${String(event.duration_ms ?? 0)}ms.`
+					: `Command exited with ${event.exit_code === null || event.exit_code === undefined ? `signal ${String(event.signal)}` : `code ${String(event.exit_code)}`}.`,
+			};
+	}
+}
+
+async function notifySandboxExecProgress(
+	options: SandboxExecOptions | undefined,
+	event: SandboxExecEvent
+): Promise<void> {
+	const progress = sandboxExecProgressFromEvent(event);
+	if (!progress || !options?.onProgress) {
+		return;
+	}
+	try {
+		await options.onProgress(progress);
+	} catch {
+		// Progress notifications are advisory; a failed notification must not
+		// fail the command whose output is still streaming.
+	}
+}
+
+async function notifySandboxProgress(options: SandboxOptions | undefined, progress: SandboxProgress): Promise<void> {
+	if (!options?.onProgress) {
+		return;
+	}
+	try {
+		await options.onProgress(progress);
+	} catch {
+		// Progress notifications are advisory; a failed notification must not fail the operation.
+	}
+}
+
+async function parseSandboxExecResponse(response: Response, options?: SandboxExecOptions): Promise<SandboxExecResult> {
+	if (!response.body) {
+		return parseSandboxExecEvents(await response.text());
+	}
+
+	const accumulator = createExecAccumulator();
+	const reader = response.body.getReader();
+	const decoder = new TextDecoder();
+	let buffered = '';
+	let lastOutputProgressAt = 0;
+
+	const handleLine = async (line: string): Promise<void> => {
+		const event = parseSandboxExecEventLine(line);
+		if (!event) {
+			return;
+		}
+		applySandboxExecEvent(accumulator, event);
+
+		if (event.event === 'stdout' || event.event === 'stderr') {
+			const now = Date.now();
+			if (now - lastOutputProgressAt < EXEC_PROGRESS_MIN_INTERVAL_MS) {
+				return;
+			}
+			lastOutputProgressAt = now;
+		}
+		await notifySandboxExecProgress(options, event);
+	};
+
+	while (true) {
+		const { done, value } = await reader.read();
+		if (done) {
+			break;
+		}
+		buffered += decoder.decode(value, { stream: true });
+		const lines = buffered.split(/\r?\n/);
+		buffered = lines.pop() ?? '';
+		for (const line of lines) {
+			await handleLine(line);
+		}
+	}
+
+	buffered += decoder.decode();
+	if (buffered) {
+		await handleLine(buffered);
+	}
+
+	return finishSandboxExecResult(accumulator);
 }
 
 class HttpSandboxRpcClient implements SandboxRpcClient {
@@ -353,11 +523,15 @@ class HttpSandboxRpcClient implements SandboxRpcClient {
 		});
 	}
 
-	async health(conn: SandboxConnection): Promise<unknown> {
-		return normalizeSandboxHealth(await this.requestJson(conn, '/health'));
+	async health(conn: SandboxConnection, options?: SandboxHealthOptions): Promise<unknown> {
+		return normalizeSandboxHealth(await this.requestJson(conn, '/health', { timeoutSeconds: options?.timeoutSeconds }));
 	}
 
-	async exec(conn: SandboxConnection, args: SandboxExecRequest): Promise<SandboxExecResult> {
+	async exec(
+		conn: SandboxConnection,
+		args: SandboxExecRequest,
+		options?: SandboxExecOptions
+	): Promise<SandboxExecResult> {
 		const timeout = args.timeout ?? DEFAULT_EXEC_TIMEOUT;
 		const response = await this.request(conn, '/v1/exec', {
 			method: 'POST',
@@ -368,7 +542,7 @@ class HttpSandboxRpcClient implements SandboxRpcClient {
 			body: this.execBody({ ...args, timeout }),
 			timeoutSeconds: timeout + FOREGROUND_EXEC_HTTP_GRACE_SECONDS,
 		});
-		return parseSandboxExecEvents(await response.text());
+		return parseSandboxExecResponse(response, options);
 	}
 
 	async execDetached(conn: SandboxConnection, args: SandboxExecRequest & { tag?: string }): Promise<SandboxProcess> {
@@ -573,6 +747,7 @@ function createSandboxOutputSchema() {
 		url: z.string().optional(),
 		job_url: z.string().optional(),
 		volumes: z.array(z.record(z.unknown())).optional(),
+		message: z.string().optional(),
 		status: z.record(z.unknown()).optional(),
 		health: z.record(z.unknown()).optional(),
 		terminated: z.boolean().optional(),
@@ -610,6 +785,7 @@ export interface SandboxCreateResult {
 	url: string;
 	job_url: string;
 	volumes: JobVolume[];
+	message?: string;
 }
 
 export interface SandboxStatusResult {
@@ -669,6 +845,10 @@ function normalizeSandboxVolumes(params: HfSandboxParams): JobVolume[] | undefin
 	return parseVolumes(volumeSpecs);
 }
 
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function parseStoredSandboxVolumes(job: JobInfo): JobVolume[] {
 	const storedVolumes = job.environment?.MCP_SANDBOX_VOLUMES;
 	if (!storedVolumes) {
@@ -700,12 +880,12 @@ export class HfSandboxTool extends SandboxToolBase {
 		return { ...HF_SANDBOX_TOOL_CONFIG, schema: createSandboxSchema(username) };
 	}
 
-	async run(params: HfSandboxParams): Promise<SandboxResult> {
+	async run(params: HfSandboxParams, options?: SandboxOptions): Promise<SandboxResult> {
 		this.requireToken();
 		const parsed = createSandboxSchema(this.defaultNamespace).parse(params);
 		switch (parsed.op) {
 			case 'create':
-				return this.create(parsed);
+				return this.create(parsed, options);
 			case 'status':
 				return this.status(this.requireHandle(parsed));
 			case 'terminate':
@@ -724,14 +904,22 @@ export class HfSandboxTool extends SandboxToolBase {
 		return this.parseHandle(params.handle);
 	}
 
-	private async create(params: HfSandboxParams): Promise<SandboxCreateResult> {
+	private async create(params: HfSandboxParams, options?: SandboxOptions): Promise<SandboxCreateResult> {
 		const name = params.name ?? generateName();
 		validateName(name);
+		await notifySandboxProgress(options, {
+			event: 'create',
+			message: `Creating sandbox ${name}: resolving namespace.`,
+		});
 		const namespace = await this.jobsClient.getNamespace(params.namespace);
 		validateNamespace(namespace);
 		const nonce = createNonce();
 		const hfToken = this.requireToken();
 		const sandboxToken = deriveSandboxToken(hfToken, nonce);
+		await notifySandboxProgress(options, {
+			event: 'create',
+			message: `Creating sandbox ${name}: preparing job specification.`,
+		});
 
 		const secrets: Record<string, string> = {
 			SBX_TOKEN: sandboxToken,
@@ -774,9 +962,19 @@ export class HfSandboxTool extends SandboxToolBase {
 			volumes,
 		};
 
+		await notifySandboxProgress(options, {
+			event: 'create',
+			message: `Creating sandbox ${name}: submitting Hugging Face Job.`,
+		});
 		const job = await this.jobsClient.runJob(jobSpec, namespace);
 		const handle: SandboxHandle = { namespace, jobId: job.id };
-		cacheConnection(handle, nonce, getExposeUrl(job, job.id, SANDBOX_PORT));
+		const url = getExposeUrl(job, job.id, SANDBOX_PORT);
+		cacheConnection(handle, nonce, url);
+		await notifySandboxProgress(options, {
+			event: 'create',
+			message: `Creating sandbox ${name}: job ${job.id} is starting.`,
+		});
+		const ready = await this.waitForCreateHealth({ url, hfToken, sandboxToken }, name, options);
 
 		return {
 			op: 'create',
@@ -784,10 +982,51 @@ export class HfSandboxTool extends SandboxToolBase {
 			name,
 			namespace,
 			job_id: job.id,
-			url: getExposeUrl(job, job.id, SANDBOX_PORT),
+			url,
 			job_url: getJobUrl(namespace, job.id),
 			volumes: userVolumes ?? [],
+			...(ready
+				? {}
+				: {
+						message:
+							'Sandbox was created, but health did not become ready within 10 seconds; it may still be starting.',
+					}),
 		};
+	}
+
+	private async waitForCreateHealth(conn: SandboxConnection, name: string, options?: SandboxOptions): Promise<boolean> {
+		const deadline = Date.now() + CREATE_HEALTH_TIMEOUT_MS;
+		let attempt = 0;
+		while (true) {
+			const remaining = deadline - Date.now();
+			if (remaining <= 0) {
+				await notifySandboxProgress(options, {
+					event: 'create',
+					message: `Creating sandbox ${name}: startup health check timed out; sandbox may still be starting.`,
+				});
+				return false;
+			}
+			attempt += 1;
+			await notifySandboxProgress(options, {
+				event: 'create',
+				message: `Creating sandbox ${name}: checking startup health (attempt ${String(attempt)}).`,
+			});
+			try {
+				const health = normalizeSandboxHealth(
+					await this.rpcClient.health(conn, { timeoutSeconds: Math.max(0.1, remaining / 1000) })
+				);
+				if (health.ok) {
+					await notifySandboxProgress(options, {
+						event: 'create',
+						message: `Creating sandbox ${name}: server is ready.`,
+					});
+					return true;
+				}
+			} catch {
+				// The Jobs proxy can return 503 while the container/server is still starting.
+			}
+			await sleep(Math.min(CREATE_HEALTH_POLL_MS, Math.max(0, deadline - Date.now())));
+		}
 	}
 
 	private async status(handle: SandboxHandle): Promise<SandboxStatusResult> {
@@ -929,7 +1168,7 @@ export class HfSandboxExecTool extends SandboxToolBase {
 		return { ...HF_SANDBOX_EXEC_TOOL_CONFIG, schema: createSandboxExecSchema(username) };
 	}
 
-	async run(params: HfSandboxExecParams): Promise<HfSandboxExecResult> {
+	async run(params: HfSandboxExecParams, options?: SandboxExecOptions): Promise<HfSandboxExecResult> {
 		this.requireToken();
 		const parsed = createSandboxExecSchema(this.defaultNamespace).parse(params);
 		const handle = this.parseHandle(parsed.handle);
@@ -957,7 +1196,8 @@ export class HfSandboxExecTool extends SandboxToolBase {
 			throw new Error(`foreground exec timeout must be <= ${String(MAX_FOREGROUND_EXEC_TIMEOUT)} seconds.`);
 		}
 
-		return this.rpcClient.exec(conn, { ...request, timeout });
+		const execRequest = { ...request, timeout };
+		return options ? this.rpcClient.exec(conn, execRequest, options) : this.rpcClient.exec(conn, execRequest);
 	}
 }
 
@@ -1149,6 +1389,7 @@ export function formatSandboxMarkdown(result: SandboxResult): string {
 				`Job: ${markdownLink(result.job_id, result.job_url)}`,
 				`URL: ${result.url}`,
 				`Volumes: ${escapeMarkdown(volumeSummary(result.volumes))}`,
+				...(result.message ? [`Note: ${escapeMarkdown(result.message)}`] : []),
 			].join('\n');
 		case 'status':
 			return [
