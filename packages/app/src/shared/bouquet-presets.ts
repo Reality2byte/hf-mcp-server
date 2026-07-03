@@ -268,7 +268,7 @@ const TOOL_DESCRIPTIONS: Record<string, Omit<ConfigEntryDescription, 'id' | 'kin
 	},
 	create_repo: {
 		label: 'Create Repo',
-		description: 'Create model, dataset, bucket, or space repositories.',
+		description: 'Create or duplicate model, dataset, bucket, or space repositories with hf:// URIs.',
 	},
 	model_details: {
 		label: 'Model Details',

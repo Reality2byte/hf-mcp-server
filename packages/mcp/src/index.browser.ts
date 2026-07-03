@@ -47,8 +47,8 @@ export const REPO_SEARCH_TOOL_CONFIG: BrowserToolConfig = {
 export const CREATE_REPO_TOOL_CONFIG: BrowserToolConfig = {
 	name: 'create_repo',
 	description:
-		'Create a Hugging Face model, dataset, Space, or bucket repository. ' +
-		"name must be fully qualified, for example 'username/repo-name'.",
+		'Create a Hugging Face model, dataset, Space, or bucket repository using hf:// URIs. ' +
+		'Use uri like hf://models/username/repo-name. Set source_uri to duplicate an existing model, dataset, or Space.',
 	annotations: {
 		title: 'Create Hugging Face Repository',
 		destructiveHint: false,
@@ -165,6 +165,7 @@ export const DOC_FETCH_TOOL_ID = DOC_FETCH_CONFIG.name;
 export const HF_JOBS_TOOL_ID = 'hf_jobs';
 export const HF_SANDBOX_TOOL_ID = 'hf_sandbox';
 export const HF_SANDBOX_EXEC_TOOL_ID = 'hf_sandbox_exec';
+export const HF_SANDBOX_FS_TOOL_ID = 'hf_sandbox_fs';
 export const DYNAMIC_SPACE_TOOL_ID = 'dynamic_space';
 
 export const ALL_BUILTIN_TOOL_IDS = [
@@ -209,7 +210,7 @@ export const TOOL_ID_GROUPS = {
 	] as const,
 	dynamic_space: [DYNAMIC_SPACE_TOOL_ID] as const,
 	all: [...ALL_BUILTIN_TOOL_IDS] as const,
-	sandbox: [HF_SANDBOX_TOOL_ID, HF_SANDBOX_EXEC_TOOL_ID] as const,
+	sandbox: [HF_SANDBOX_TOOL_ID, HF_SANDBOX_EXEC_TOOL_ID, HF_SANDBOX_FS_TOOL_ID] as const,
 } as const;
 
 export type BuiltinToolId = (typeof ALL_BUILTIN_TOOL_IDS)[number];

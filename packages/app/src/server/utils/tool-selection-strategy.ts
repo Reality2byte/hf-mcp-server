@@ -119,14 +119,18 @@ export class ToolSelectionStrategy {
 	}
 
 	/**
-	 * Always ensure sandbox exec is enabled when sandbox management is enabled.
+	 * Always ensure sandbox exec and fs are enabled when sandbox management is enabled.
 	 */
 	private applySandboxEnablesExec(enabledToolIds: string[]): string[] {
-		if (enabledToolIds.includes('hf_sandbox') && !enabledToolIds.includes('hf_sandbox_exec')) {
-			logger.debug('Auto-enabling hf_sandbox_exec because hf_sandbox is enabled');
-			return [...enabledToolIds, 'hf_sandbox_exec'];
+		if (!enabledToolIds.includes('hf_sandbox')) {
+			return enabledToolIds;
 		}
-		return enabledToolIds;
+		const missing = ['hf_sandbox_exec', 'hf_sandbox_fs'].filter((toolId) => !enabledToolIds.includes(toolId));
+		if (missing.length === 0) {
+			return enabledToolIds;
+		}
+		logger.debug(`Auto-enabling ${missing.join(', ')} because hf_sandbox is enabled`);
+		return [...enabledToolIds, ...missing];
 	}
 
 	/**
