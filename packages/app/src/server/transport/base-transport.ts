@@ -12,6 +12,8 @@ import { isGradioTool } from '../utils/gradio-utils.js';
 import { getProxyToolDefinition, type ProxyToolResponseType } from '../utils/proxy-tools-config.js';
 
 const GRADIO_FILES_TOOL_NAME = 'gradio_files';
+const HF_SANDBOX_TOOL_NAME = 'hf_sandbox';
+const HF_SANDBOX_EXEC_TOOL_NAME = 'hf_sandbox_exec';
 
 /**
  * Result returned by ServerFactory containing the server instance and optional user details
@@ -342,6 +344,31 @@ export abstract class BaseTransport {
 		}
 
 		return false;
+	}
+
+	protected isSandboxExecToolCall(requestBody: unknown): boolean {
+		const body = requestBody as { method?: string; params?: { name?: string } } | undefined;
+		return body?.method === 'tools/call' && body.params?.name === HF_SANDBOX_EXEC_TOOL_NAME;
+	}
+
+	protected isSandboxCreateToolCall(requestBody: unknown): boolean {
+		const body = requestBody as
+			| { method?: string; params?: { name?: string; arguments?: { op?: string } } }
+			| undefined;
+		return (
+			body?.method === 'tools/call' &&
+			body.params?.name === HF_SANDBOX_TOOL_NAME &&
+			body.params.arguments?.op === 'create'
+		);
+	}
+
+	protected requiresStreamingToolResponse(requestBody: unknown): boolean {
+		return (
+			this.isGradioToolCall(requestBody) ||
+			this.isStreamableHttpToolCall(requestBody) ||
+			this.isSandboxExecToolCall(requestBody) ||
+			this.isSandboxCreateToolCall(requestBody)
+		);
 	}
 
 	private getStreamableHttpResponseType(toolName: string): ProxyToolResponseType | undefined {
