@@ -2,7 +2,7 @@
 	"name": "hf-mcp",
 	"version": "0.3.25",
 	"type": "module",
-	"packageManager": "pnpm@11.5.0",
+	"packageManager": "pnpm@11.9.0+sha256.2b567aa66026238078ac2e0a33bec3febd60e962987aac697456f3180819b287",
 	"scripts": {
 		"dev": "concurrently \"pnpm run --filter=@llmindset/hf-mcp dev\" \"pnpm run --filter=@llmindset/hf-mcp-server dev\"",
 		"dev:sse": "concurrently \"pnpm run --filter=@llmindset/hf-mcp dev\" \"pnpm run --filter=@llmindset/hf-mcp-server dev:sse\"",
