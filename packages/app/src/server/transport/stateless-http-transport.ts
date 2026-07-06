@@ -468,8 +468,8 @@ export class StatelessHttpTransport extends BaseTransport {
 				const result = await this.serverFactory(headers, undefined, skipGradio, sessionInfoForLogging);
 				server = result.server;
 
-				// For Gradio + Streamable HTTP tool calls, disable direct response to enable streaming/progress notifications
-				directResponse = !(this.isGradioToolCall(requestBody) || this.isStreamableHttpToolCall(requestBody));
+				// Disable direct response for tool calls that need streaming/progress notifications.
+				directResponse = !this.requiresStreamingToolResponse(requestBody);
 			} else {
 				// Create fresh stub responder for simple requests
 				server = new McpServer({ name: '@huggingface/internal-responder', version: '0.0.1' });

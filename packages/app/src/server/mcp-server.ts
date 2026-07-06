@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult, ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js';
+import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type { z } from 'zod';
 import { createRequire } from 'module';
 import { performance } from 'node:perf_hooks';
@@ -68,10 +69,16 @@ import {
 	type DocFetchParams,
 	HF_JOBS_TOOL_CONFIG,
 	HfJobsTool,
-	HF_SANDBOX_EXEC_TOOL_CONFIG,
 	HfSandboxExecTool,
-	HF_SANDBOX_TOOL_CONFIG,
 	HfSandboxTool,
+	HfSandboxFsTool,
+	formatSandboxMarkdown,
+	formatSandboxExecMarkdown,
+	formatSandboxFsMarkdown,
+	type HfSandboxParams,
+	type HfSandboxExecParams,
+	type HfSandboxFsParams,
+	type SandboxProgress,
 	getDynamicSpaceToolConfig,
 	SpaceTool,
 	type SpaceArgs,
@@ -601,6 +608,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 				title: createRepoToolConfig.annotations.title,
 				description: createRepoToolConfig.description,
 				inputSchema: createRepoToolConfig.schema.shape,
+				outputSchema: createRepoToolConfig.outputSchema.shape,
 				annotations: createRepoToolConfig.annotations,
 			},
 			async (params: CreateRepoParams) => {
@@ -608,7 +616,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					logPromptQuery,
 					{
 						methodName: createRepoToolConfig.name,
-						query: `${params.repo_type ?? 'model'}:${params.name}`,
+						query: params.source_uri ? `duplicate:${params.source_uri}->${params.uri}` : `create:${params.uri}`,
 						parameters: params,
 						baseOptions: getLoggingOptions(),
 						successOptions: (created) => ({
@@ -622,6 +630,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					}
 				);
 				return {
+					structuredContent: { ...result },
 					content: [{ type: 'text', text: formatCreateRepoResult(result) }],
 				};
 			}
@@ -1139,6 +1148,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			}
 		);
 
+		const SANDBOX_REDACTED_KEYS = ['handle', 'sandbox_token', 'text', 'base64', 'stdin', 'body', 'env'];
 		const redactSandboxParameters = (args: Record<string, unknown> | undefined): Record<string, unknown> => {
 			if (!args) {
 				return {};
@@ -1146,85 +1156,177 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 
 			return Object.fromEntries(
 				Object.entries(args).map(([key, value]) => {
-					if (key === 'handle' || key === 'sandbox_token') {
+					if (SANDBOX_REDACTED_KEYS.includes(key)) {
 						return [key, '<redacted>'];
 					}
 					return [key, value];
 				})
 			);
 		};
+		const createSandboxProgressRelay = (
+			extra: RequestHandlerExtra<ServerRequest, ServerNotification> | undefined
+		): ((progress: SandboxProgress) => Promise<void>) | undefined => {
+			const progressToken = extra?._meta?.progressToken;
+			logger.trace({ hasExtra: Boolean(extra), progressToken: progressToken ?? null }, 'Sandbox progress setup');
+			if (progressToken === undefined || (typeof progressToken !== 'number' && typeof progressToken !== 'string')) {
+				logger.trace({ hasExtra: Boolean(extra) }, 'Sandbox progress relay disabled');
+				return undefined;
+			}
 
-		toolInstances[HF_SANDBOX_TOOL_CONFIG.name] = server.registerTool(
-			HF_SANDBOX_TOOL_CONFIG.name,
+			let progressCount = 0;
+			let disabled = false;
+
+			return async (progress: SandboxProgress): Promise<void> => {
+				if (disabled || !extra) {
+					return;
+				}
+				if (extra.signal?.aborted) {
+					disabled = true;
+					return;
+				}
+
+				progressCount += 1;
+				try {
+					logger.trace({ progressToken, progress }, 'Relaying sandbox progress');
+					const params: {
+						progressToken: number | string;
+						progress: number;
+						total?: number;
+						message?: string;
+					} = {
+						progressToken,
+						progress: progress.progress ?? progressCount,
+					};
+					if (progress.total !== undefined) {
+						params.total = progress.total;
+					}
+					if (progress.message !== undefined) {
+						params.message = `${String(progressCount)}. ${progress.message}`;
+					}
+
+					await extra.sendNotification({
+						method: 'notifications/progress',
+						params,
+					});
+				} catch (error) {
+					disabled = true;
+					logger.trace({ error }, 'Sandbox progress relay failed');
+				}
+			};
+		};
+
+		const sandboxToolConfig = HfSandboxTool.createToolConfig(username);
+		toolInstances[sandboxToolConfig.name] = server.registerTool(
+			sandboxToolConfig.name,
 			{
-				title: HF_SANDBOX_TOOL_CONFIG.annotations.title,
-				description: HF_SANDBOX_TOOL_CONFIG.description,
-				inputSchema: HF_SANDBOX_TOOL_CONFIG.schema.shape,
-				annotations: HF_SANDBOX_TOOL_CONFIG.annotations,
+				title: sandboxToolConfig.title,
+				description: sandboxToolConfig.description,
+				inputSchema: sandboxToolConfig.schema.shape,
+				outputSchema: sandboxToolConfig.outputSchema.shape,
+				annotations: sandboxToolConfig.annotations,
 			},
-			async (params: z.infer<typeof HF_SANDBOX_TOOL_CONFIG.schema>) => {
+			async (params: HfSandboxParams, extra) => {
 				const isAuthenticated = !!hfToken;
-				const loggedOperation = params.operation ?? 'no-operation';
+				const onProgress = createSandboxProgressRelay(extra);
 				const result = await runWithQueryLogging(
 					logSearchQuery,
 					{
-						methodName: HF_SANDBOX_TOOL_CONFIG.name,
-						query: loggedOperation,
-						parameters: redactSandboxParameters(params.args),
+						methodName: sandboxToolConfig.name,
+						query: params.op,
+						parameters: redactSandboxParameters(params),
 						baseOptions: getLoggingOptions(),
 						successOptions: (sandboxResult) => ({
-							totalResults: sandboxResult.totalResults,
-							resultsShared: sandboxResult.resultsShared,
-							responseCharCount: sandboxResult.formatted.length,
-							success: !sandboxResult.isError,
+							totalResults: 1,
+							resultsShared: 1,
+							responseCharCount: formatSandboxMarkdown(sandboxResult).length,
 						}),
 					},
 					async () => {
 						const sandboxTool = new HfSandboxTool(hfToken, isAuthenticated, username);
-						return sandboxTool.execute(params);
+						return sandboxTool.run(params, onProgress ? { onProgress } : undefined);
 					}
 				);
 
 				return {
-					content: [{ type: 'text', text: result.formatted }],
-					...(result.isError && { isError: true }),
+					structuredContent: { ...result },
+					content: [{ type: 'text', text: formatSandboxMarkdown(result) }],
 				};
 			}
 		);
 
-		toolInstances[HF_SANDBOX_EXEC_TOOL_CONFIG.name] = server.registerTool(
-			HF_SANDBOX_EXEC_TOOL_CONFIG.name,
+		const sandboxExecToolConfig = HfSandboxExecTool.createToolConfig(username);
+		toolInstances[sandboxExecToolConfig.name] = server.registerTool(
+			sandboxExecToolConfig.name,
 			{
-				title: HF_SANDBOX_EXEC_TOOL_CONFIG.annotations.title,
-				description: HF_SANDBOX_EXEC_TOOL_CONFIG.description,
-				inputSchema: HF_SANDBOX_EXEC_TOOL_CONFIG.schema.shape,
-				annotations: HF_SANDBOX_EXEC_TOOL_CONFIG.annotations,
+				title: sandboxExecToolConfig.title,
+				description: sandboxExecToolConfig.description,
+				inputSchema: sandboxExecToolConfig.schema.shape,
+				outputSchema: sandboxExecToolConfig.outputSchema.shape,
+				annotations: sandboxExecToolConfig.annotations,
 			},
-			async (params: z.infer<typeof HF_SANDBOX_EXEC_TOOL_CONFIG.schema>) => {
+			async (params: HfSandboxExecParams, extra) => {
 				const isAuthenticated = !!hfToken;
+				const onProgress = createSandboxProgressRelay(extra);
 				const result = await runWithQueryLogging(
 					logSearchQuery,
 					{
-						methodName: HF_SANDBOX_EXEC_TOOL_CONFIG.name,
+						methodName: sandboxExecToolConfig.name,
 						query: params.cmd,
 						parameters: redactSandboxParameters(params),
 						baseOptions: getLoggingOptions(),
-						successOptions: (sandboxResult) => ({
-							totalResults: sandboxResult.totalResults,
-							resultsShared: sandboxResult.resultsShared,
-							responseCharCount: sandboxResult.formatted.length,
-							success: !sandboxResult.isError,
+						successOptions: (execResult) => ({
+							totalResults: 1,
+							resultsShared: 1,
+							responseCharCount: formatSandboxExecMarkdown(execResult).length,
 						}),
 					},
 					async () => {
-						const sandboxExecTool = new HfSandboxExecTool(hfToken, isAuthenticated);
-						return sandboxExecTool.execute(params);
+						const sandboxExecTool = new HfSandboxExecTool(hfToken, isAuthenticated, username);
+						return sandboxExecTool.run(params, onProgress ? { onProgress } : undefined);
 					}
 				);
 
 				return {
-					content: [{ type: 'text', text: result.formatted }],
-					...(result.isError && { isError: true }),
+					structuredContent: { ...result },
+					content: [{ type: 'text', text: formatSandboxExecMarkdown(result) }],
+				};
+			}
+		);
+
+		const sandboxFsToolConfig = HfSandboxFsTool.createToolConfig(username);
+		toolInstances[sandboxFsToolConfig.name] = server.registerTool(
+			sandboxFsToolConfig.name,
+			{
+				title: sandboxFsToolConfig.title,
+				description: sandboxFsToolConfig.description,
+				inputSchema: sandboxFsToolConfig.schema.shape,
+				outputSchema: sandboxFsToolConfig.outputSchema.shape,
+				annotations: sandboxFsToolConfig.annotations,
+			},
+			async (params: HfSandboxFsParams) => {
+				const isAuthenticated = !!hfToken;
+				const result = await runWithQueryLogging(
+					logSearchQuery,
+					{
+						methodName: sandboxFsToolConfig.name,
+						query: params.op,
+						parameters: redactSandboxParameters(params),
+						baseOptions: getLoggingOptions(),
+						successOptions: (fsResult) => ({
+							totalResults: 1,
+							resultsShared: 1,
+							responseCharCount: formatSandboxFsMarkdown(fsResult).length,
+						}),
+					},
+					async () => {
+						const sandboxFsTool = new HfSandboxFsTool(hfToken, isAuthenticated, username);
+						return sandboxFsTool.run(params);
+					}
+				);
+
+				return {
+					structuredContent: { ...result },
+					content: [{ type: 'text', text: formatSandboxFsMarkdown(result) }],
 				};
 			}
 		);

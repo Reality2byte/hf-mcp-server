@@ -133,6 +133,33 @@ describe('StatelessHttpTransport', () => {
 			expect(result).toBe(false);
 		});
 
+		it('identifies sandbox exec calls as requiring streaming/progress handling', () => {
+			const result = (transport as any).requiresStreamingToolResponse({
+				method: 'tools/call',
+				params: { name: 'hf_sandbox_exec' },
+			});
+
+			expect(result).toBe(true);
+		});
+
+		it('identifies sandbox create calls as requiring streaming/progress handling', () => {
+			const result = (transport as any).requiresStreamingToolResponse({
+				method: 'tools/call',
+				params: { name: 'hf_sandbox', arguments: { op: 'create' } },
+			});
+
+			expect(result).toBe(true);
+		});
+
+		it('does not stream non-create sandbox management calls', () => {
+			const result = (transport as any).requiresStreamingToolResponse({
+				method: 'tools/call',
+				params: { name: 'hf_sandbox', arguments: { op: 'status' } },
+			});
+
+			expect(result).toBe(false);
+		});
+
 		it('should skip setup for normal local tool calls', () => {
 			const result = (transport as any).skipGradioSetup({
 				method: 'tools/call',
