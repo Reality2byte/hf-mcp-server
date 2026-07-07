@@ -448,7 +448,7 @@ export class HfFsTool {
 
 	async run(params: HfFsParams): Promise<HfFsResult> {
 		validateHfFsParams(params);
-		if (isNavigationUri(params.uri) || params.op === 'find') {
+		if (isNavigationUri(params.uri)) {
 			return await this.runNavigation(params);
 		}
 		switch (params.op) {
@@ -458,6 +458,8 @@ export class HfFsTool {
 				return await this.cat(params);
 			case 'stat':
 				return await this.stat(params);
+			case 'find':
+				return await this.find(params);
 			case 'search':
 				return await this.search(params);
 		}
@@ -529,6 +531,70 @@ export class HfFsTool {
 		}
 
 		return buildLsResult(params.uri, entries, offset, truncated, truncated ? 'entry_limit' : undefined);
+	}
+
+	private async find(params: HfFsParams): Promise<HfFsLsResult> {
+		if (isRootUri(params.uri)) {
+			throw new Error('ENOTSUP: find is not supported for the global hf:// root.');
+		}
+		const parsed = parseHfFsUri(params.uri);
+		if (parsed.kind === 'namespace') {
+			return await this.findNamespace(params, parsed);
+		}
+
+		if (parsed.path) {
+			const stat = await this.stat(params);
+			if (stat.exists && stat.type === 'file') {
+				const filters = createFindFilters(params);
+				const entry = statResultToFindEntry(stat);
+				const matchedEntries =
+					(params.offset ?? 0) === 0 && matchesFindFilters(entry, parentPath(parsed.path), filters) ? [entry] : [];
+				return buildEntriesResult(
+					params.uri,
+					'find',
+					matchedEntries,
+					params.offset ?? 0,
+					false
+				);
+			}
+		}
+
+		const offset = params.offset ?? 0;
+		const limit = normalizedLsLimit(params.limit);
+		const filters = createFindFilters(params);
+		const entries: HfFsEntry[] = [];
+		let matchedCount = 0;
+		let truncated = false;
+
+		for await (const file of listFiles({
+			repo: parsed.repo,
+			path: parsed.path || undefined,
+			recursive: true,
+			expand: true,
+			...(parsed.revision ? { revision: parsed.revision } : {}),
+			...(this.hubUrl ? { hubUrl: this.hubUrl } : {}),
+			...(this.accessToken ? { accessToken: this.accessToken } : {}),
+		})) {
+			const entry = toHfFsEntry(file);
+			if (!entry || !matchesFindFilters(entry, parsed.path, filters)) {
+				continue;
+			}
+
+			if (matchedCount < offset) {
+				matchedCount += 1;
+				continue;
+			}
+
+			if (entries.length >= limit) {
+				truncated = true;
+				break;
+			}
+
+			entries.push(entry);
+			matchedCount += 1;
+		}
+
+		return buildEntriesResult(params.uri, 'find', entries, offset, truncated, truncated ? 'entry_limit' : undefined);
 	}
 
 	private async search(params: HfFsParams): Promise<HfFsLsResult> {
@@ -793,6 +859,37 @@ export class HfFsTool {
 		}
 
 		return buildLsResult(params.uri, entries, offset, truncated, truncated ? 'entry_limit' : undefined);
+	}
+
+	private async findNamespace(params: HfFsParams, parsed: ParsedNamespaceHfUri): Promise<HfFsLsResult> {
+		const namespace = await this.resolveNamespace(parsed);
+		const offset = params.offset ?? 0;
+		const limit = normalizedLsLimit(params.limit);
+		const filters = createFindFilters(params);
+		const entries: HfFsEntry[] = [];
+		let matchedCount = 0;
+		let truncated = false;
+
+		for await (const entry of this.listNamespaceEntries(parsed.repoType, namespace)) {
+			if (!matchesFindFilters(entry, namespace, filters)) {
+				continue;
+			}
+
+			if (matchedCount < offset) {
+				matchedCount += 1;
+				continue;
+			}
+
+			if (entries.length >= limit) {
+				truncated = true;
+				break;
+			}
+
+			entries.push(entry);
+			matchedCount += 1;
+		}
+
+		return buildEntriesResult(params.uri, 'find', entries, offset, truncated, truncated ? 'entry_limit' : undefined);
 	}
 
 	private async resolveNamespace(parsed: ParsedNamespaceHfUri): Promise<string> {
@@ -1087,9 +1184,20 @@ function buildLsResult(
 	truncated: boolean,
 	truncationReason?: HfFsLsResult['truncation_reason']
 ): HfFsLsResult {
+	return buildEntriesResult(uri, 'ls', entries, offset, truncated, truncationReason);
+}
+
+function buildEntriesResult(
+	uri: string,
+	op: HfFsLsResult['op'],
+	entries: HfFsEntry[],
+	offset: number,
+	truncated: boolean,
+	truncationReason?: HfFsLsResult['truncation_reason']
+): HfFsLsResult {
 	return {
 		uri,
-		op: 'ls',
+		op,
 		entries,
 		...(truncated
 			? {
@@ -1100,6 +1208,53 @@ function buildLsResult(
 				}
 			: {}),
 	};
+}
+
+interface FindFilters {
+	entryType?: HfFsEntryType;
+	nameMatcher?: (value: string) => boolean;
+	pathMatcher?: (value: string) => boolean;
+}
+
+function createFindFilters(params: HfFsParams): FindFilters {
+	return {
+		...(params.entry_type ? { entryType: params.entry_type } : {}),
+		...(params.name ? { nameMatcher: picomatch(params.name, { dot: true }) } : {}),
+		...(params.path ? { pathMatcher: picomatch(params.path, { dot: true }) } : {}),
+	};
+}
+
+function matchesFindFilters(entry: HfFsEntry, basePath: string, filters: FindFilters): boolean {
+	if (filters.entryType && entry.type !== filters.entryType) {
+		return false;
+	}
+	const relativePath = relativeEntryPath(basePath, entry.path);
+	if (filters.nameMatcher && !filters.nameMatcher(basename(entry.path))) {
+		return false;
+	}
+	if (filters.pathMatcher && !filters.pathMatcher(relativePath)) {
+		return false;
+	}
+	return true;
+}
+
+function statResultToFindEntry(stat: HfFsStatResult): HfFsEntry {
+	return {
+		type: 'file',
+		path: stat.path,
+		...optionalSize(stat.size),
+		...(stat.lfs === undefined ? {} : { lfs: stat.lfs }),
+	};
+}
+
+function parentPath(path: string): string {
+	const slashIndex = path.lastIndexOf('/');
+	return slashIndex === -1 ? '' : path.slice(0, slashIndex);
+}
+
+function basename(path: string): string {
+	const slashIndex = path.lastIndexOf('/');
+	return slashIndex === -1 ? path : path.slice(slashIndex + 1);
 }
 
 export function parseHfFsUri(uri: string): ParsedHfUri {

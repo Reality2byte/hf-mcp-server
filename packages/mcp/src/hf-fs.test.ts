@@ -231,6 +231,64 @@ describe('HfFsTool', () => {
 		});
 	});
 
+	it('finds matching files in repository trees without routing through collection navigation', async () => {
+		vi.mocked(listFiles).mockReturnValue(
+			entries([
+				{ type: 'directory', path: 'weights', size: 0 },
+				{ type: 'file', path: 'weights/model.safetensors', size: 10 },
+				{ type: 'file', path: 'weights/model.gguf', size: 20 },
+				{ type: 'file', path: 'README.md', size: 30 },
+			])
+		);
+
+		const result = await new HfFsTool('token').run({
+			op: 'find',
+			uri: 'hf://models/org/repo',
+			entry_type: 'file',
+			name: '*.gguf',
+			path: 'weights/*',
+			limit: 1,
+		});
+
+		expect(listFiles).toHaveBeenCalledWith({
+			repo: { type: 'model', name: 'org/repo' },
+			recursive: true,
+			expand: true,
+			accessToken: 'token',
+		});
+		expect(result).toEqual({
+			uri: 'hf://models/org/repo',
+			op: 'find',
+			entries: [{ type: 'file', path: 'weights/model.gguf', size: 20 }],
+		});
+		expect(HF_FS_TOOL_CONFIG.outputSchema.parse(result)).toEqual(result);
+	});
+
+	it('finds file URIs by statting the file instead of listing it as a tree', async () => {
+		vi.mocked(pathsInfo).mockResolvedValueOnce([{ path: 'weights/model.gguf', type: 'file', size: 20 }]);
+
+		const result = await new HfFsTool('token').run({
+			op: 'find',
+			uri: 'hf://models/org/repo/weights/model.gguf',
+			entry_type: 'file',
+			name: '*.gguf',
+			path: 'model.gguf',
+		});
+
+		expect(pathsInfo).toHaveBeenCalledWith({
+			repo: { type: 'model', name: 'org/repo' },
+			paths: ['weights/model.gguf'],
+			expand: true,
+			accessToken: 'token',
+		});
+		expect(listFiles).not.toHaveBeenCalled();
+		expect(result).toEqual({
+			uri: 'hf://models/org/repo/weights/model.gguf',
+			op: 'find',
+			entries: [{ type: 'file', path: 'weights/model.gguf', size: 20 }],
+		});
+	});
+
 	it('keeps complete structured ls results while truncating the markdown view', async () => {
 		vi.mocked(listFiles).mockReturnValue(
 			entries(
