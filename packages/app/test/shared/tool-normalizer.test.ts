@@ -4,6 +4,7 @@ import {
 	DATASET_SEARCH_TOOL_ID,
 	HF_FILES_FLAG,
 	HF_FS_TOOL_ID,
+	HF_NAV_TOOL_ID,
 	MODEL_DETAIL_TOOL_ID,
 	MODEL_SEARCH_TOOL_ID,
 	REPO_SEARCH_TOOL_ID,
@@ -45,6 +46,11 @@ describe('normalizeBuiltInTools', () => {
 	it('maps external hf_files flag to hf_fs tool id', () => {
 		const result = normalizeBuiltInTools([HF_FILES_FLAG]);
 
-		expect(result).toEqual([HF_FILES_FLAG, HF_FS_TOOL_ID]);
+		expect(result).toEqual([HF_FILES_FLAG, HF_FS_TOOL_ID, HF_NAV_TOOL_ID]);
+	});
+
+	it('maps hub query API flags to hf_nav', () => {
+		expect(normalizeBuiltInTools(['hf_hub_query'])).toEqual(['hf_hub_query', HF_NAV_TOOL_ID]);
+		expect(normalizeBuiltInTools(['hub_query'])).toEqual(['hub_query', HF_NAV_TOOL_ID]);
 	});
 });

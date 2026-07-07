@@ -3,6 +3,7 @@ import {
 	TOOL_ID_GROUPS,
 	HUB_REPO_DETAILS_TOOL_ID,
 	HF_FS_TOOL_ID,
+	HF_NAV_TOOL_ID,
 	USE_SPACE_TOOL_ID,
 	HF_JOBS_TOOL_ID,
 	DYNAMIC_SPACE_TOOL_ID,
@@ -31,7 +32,7 @@ export const BOUQUETS: Record<string, AppSettings> = {
 		spaceTools: [],
 	},
 	files: {
-		builtInTools: [HF_FS_TOOL_ID],
+		builtInTools: [HF_FS_TOOL_ID, HF_NAV_TOOL_ID],
 		spaceTools: [],
 	},
 	skills: {
