@@ -1,17 +1,11 @@
 import { HUB_URL } from '@huggingface/hub';
 import picomatch from 'picomatch';
-import { z } from 'zod';
 import { safeFetch } from './network/safe-fetch.js';
 import { createHuggingFaceHubPolicy } from './network/url-policy.js';
 import { escapeMarkdown, fitsWithinCharBudget, maxCharsForTokenBudget } from './utilities.js';
 
-const HF_NAV_OPERATIONS = ['ls', 'stat', 'cat', 'find', 'search'] as const;
-const HF_NAV_ENTRY_TYPES = ['dir', 'file', 'collection', 'link'] as const;
-const HF_NAV_TARGET_TYPES = ['repo', 'collection', 'paper', 'bucket'] as const;
-const HF_NAV_REPO_TYPES = ['model', 'dataset', 'space'] as const;
-const HF_NAV_STRATEGIES = ['static', 'collections-api', 'collection-api', 'virtual-traversal'] as const;
 const DEFAULT_LIMIT = 100;
-const MAX_LIMIT = 10_000;
+export const HF_NAV_MAX_LIMIT = 250;
 const GLOBAL_EXPANDED_LIMIT = 100;
 const DEFAULT_MAX_DEPTH = 2;
 const MAX_DEPTH = 5;
@@ -19,57 +13,26 @@ const APPROX_CHARS_PER_TOKEN = 4;
 export const HF_NAV_MAX_OUTPUT_TOKENS = 20_000;
 export const HF_NAV_MAX_OUTPUT_CHARS = maxCharsForTokenBudget(HF_NAV_MAX_OUTPUT_TOKENS, APPROX_CHARS_PER_TOKEN);
 
-const maybeArray = <T extends z.ZodTypeAny>(schema: T) => z.union([schema, z.array(schema)]);
+export type HfNavOperation = 'ls' | 'stat' | 'cat' | 'find' | 'search';
+export type HfNavEntryType = 'dir' | 'file' | 'collection' | 'link';
+export type HfNavTargetType = 'repo' | 'collection' | 'paper' | 'bucket';
+export type HfNavRepoType = 'model' | 'dataset' | 'space';
 
-export const HF_NAV_TOOL_CONFIG = {
-	name: 'hf_nav',
-	title: 'Hugging Face Navigation',
-	description: 'Navigate and search Hugging Face Hub entities using hf:// URIs. This first version supports Collections.',
-	schema: z.object({
-		op: z.enum(HF_NAV_OPERATIONS),
-		uri: z.string().min(1).describe('Hugging Face navigation URI, e.g. hf://collections/huggingface'),
-		glob: z.string().optional().describe('Simple glob filter for ls results. Matches entry name and relative path.'),
-		recursive: z
-			.boolean()
-			.optional()
-			.default(false)
-			.describe('Recursively list virtual descendants. Symlink targets are not followed.'),
-		max_depth: z
-			.number()
-			.int()
-			.min(0)
-			.max(MAX_DEPTH)
-			.optional()
-			.default(DEFAULT_MAX_DEPTH)
-			.describe('Maximum recursion depth for recursive ls and find.'),
-		name: z.string().optional().describe('Glob matched against entry name/basename.'),
-		path: z.string().optional().describe('Glob matched against entry path relative to the requested URI.'),
-		type: maybeArray(z.enum(HF_NAV_ENTRY_TYPES)).optional().describe('Filter by returned entry type.'),
-		target_type: maybeArray(z.enum(HF_NAV_TARGET_TYPES)).optional().describe('Filter link entries by target type.'),
-		repo_type: maybeArray(z.enum(HF_NAV_REPO_TYPES)).optional().describe('Filter repo link entries by repo type.'),
-		query: z.string().optional().describe('Search query. Mapped to the Hub API `q` parameter.'),
-		sort: z
-			.enum(['trending', 'upvotes', 'lastModified'])
-			.optional()
-			.default('trending')
-			.describe('Collection search sort order.'),
-		limit: z.number().int().min(1).max(MAX_LIMIT).optional().default(DEFAULT_LIMIT),
-		cursor: z.string().optional().describe('Opaque continuation cursor returned by a previous truncated response.'),
-	}),
-	outputSchema: createHfNavOutputSchema(),
-	annotations: {
-		readOnlyHint: true,
-		destructiveHint: false,
-		openWorldHint: true,
-	},
-} as const;
-
-export type HfNavParams = z.input<typeof HF_NAV_TOOL_CONFIG.schema>;
-export type HfNavOperation = (typeof HF_NAV_OPERATIONS)[number];
-export type HfNavEntryType = (typeof HF_NAV_ENTRY_TYPES)[number];
-export type HfNavTargetType = (typeof HF_NAV_TARGET_TYPES)[number];
-export type HfNavRepoType = (typeof HF_NAV_REPO_TYPES)[number];
-export type HfNavStrategy = (typeof HF_NAV_STRATEGIES)[number];
+export interface HfNavParams {
+	op: HfNavOperation;
+	uri: string;
+	glob?: string;
+	recursive?: boolean;
+	max_depth?: number;
+	name?: string;
+	path?: string;
+	type?: HfNavEntryType | HfNavEntryType[];
+	target_type?: HfNavTargetType | HfNavTargetType[];
+	repo_type?: HfNavRepoType | HfNavRepoType[];
+	query?: string;
+	sort?: 'trending' | 'upvotes' | 'lastModified';
+	limit?: number;
+}
 
 export interface HfNavEntry {
 	type: HfNavEntryType;
@@ -91,7 +54,6 @@ export interface HfNavEntry {
 interface BaseHfNavResult {
 	uri: string;
 	op: HfNavOperation;
-	strategy?: HfNavStrategy;
 }
 
 export interface HfNavEntriesResult extends BaseHfNavResult {
@@ -99,7 +61,6 @@ export interface HfNavEntriesResult extends BaseHfNavResult {
 	entries: HfNavEntry[];
 	truncated?: boolean;
 	truncation_reason?: 'limit';
-	next_cursor?: string;
 }
 
 export interface HfNavStatResult extends BaseHfNavResult {
@@ -190,47 +151,11 @@ interface ApiCollectionItemBase {
 
 interface CollectionListPage {
 	collections: ApiCollectionSummary[];
-	nextCursor?: string;
 }
 
 interface TraversalPage {
 	entries: HfNavEntry[];
 	truncated?: boolean;
-	nextCursor?: string;
-}
-
-function createHfNavOutputSchema() {
-	const entrySchema = z.object({
-		type: z.enum(HF_NAV_ENTRY_TYPES),
-		name: z.string(),
-		path: z.string(),
-		uri: z.string(),
-		target_uri: z.string().optional(),
-		target_type: z.enum(HF_NAV_TARGET_TYPES).optional(),
-		repo_type: z.enum(HF_NAV_REPO_TYPES).optional(),
-		title: z.string().optional(),
-		description: z.string().optional(),
-		private: z.boolean().optional(),
-		upvotes: z.number().optional(),
-		updated_at: z.string().optional(),
-		created_at: z.string().optional(),
-		content_type: z.literal('application/json').optional(),
-	});
-
-	return z.object({
-		uri: z.string(),
-		op: z.enum(HF_NAV_OPERATIONS),
-		entries: z.array(entrySchema).optional(),
-		exists: z.boolean().optional(),
-		type: z.union([z.enum(HF_NAV_ENTRY_TYPES), z.literal('missing')]).optional(),
-		path: z.string().optional(),
-		content: z.string().optional(),
-		content_type: z.literal('application/json').optional(),
-		truncated: z.boolean().optional(),
-		truncation_reason: z.literal('limit').optional(),
-		next_cursor: z.string().optional(),
-		strategy: z.enum(HF_NAV_STRATEGIES).optional(),
-	});
 }
 
 export class HfNavTool {
@@ -270,65 +195,57 @@ export class HfNavTool {
 				maxDepth: params.max_depth ?? DEFAULT_MAX_DEPTH,
 				matcher: createLsMatcher(params.glob),
 			});
-			return entriesResult(parsed.uri, 'ls', page.entries, 'virtual-traversal', page.truncated);
+			return entriesResult(parsed.uri, 'ls', page.entries, page.truncated);
 		}
 
 		const page = await this.lsDirect(parsed, params);
 		const matcher = createLsMatcher(params.glob);
 		const entries = matcher ? page.entries.filter(matcher) : page.entries;
-		return entriesResult(parsed.uri, 'ls', entries, page.strategy, page.truncated, page.nextCursor);
+		return entriesResult(parsed.uri, 'ls', entries, page.truncated);
 	}
 
 	private async lsDirect(
 		parsed: ParsedHfNavUri,
-		params: Pick<HfNavParams, 'limit' | 'cursor'>
-	): Promise<{ entries: HfNavEntry[]; strategy: HfNavStrategy; truncated?: boolean; nextCursor?: string }> {
+		params: Pick<HfNavParams, 'limit'>
+	): Promise<{ entries: HfNavEntry[]; truncated?: boolean }> {
 		const limit = params.limit ?? DEFAULT_LIMIT;
 		switch (parsed.kind) {
 			case 'root':
 				return {
-					strategy: 'static',
 					entries: [{ type: 'dir', name: 'collections', path: 'collections', uri: 'hf://collections' }],
 				};
 			case 'collections-root': {
 				const page = await this.listCollections({
 					limit: Math.min(limit, GLOBAL_EXPANDED_LIMIT),
-					cursor: params.cursor,
 					expand: true,
 				});
 				return {
-					strategy: 'collections-api',
 					entries: page.collections.flatMap((collection) => {
 						const owner = stringValue(collection.owner?.name);
 						return owner ? [collectionSummaryToEntry(collection, owner, `${owner}/`)] : [];
 					}),
-					truncated: page.nextCursor !== undefined,
-					nextCursor: page.nextCursor,
+					truncated: page.collections.length >= Math.min(limit, GLOBAL_EXPANDED_LIMIT),
 				};
 			}
 			case 'collection-owner': {
 				const page = await this.listCollections({
 					owner: parsed.owner,
 					limit,
-					cursor: params.cursor,
 					expand: false,
 				});
 				return {
-					strategy: 'collections-api',
 					entries: page.collections.map((collection) => collectionSummaryToEntry(collection, parsed.owner, '')),
-					truncated: page.nextCursor !== undefined,
-					nextCursor: page.nextCursor,
+					truncated: page.collections.length >= limit,
 				};
 			}
 			case 'collection': {
 				await this.getCollection(parsed.owner, parsed.slug);
-				return { strategy: 'collection-api', entries: collectionChildren(parsed.uri) };
+				return { entries: collectionChildren(parsed.uri) };
 			}
 			case 'collection-child':
 				if (parsed.child === 'items') {
 					const collection = await this.getCollection(parsed.owner, parsed.slug);
 					return {
-						strategy: 'collection-api',
 						entries: collectionItemsToEntries(collection, parsed.uri),
 					};
 				}
@@ -346,11 +263,11 @@ export class HfNavTool {
 	private async stat(_params: HfNavParams, parsed: ParsedHfNavUri): Promise<HfNavStatResult> {
 		switch (parsed.kind) {
 			case 'root':
-				return { uri: parsed.uri, op: 'stat', exists: true, type: 'dir', path: '', strategy: 'static' };
+				return { uri: parsed.uri, op: 'stat', exists: true, type: 'dir', path: '' };
 			case 'collections-root':
-				return { uri: parsed.uri, op: 'stat', exists: true, type: 'dir', path: 'collections', strategy: 'static' };
+				return { uri: parsed.uri, op: 'stat', exists: true, type: 'dir', path: 'collections' };
 			case 'collection-owner':
-				return { uri: parsed.uri, op: 'stat', exists: true, type: 'dir', path: parsed.owner, strategy: 'static' };
+				return { uri: parsed.uri, op: 'stat', exists: true, type: 'dir', path: parsed.owner };
 			case 'collection':
 				return await this.statCollection(parsed);
 			case 'collection-child':
@@ -371,7 +288,6 @@ export class HfNavTool {
 				exists: true,
 				type: 'collection',
 				path: `${parsed.owner}/${parsed.slug}`,
-				strategy: 'collection-api',
 			};
 		} catch (error) {
 			if (isEnoent(error)) {
@@ -381,7 +297,6 @@ export class HfNavTool {
 					exists: false,
 					type: 'missing',
 					path: `${parsed.owner}/${parsed.slug}`,
-					strategy: 'collection-api',
 				};
 			}
 			throw error;
@@ -404,7 +319,6 @@ export class HfNavTool {
 					exists: false,
 					type: 'missing',
 					path: `${parsed.owner}/${parsed.slug}/${parsed.child}`,
-					strategy: 'collection-api',
 				};
 			}
 			throw error;
@@ -416,7 +330,6 @@ export class HfNavTool {
 			exists: true,
 			type: parsed.child === 'items' ? 'dir' : 'file',
 			path: `${parsed.owner}/${parsed.slug}/${parsed.child}`,
-			strategy: 'collection-api',
 			...(parsed.child === 'items' ? {} : { content_type: 'application/json' as const }),
 		};
 	}
@@ -432,7 +345,6 @@ export class HfNavTool {
 				exists: entry !== undefined,
 				type: entry ? 'link' : 'missing',
 				path: `${parsed.owner}/${parsed.slug}/items/${parsed.item}`,
-				strategy: 'collection-api',
 			};
 		} catch (error) {
 			if (isEnoent(error)) {
@@ -442,7 +354,6 @@ export class HfNavTool {
 					exists: false,
 					type: 'missing',
 					path: `${parsed.owner}/${parsed.slug}/items/${parsed.item}`,
-					strategy: 'collection-api',
 				};
 			}
 			throw error;
@@ -463,7 +374,6 @@ export class HfNavTool {
 				op: 'cat',
 				content_type: 'application/json',
 				content: JSON.stringify(collection, null, 2),
-				strategy: 'collection-api',
 			};
 		}
 		if (parsed.child === 'history.json') {
@@ -473,7 +383,6 @@ export class HfNavTool {
 				op: 'cat',
 				content_type: 'application/json',
 				content: JSON.stringify(history, null, 2),
-				strategy: 'collection-api',
 			};
 		}
 		throw new Error('ENOENT: no such file or directory');
@@ -489,7 +398,7 @@ export class HfNavTool {
 			maxDepth: params.max_depth ?? DEFAULT_MAX_DEPTH,
 			matcher: (entry) => matchesFindFilters(entry, filters),
 		});
-		return entriesResult(parsed.uri, 'find', page.entries, 'virtual-traversal', page.truncated);
+		return entriesResult(parsed.uri, 'find', page.entries, page.truncated);
 	}
 
 	private async search(params: HfNavParams, parsed: ParsedHfNavUri): Promise<HfNavEntriesResult> {
@@ -501,19 +410,19 @@ export class HfNavTool {
 			throw new Error('EINVAL: search requires query');
 		}
 		const limit = params.limit ?? DEFAULT_LIMIT;
+		const collectionLimit = parsed.kind === 'collection-owner' ? limit : Math.min(limit, GLOBAL_EXPANDED_LIMIT);
 		const page = await this.listCollections({
 			owner: parsed.kind === 'collection-owner' ? parsed.owner : undefined,
 			query,
 			sort: params.sort ?? 'trending',
-			limit: parsed.kind === 'collection-owner' ? limit : Math.min(limit, GLOBAL_EXPANDED_LIMIT),
-			cursor: params.cursor,
+			limit: collectionLimit,
 			expand: parsed.kind !== 'collection-owner',
 		});
 		const entries = page.collections.flatMap((collection) => {
 			const owner = parsed.kind === 'collection-owner' ? parsed.owner : stringValue(collection.owner?.name);
 			return owner ? [collectionSummaryToEntry(collection, owner, parsed.kind === 'collection-owner' ? '' : `${owner}/`)] : [];
 		});
-		return entriesResult(parsed.uri, 'search', entries, 'collections-api', page.nextCursor !== undefined, page.nextCursor);
+		return entriesResult(parsed.uri, 'search', entries, page.collections.length >= collectionLimit);
 	}
 
 	private async traverse(
@@ -567,10 +476,10 @@ export class HfNavTool {
 			case 'collections-root':
 			case 'collection-owner':
 			case 'collection':
-				return (await this.lsDirect(parsed, { limit: MAX_LIMIT })).entries;
+				return (await this.lsDirect(parsed, { limit: HF_NAV_MAX_LIMIT })).entries;
 			case 'collection-child':
 				if (parsed.child === 'items') {
-					return (await this.lsDirect(parsed, { limit: MAX_LIMIT })).entries;
+					return (await this.lsDirect(parsed, { limit: HF_NAV_MAX_LIMIT })).entries;
 				}
 				return [];
 			case 'collection-item':
@@ -585,7 +494,6 @@ export class HfNavTool {
 		query?: string;
 		sort?: 'trending' | 'upvotes' | 'lastModified';
 		limit: number;
-		cursor?: string;
 		expand: boolean;
 	}): Promise<CollectionListPage> {
 		const url = new URL('/api/collections', this.hubUrl);
@@ -600,10 +508,6 @@ export class HfNavTool {
 		if (options.sort) {
 			url.searchParams.set('sort', options.sort);
 		}
-		if (options.cursor) {
-			url.searchParams.set('cursor', options.cursor);
-		}
-
 		const { response } = await safeFetch(url.toString(), {
 			urlPolicy: createHuggingFaceHubPolicy(),
 			requestInit: { headers: this.headers() },
@@ -612,7 +516,6 @@ export class HfNavTool {
 		const body: unknown = await response.json();
 		return {
 			collections: Array.isArray(body) ? (body as ApiCollectionSummary[]) : [],
-			nextCursor: cursorFromLink(response.headers.get('link')),
 		};
 	}
 
@@ -738,6 +641,18 @@ export function formatHfNavMarkdown(result: HfNavResult, maxChars = HF_NAV_MAX_O
 }
 
 function validateParams(params: HfNavParams): void {
+	if (
+		params.limit !== undefined &&
+		(!Number.isInteger(params.limit) || params.limit < 1 || params.limit > HF_NAV_MAX_LIMIT)
+	) {
+		throw new Error(`EINVAL: limit must be an integer between 1 and ${HF_NAV_MAX_LIMIT.toString()}`);
+	}
+	if (
+		params.max_depth !== undefined &&
+		(!Number.isInteger(params.max_depth) || params.max_depth < 0 || params.max_depth > MAX_DEPTH)
+	) {
+		throw new Error(`EINVAL: max_depth must be an integer between 0 and ${MAX_DEPTH.toString()}`);
+	}
 	if (params.glob !== undefined && params.op !== 'ls') {
 		throw new Error('EINVAL: glob applies only to ls');
 	}
@@ -765,17 +680,13 @@ function entriesResult(
 	uri: string,
 	op: 'ls' | 'find' | 'search',
 	entries: HfNavEntry[],
-	strategy: HfNavStrategy,
-	truncated?: boolean,
-	nextCursor?: string
+	truncated?: boolean
 ): HfNavEntriesResult {
 	return {
 		uri,
 		op,
-		strategy,
 		entries,
 		...(truncated ? { truncated: true, truncation_reason: 'limit' as const } : {}),
-		...(nextCursor ? { next_cursor: nextCursor } : {}),
 	};
 }
 
@@ -1017,25 +928,6 @@ async function assertOk(response: Response, label: string): Promise<void> {
 	throw new Error(`Hub ${label} failed with status ${response.status.toString()}: ${await response.text()}`);
 }
 
-function cursorFromLink(link: string | null): string | undefined {
-	if (!link) {
-		return undefined;
-	}
-	const nextLink = link
-		.split(',')
-		.map((part) => part.trim())
-		.find((part) => /rel="?next"?/.test(part));
-	const match = nextLink?.match(/<([^>]+)>/);
-	if (!match?.[1]) {
-		return undefined;
-	}
-	try {
-		return new URL(match[1]).searchParams.get('cursor') ?? undefined;
-	} catch {
-		return undefined;
-	}
-}
-
 function isEnoent(error: unknown): boolean {
 	return error instanceof Error && error.message.startsWith('ENOENT:');
 }
@@ -1065,7 +957,7 @@ function renderEntriesMarkdown(result: HfNavEntriesResult): string {
 		);
 	}
 	if (result.truncated) {
-		lines.push('', `Truncated: limit${result.next_cursor ? `. Next cursor: \`${escapeMarkdown(result.next_cursor)}\`` : ''}`);
+		lines.push('', 'Truncated: limit');
 	}
 	return lines.join('\n');
 }

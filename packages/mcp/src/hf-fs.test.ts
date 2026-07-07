@@ -50,7 +50,7 @@ describe('HfFsTool config', () => {
 
 		expect(config.description).toContain('default to alice');
 		expect(config.schema.shape.uri.description).toContain(
-			'hf://models|datasets|spaces|buckets/OWNER[/NAME[/PATH]]'
+			'hf://models|datasets|spaces|buckets/OWNER[/NAME[/PATH]] or hf://collections[/OWNER[/SLUG]]'
 		);
 		expect(config.schema.shape.uri.description).toContain('Authenticated OWNER is alice');
 		expect(config.schema.shape.uri.description).not.toContain('omitted owner');
@@ -61,7 +61,7 @@ describe('HfFsTool config', () => {
 
 		expect(config.description).toContain('Anonymous requests must include an owner');
 		expect(config.schema.shape.uri.description).toContain(
-			'hf://models|datasets|spaces|buckets/OWNER[/NAME[/PATH]]'
+			'hf://models|datasets|spaces|buckets/OWNER[/NAME[/PATH]] or hf://collections[/OWNER[/SLUG]]'
 		);
 		expect(config.schema.shape.uri.description).not.toContain('anonymous requests must include an owner');
 	});
@@ -228,6 +228,64 @@ describe('HfFsTool', () => {
 			uri: 'hf://datasets/org/repo',
 			op: 'ls',
 			entries: [{ type: 'file', path: 'a.txt', size: 1 }],
+		});
+	});
+
+	it('finds matching files in repository trees without routing through collection navigation', async () => {
+		vi.mocked(listFiles).mockReturnValue(
+			entries([
+				{ type: 'directory', path: 'weights', size: 0 },
+				{ type: 'file', path: 'weights/model.safetensors', size: 10 },
+				{ type: 'file', path: 'weights/model.gguf', size: 20 },
+				{ type: 'file', path: 'README.md', size: 30 },
+			])
+		);
+
+		const result = await new HfFsTool('token').run({
+			op: 'find',
+			uri: 'hf://models/org/repo',
+			entry_type: 'file',
+			name: '*.gguf',
+			path: 'weights/*',
+			limit: 1,
+		});
+
+		expect(listFiles).toHaveBeenCalledWith({
+			repo: { type: 'model', name: 'org/repo' },
+			recursive: true,
+			expand: true,
+			accessToken: 'token',
+		});
+		expect(result).toEqual({
+			uri: 'hf://models/org/repo',
+			op: 'find',
+			entries: [{ type: 'file', path: 'weights/model.gguf', size: 20 }],
+		});
+		expect(HF_FS_TOOL_CONFIG.outputSchema.parse(result)).toEqual(result);
+	});
+
+	it('finds file URIs by statting the file instead of listing it as a tree', async () => {
+		vi.mocked(pathsInfo).mockResolvedValueOnce([{ path: 'weights/model.gguf', type: 'file', size: 20 }]);
+
+		const result = await new HfFsTool('token').run({
+			op: 'find',
+			uri: 'hf://models/org/repo/weights/model.gguf',
+			entry_type: 'file',
+			name: '*.gguf',
+			path: 'model.gguf',
+		});
+
+		expect(pathsInfo).toHaveBeenCalledWith({
+			repo: { type: 'model', name: 'org/repo' },
+			paths: ['weights/model.gguf'],
+			expand: true,
+			accessToken: 'token',
+		});
+		expect(listFiles).not.toHaveBeenCalled();
+		expect(result).toEqual({
+			uri: 'hf://models/org/repo/weights/model.gguf',
+			op: 'find',
+			entries: [{ type: 'file', path: 'weights/model.gguf', size: 20 }],
 		});
 	});
 
@@ -423,6 +481,125 @@ describe('HfFsTool', () => {
 					updated_at: '2026-05-31T09:53:58.030Z',
 				},
 			],
+		});
+	});
+
+	it('lists the top-level hf namespace', async () => {
+		await expect(new HfFsTool().run({ op: 'ls', uri: 'hf://' })).resolves.toEqual({
+			uri: 'hf://',
+			op: 'ls',
+			entries: [
+				{ type: 'dir', path: 'collections', name: 'collections', uri: 'hf://collections' },
+				{ type: 'dir', path: 'models', name: 'models', uri: 'hf://models' },
+				{ type: 'dir', path: 'datasets', name: 'datasets', uri: 'hf://datasets' },
+				{ type: 'dir', path: 'spaces', name: 'spaces', uri: 'hf://spaces' },
+				{ type: 'dir', path: 'buckets', name: 'buckets', uri: 'hf://buckets' },
+			],
+		});
+	});
+
+	it('lists collections through hf_fs', async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(
+			new Response(
+				JSON.stringify([
+					{
+						name: 'huggingface/agents-course-0123456789abcdef01234567',
+						title: 'Agents Course',
+						private: false,
+						upvotes: 123,
+					},
+				]),
+				{ headers: { 'content-type': 'application/json' } }
+			)
+		);
+
+		const result = await new HfFsTool('token').run({
+			op: 'ls',
+			uri: 'hf://collections/huggingface',
+			limit: 20,
+		});
+
+		expect(fetch).toHaveBeenCalledWith(
+			expect.stringContaining('/api/collections?'),
+			expect.objectContaining({ redirect: 'manual' })
+		);
+		if (result.op !== 'ls') {
+			throw new Error('Expected ls result');
+		}
+		expect(result.entries).toEqual([
+			{
+				type: 'collection',
+				name: 'agents-course-0123456789abcdef01234567',
+				path: 'agents-course-0123456789abcdef01234567',
+				uri: 'hf://collections/huggingface/agents-course-0123456789abcdef01234567',
+				title: 'Agents Course',
+				private: false,
+				upvotes: 123,
+			},
+		]);
+		expect(HF_FS_TOOL_CONFIG.outputSchema.parse(result)).toEqual(result);
+		expect(formatHfFsMarkdown(result)).toContain('# hf_fs ls');
+	});
+
+	it('clamps collection limit 0 to the internal collection maximum', async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify([])));
+
+		await new HfFsTool('token').run({
+			op: 'ls',
+			uri: 'hf://collections/huggingface',
+			limit: 0,
+		});
+
+		const url = new URL(vi.mocked(fetch).mock.calls[0]?.[0] as string);
+		expect(url.searchParams.get('limit')).toBe('250');
+	});
+
+	it('searches global model discovery roots', async () => {
+		vi.mocked(listModels).mockReturnValue(
+			entries([
+				{
+					id: '1',
+					name: 'google/gemma-2-2b',
+					private: false,
+					gated: false,
+					task: 'text-generation',
+					likes: 100,
+					downloads: 200,
+					updatedAt: new Date('2025-01-02T03:04:05.000Z'),
+				},
+				{
+					id: '2',
+					name: 'google/gemma-2-9b',
+					private: false,
+					gated: false,
+					task: 'text-generation',
+					likes: 90,
+					downloads: 180,
+					updatedAt: new Date('2025-01-03T03:04:05.000Z'),
+				},
+			]) as ReturnType<typeof listModels>
+		);
+
+		const result = await new HfFsTool('token').run({
+			op: 'search',
+			uri: 'hf://models',
+			query: 'gemma',
+			sort: 'downloads',
+			limit: 1,
+		});
+
+		expect(listModels).toHaveBeenCalledWith({
+			search: { query: 'gemma' },
+			sort: 'downloads',
+			limit: 2,
+			accessToken: 'token',
+		});
+		expect(result).toMatchObject({
+			uri: 'hf://models',
+			op: 'search',
+			entries: [{ type: 'repo', path: 'google/gemma-2-2b', uri: 'hf://models/google/gemma-2-2b' }],
+			truncated: true,
+			truncation_reason: 'limit',
 		});
 	});
 

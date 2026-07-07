@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { HF_NAV_TOOL_CONFIG, HfNavTool, formatHfNavMarkdown, parseHfNavUri } from './hf-nav.js';
+import { HfNavTool, formatHfNavMarkdown, parseHfNavUri } from './hf-nav.js';
 
 function jsonResponse(body: unknown, init?: ResponseInit): Response {
 	return new Response(JSON.stringify(body), {
@@ -65,29 +65,20 @@ describe('HfNavTool', () => {
 		expect(result).toEqual({
 			uri: 'hf://',
 			op: 'ls',
-			strategy: 'static',
 			entries: [{ type: 'dir', name: 'collections', path: 'collections', uri: 'hf://collections' }],
 		});
-		expect(HF_NAV_TOOL_CONFIG.outputSchema.parse(result)).toEqual(result);
 	});
 
 	it('lists owner collections using compact collection API responses', async () => {
 		vi.mocked(fetch).mockResolvedValueOnce(
-			jsonResponse(
-				[
-					{
-						name: 'huggingface/agents-course-0123456789abcdef01234567',
-						title: 'Agents Course',
-						private: false,
-						upvotes: 123,
-					},
-				],
+			jsonResponse([
 				{
-					headers: {
-						link: '<https://huggingface.co/api/collections?owner=huggingface&cursor=abc>; rel="next"',
-					},
-				}
-			)
+					name: 'huggingface/agents-course-0123456789abcdef01234567',
+					title: 'Agents Course',
+					private: false,
+					upvotes: 123,
+				},
+			])
 		);
 
 		const result = await new HfNavTool('token').run({
@@ -106,7 +97,6 @@ describe('HfNavTool', () => {
 		expect(result).toEqual({
 			uri: 'hf://collections/huggingface',
 			op: 'ls',
-			strategy: 'collections-api',
 			entries: [
 				{
 					type: 'collection',
@@ -118,9 +108,6 @@ describe('HfNavTool', () => {
 					upvotes: 123,
 				},
 			],
-			truncated: true,
-			truncation_reason: 'limit',
-			next_cursor: 'abc',
 		});
 	});
 
@@ -219,11 +206,7 @@ describe('HfNavTool', () => {
 	it('finds model item links without following targets', async () => {
 		vi.mocked(fetch)
 			.mockResolvedValueOnce(
-				jsonResponse([{ name: 'llama-set-0123456789abcdef01234567', title: 'Llama Set' }], {
-					headers: {
-						link: '<https://huggingface.co/api/collections?owner=unsloth&cursor=abc>; rel="next"',
-					},
-				})
+				jsonResponse([{ name: 'llama-set-0123456789abcdef01234567', title: 'Llama Set' }])
 			)
 			.mockResolvedValueOnce(
 				jsonResponse({
@@ -262,9 +245,8 @@ describe('HfNavTool', () => {
 			target_uri: 'hf://models/meta-llama/Llama-3.1-8B',
 		});
 		expect(result.truncated).toBeUndefined();
-		expect(result.next_cursor).toBeUndefined();
 		const firstUrl = new URL(vi.mocked(fetch).mock.calls[0]?.[0] as string);
-		expect(firstUrl.searchParams.get('limit')).toBe('10000');
+		expect(firstUrl.searchParams.get('limit')).toBe('250');
 		expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2);
 	});
 });
