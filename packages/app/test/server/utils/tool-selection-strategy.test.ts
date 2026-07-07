@@ -11,7 +11,6 @@ import {
 	ALL_BUILTIN_TOOL_IDS,
 	CREATE_REPO_TOOL_ID,
 	HF_FS_TOOL_ID,
-	HF_NAV_TOOL_ID,
 	HF_SANDBOX_EXEC_TOOL_ID,
 	HF_SANDBOX_FS_TOOL_ID,
 	HF_SANDBOX_TOOL_ID,
@@ -124,7 +123,7 @@ describe('BOUQUETS configuration', () => {
 		const bouquet = BOUQUETS.files;
 		expect(bouquet).toBeDefined();
 		if (bouquet) {
-			expect(bouquet.builtInTools).toEqual([HF_FS_TOOL_ID, HF_NAV_TOOL_ID]);
+			expect(bouquet.builtInTools).toEqual([HF_FS_TOOL_ID]);
 			expect(bouquet.spaceTools).toEqual([]);
 		}
 	});
@@ -245,7 +244,7 @@ describe('ToolSelectionStrategy', () => {
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.BOUQUET_OVERRIDE);
-			expect(result.enabledToolIds).toEqual([HF_FS_TOOL_ID, HF_NAV_TOOL_ID]);
+			expect(result.enabledToolIds).toEqual([HF_FS_TOOL_ID]);
 			expect(result.reason).toBe('Bouquet override: files');
 		});
 
@@ -373,7 +372,7 @@ describe('ToolSelectionStrategy', () => {
 			expect(result.mode).toBe(ToolSelectionMode.MIX);
 			expect(result.reason).toBe('User settings + mix(files)');
 			expect(result.mixedBouquet).toEqual(['files']);
-			expect(result.enabledToolIds).toEqual([REPO_SEARCH_TOOL_ID, HF_FS_TOOL_ID, HF_NAV_TOOL_ID]);
+			expect(result.enabledToolIds).toEqual([REPO_SEARCH_TOOL_ID, HF_FS_TOOL_ID]);
 		});
 
 		it('should deduplicate tools when mixing', async () => {
@@ -582,7 +581,7 @@ describe('ToolSelectionStrategy', () => {
 			const result = await externalStrategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.EXTERNAL_API);
-			expect(result.enabledToolIds).toEqual(['hf_files', HF_FS_TOOL_ID, HF_NAV_TOOL_ID]);
+			expect(result.enabledToolIds).toEqual(['hf_files', HF_FS_TOOL_ID]);
 			expect(result.reason).toBe('External API user settings');
 		});
 

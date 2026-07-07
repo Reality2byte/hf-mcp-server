@@ -22,7 +22,7 @@ export function normalizeBuiltInTools(ids: readonly string[]): string[] {
 
 	for (const rawId of ids) {
 		if (rawId === HF_FILES_FLAG) {
-			for (const id of [HF_FILES_FLAG, HF_FS_TOOL_ID, HF_NAV_TOOL_ID]) {
+			for (const id of [HF_FILES_FLAG, HF_FS_TOOL_ID]) {
 				if (!seen.has(id)) {
 					seen.add(id);
 					normalized.push(id);
@@ -32,7 +32,7 @@ export function normalizeBuiltInTools(ids: readonly string[]): string[] {
 		}
 
 		if (HUB_QUERY_FLAGS.has(rawId)) {
-			for (const id of [rawId, HF_NAV_TOOL_ID]) {
+			for (const id of [rawId, HF_FS_TOOL_ID]) {
 				if (!seen.has(id)) {
 					seen.add(id);
 					normalized.push(id);
@@ -42,15 +42,16 @@ export function normalizeBuiltInTools(ids: readonly string[]): string[] {
 		}
 
 		const normalizedToolId = mapLegacySearchToolId(rawId);
+		const canonicalToolId = normalizedToolId === HF_NAV_TOOL_ID ? HF_FS_TOOL_ID : normalizedToolId;
 
-		if (normalizedToolId === MODEL_DETAIL_TOOL_ID || normalizedToolId === DATASET_DETAIL_TOOL_ID) {
+		if (canonicalToolId === MODEL_DETAIL_TOOL_ID || canonicalToolId === DATASET_DETAIL_TOOL_ID) {
 			addHubInspect = true;
 			continue;
 		}
 
-		if (!seen.has(normalizedToolId)) {
-			seen.add(normalizedToolId);
-			normalized.push(normalizedToolId);
+		if (!seen.has(canonicalToolId)) {
+			seen.add(canonicalToolId);
+			normalized.push(canonicalToolId);
 		}
 	}
 

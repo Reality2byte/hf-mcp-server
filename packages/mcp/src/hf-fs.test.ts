@@ -50,7 +50,7 @@ describe('HfFsTool config', () => {
 
 		expect(config.description).toContain('default to alice');
 		expect(config.schema.shape.uri.description).toContain(
-			'hf://models|datasets|spaces|buckets/OWNER[/NAME[/PATH]]'
+			'hf://models|datasets|spaces|buckets/OWNER[/NAME[/PATH]] or hf://collections[/OWNER[/SLUG]]'
 		);
 		expect(config.schema.shape.uri.description).toContain('Authenticated OWNER is alice');
 		expect(config.schema.shape.uri.description).not.toContain('omitted owner');
@@ -61,7 +61,7 @@ describe('HfFsTool config', () => {
 
 		expect(config.description).toContain('Anonymous requests must include an owner');
 		expect(config.schema.shape.uri.description).toContain(
-			'hf://models|datasets|spaces|buckets/OWNER[/NAME[/PATH]]'
+			'hf://models|datasets|spaces|buckets/OWNER[/NAME[/PATH]] or hf://collections[/OWNER[/SLUG]]'
 		);
 		expect(config.schema.shape.uri.description).not.toContain('anonymous requests must include an owner');
 	});
@@ -423,6 +423,113 @@ describe('HfFsTool', () => {
 					updated_at: '2026-05-31T09:53:58.030Z',
 				},
 			],
+		});
+	});
+
+	it('lists the top-level hf namespace', async () => {
+		await expect(new HfFsTool().run({ op: 'ls', uri: 'hf://' })).resolves.toEqual({
+			uri: 'hf://',
+			op: 'ls',
+			entries: [
+				{ type: 'dir', path: 'collections', name: 'collections', uri: 'hf://collections' },
+				{ type: 'dir', path: 'models', name: 'models', uri: 'hf://models' },
+				{ type: 'dir', path: 'datasets', name: 'datasets', uri: 'hf://datasets' },
+				{ type: 'dir', path: 'spaces', name: 'spaces', uri: 'hf://spaces' },
+				{ type: 'dir', path: 'buckets', name: 'buckets', uri: 'hf://buckets' },
+			],
+		});
+	});
+
+	it('lists collections through hf_fs', async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(
+			new Response(
+				JSON.stringify([
+					{
+						name: 'huggingface/agents-course-0123456789abcdef01234567',
+						title: 'Agents Course',
+						private: false,
+						upvotes: 123,
+					},
+				]),
+				{ headers: { 'content-type': 'application/json' } }
+			)
+		);
+
+		const result = await new HfFsTool('token').run({
+			op: 'ls',
+			uri: 'hf://collections/huggingface',
+			limit: 20,
+		});
+
+		expect(fetch).toHaveBeenCalledWith(
+			expect.stringContaining('/api/collections?'),
+			expect.objectContaining({ redirect: 'manual' })
+		);
+		if (result.op !== 'ls') {
+			throw new Error('Expected ls result');
+		}
+		expect(result.entries).toEqual([
+			{
+				type: 'collection',
+				name: 'agents-course-0123456789abcdef01234567',
+				path: 'agents-course-0123456789abcdef01234567',
+				uri: 'hf://collections/huggingface/agents-course-0123456789abcdef01234567',
+				title: 'Agents Course',
+				private: false,
+				upvotes: 123,
+			},
+		]);
+		expect(HF_FS_TOOL_CONFIG.outputSchema.parse(result)).toEqual(result);
+		expect(formatHfFsMarkdown(result)).toContain('# hf_fs ls');
+	});
+
+	it('searches global model discovery roots', async () => {
+		vi.mocked(listModels).mockReturnValue(
+			entries([
+				{
+					id: '1',
+					name: 'google/gemma-2-2b',
+					private: false,
+					gated: false,
+					task: 'text-generation',
+					likes: 100,
+					downloads: 200,
+					updatedAt: new Date('2025-01-02T03:04:05.000Z'),
+				},
+				{
+					id: '2',
+					name: 'google/gemma-2-9b',
+					private: false,
+					gated: false,
+					task: 'text-generation',
+					likes: 90,
+					downloads: 180,
+					updatedAt: new Date('2025-01-03T03:04:05.000Z'),
+				},
+			]) as ReturnType<typeof listModels>
+		);
+
+		const result = await new HfFsTool('token').run({
+			op: 'search',
+			uri: 'hf://models',
+			query: 'gemma',
+			sort: 'downloads',
+			limit: 1,
+		});
+
+		expect(listModels).toHaveBeenCalledWith({
+			search: { query: 'gemma' },
+			sort: 'downloads',
+			limit: 2,
+			accessToken: 'token',
+		});
+		expect(result).toMatchObject({
+			uri: 'hf://models',
+			op: 'search',
+			entries: [{ type: 'repo', path: 'google/gemma-2-2b', uri: 'hf://models/google/gemma-2-2b' }],
+			truncated: true,
+			truncation_reason: 'limit',
+			next_cursor: 'offset:1',
 		});
 	});
 
