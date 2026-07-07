@@ -886,7 +886,6 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 							max_bytes: params.max_bytes,
 							offset: params.offset,
 							limit: params.limit,
-							cursor: params.cursor ? '<present>' : undefined,
 						},
 						baseOptions: getLoggingOptions(),
 						successOptions: (fsResult) => {

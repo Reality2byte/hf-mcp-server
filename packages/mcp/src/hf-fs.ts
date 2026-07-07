@@ -27,7 +27,7 @@ import { safeFetch } from './network/safe-fetch.js';
 import { createHuggingFaceHubPolicy } from './network/url-policy.js';
 import { assertTextFilePath, decodeTextFileContent } from './text-file-policy.js';
 import { escapeMarkdown, fitsWithinCharBudget, formatBytes, maxCharsForTokenBudget } from './utilities.js';
-import { HfNavTool, type HfNavEntry, type HfNavParams, type HfNavResult } from './hf-nav.js';
+import { HF_NAV_MAX_LIMIT, HfNavTool, type HfNavEntry, type HfNavParams, type HfNavResult } from './hf-nav.js';
 
 const HF_FS_OPERATIONS = ['ls', 'cat', 'stat', 'find', 'search'] as const;
 const HF_FS_ENTRY_TYPES = ['file', 'dir', 'repo', 'bucket', 'collection', 'link'] as const;
@@ -77,7 +77,6 @@ function createHfFsSchema(username?: string) {
 		path: z.string().optional().describe('find glob matched against entry path relative to the requested URI.'),
 		query: z.string().optional().describe('Search query for hf://models, hf://datasets, hf://spaces, or hf://collections.'),
 		sort: z.enum(HF_FS_SEARCH_SORTS).optional().describe('Search/list sort field.'),
-		cursor: z.string().optional().describe('Opaque search continuation cursor.'),
 		max_bytes: z
 			.number()
 			.int()
@@ -150,7 +149,6 @@ function createHfFsOutputSchema() {
 	return z.object({
 		uri: z.string(),
 		op: z.enum(HF_FS_OPERATIONS),
-		strategy: z.string().optional(),
 		entries: z.array(entrySchema).optional(),
 		path: z.string().optional(),
 		content: z.string().optional(),
@@ -165,7 +163,6 @@ function createHfFsOutputSchema() {
 		truncation_reason: z.enum(['entry_limit', 'max_bytes', 'limit']).optional(),
 		truncation_message: z.string().optional(),
 		next_offset: z.number().optional(),
-		next_cursor: z.string().optional(),
 	});
 }
 
@@ -188,9 +185,6 @@ function validateHfFsParams(params: HfFsParams): void {
 	if (params.query !== undefined && params.op !== 'search') {
 		throw new Error('EINVAL: query applies only to search');
 	}
-	if (params.cursor !== undefined && params.op !== 'search') {
-		throw new Error('EINVAL: cursor applies only to search');
-	}
 	if (params.recursive === true && params.op !== 'ls') {
 		throw new Error('EINVAL: recursive applies only to ls');
 	}
@@ -212,6 +206,7 @@ function isRootUri(uri: string): boolean {
 
 function toNavParams(params: HfFsParams): HfNavParams {
 	const navEntryType = navCompatibleEntryType(params.entry_type);
+	const navLimit = params.limit === undefined ? undefined : Math.min(normalizedLsLimit(params.limit), HF_NAV_MAX_LIMIT);
 	const navParams: HfNavParams = {
 		op: params.op,
 		uri: params.uri,
@@ -221,8 +216,7 @@ function toNavParams(params: HfFsParams): HfNavParams {
 		...(params.path !== undefined ? { path: params.path } : {}),
 		...(navEntryType !== undefined ? { type: navEntryType } : {}),
 		...(params.query !== undefined ? { query: params.query } : {}),
-		...(params.limit !== undefined ? { limit: Math.min(normalizedSearchLimit(params.limit), MAX_SEARCH_LIMIT) } : {}),
-		...(params.cursor !== undefined ? { cursor: params.cursor } : {}),
+		...(navLimit !== undefined ? { limit: navLimit } : {}),
 	};
 	if (params.sort === 'trending' || params.sort === 'upvotes' || params.sort === 'lastModified') {
 		navParams.sort = params.sort;
@@ -240,8 +234,6 @@ function navResultToFsResult(result: HfNavResult): HfFsResult {
 				op: result.op,
 				entries: result.entries.map(navEntryToFsEntry),
 				...(result.truncated ? { truncated: true, truncation_reason: 'limit' as const } : {}),
-				...(result.next_cursor ? { next_cursor: result.next_cursor } : {}),
-				...(result.strategy ? { strategy: result.strategy } : {}),
 			};
 		case 'stat':
 			return {
@@ -251,7 +243,6 @@ function navResultToFsResult(result: HfNavResult): HfFsResult {
 				type: result.type,
 				path: result.path,
 				...(result.content_type ? { content_type: result.content_type } : {}),
-				...(result.strategy ? { strategy: result.strategy } : {}),
 			};
 		case 'cat': {
 			const bytes = new TextEncoder().encode(result.content).byteLength;
@@ -263,7 +254,6 @@ function navResultToFsResult(result: HfNavResult): HfFsResult {
 				content_type: result.content_type,
 				bytes,
 				truncated: false,
-				...(result.strategy ? { strategy: result.strategy } : {}),
 			};
 		}
 	}
@@ -301,21 +291,6 @@ function navCompatibleEntryType(entryType: HfFsParams['entry_type']): HfNavParam
 		return entryType;
 	}
 	return undefined;
-}
-
-function encodeSearchCursor(offset: number): string {
-	return `offset:${offset.toString()}`;
-}
-
-function decodeSearchCursor(cursor: string | undefined): number {
-	if (!cursor) {
-		return 0;
-	}
-	const match = /^offset:(\d+)$/.exec(cursor);
-	if (!match) {
-		throw new Error('EINVAL: invalid cursor');
-	}
-	return Number.parseInt(match[1] ?? '0', 10);
 }
 
 function repoSearchSort(sort: (typeof HF_FS_SEARCH_SORTS)[number] | undefined): RepoSearchSort | undefined {
@@ -358,8 +333,6 @@ export interface HfFsLsResult {
 	truncation_reason?: 'entry_limit' | 'limit';
 	truncation_message?: string;
 	next_offset?: number;
-	next_cursor?: string;
-	strategy?: string;
 }
 
 export interface HfFsCatResult {
@@ -373,7 +346,6 @@ export interface HfFsCatResult {
 	truncation_reason?: 'max_bytes';
 	truncation_message?: string;
 	next_offset?: number;
-	strategy?: string;
 }
 
 export interface HfFsStatResult {
@@ -386,7 +358,6 @@ export interface HfFsStatResult {
 	namespace?: string;
 	size?: number;
 	lfs?: boolean;
-	strategy?: string;
 }
 
 export type HfFsResult = HfFsLsResult | HfFsCatResult | HfFsStatResult;
@@ -614,20 +585,15 @@ export class HfFsTool {
 			throw new Error('EINVAL: search requires query');
 		}
 
-		const offset = decodeSearchCursor(params.cursor);
 		const limit = normalizedSearchLimit(params.limit);
-		const fetchLimit = offset + limit + 1;
+		const fetchLimit = limit + 1;
 		const entries: HfFsEntry[] = [];
-		let index = 0;
 		for await (const entry of this.searchRepoEntries(parsed.repoType, {
 			query,
 			owner: parsed.namespace,
 			sort: repoSearchSort(params.sort),
 			limit: fetchLimit,
 		})) {
-			if (index++ < offset) {
-				continue;
-			}
 			if (entries.length >= limit) {
 				return {
 					uri: params.uri,
@@ -635,7 +601,6 @@ export class HfFsTool {
 					entries,
 					truncated: true,
 					truncation_reason: 'limit',
-					next_cursor: encodeSearchCursor(offset + entries.length),
 				};
 			}
 			entries.push(entry);

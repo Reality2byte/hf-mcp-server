@@ -98,17 +98,6 @@ export const HF_FS_TOOL_CONFIG: BrowserToolConfig = {
 	},
 };
 
-export const HF_NAV_TOOL_CONFIG: BrowserToolConfig = {
-	name: 'hf_nav',
-	description: 'Navigate and search Hugging Face Hub entities using hf:// URIs. This first version supports Collections.',
-	annotations: {
-		title: 'Hugging Face Navigation',
-		destructiveHint: false,
-		readOnlyHint: true,
-		openWorldHint: true,
-	},
-};
-
 export const DUPLICATE_SPACE_TOOL_CONFIG: BrowserToolConfig = {
 	name: 'duplicate_space',
 	description: '',
@@ -166,7 +155,7 @@ export const DATASET_SEARCH_TOOL_ID = 'dataset_search';
 export const DATASET_DETAIL_TOOL_ID = 'dataset_details';
 export const HUB_REPO_DETAILS_TOOL_ID = HUB_REPO_DETAILS_TOOL_CONFIG.name;
 export const HF_FS_TOOL_ID = HF_FS_TOOL_CONFIG.name;
-export const HF_NAV_TOOL_ID = HF_NAV_TOOL_CONFIG.name;
+export const HF_NAV_TOOL_ID = 'hf_nav';
 export const HF_FILES_FLAG = 'hf_files' as const;
 export const DUPLICATE_SPACE_TOOL_ID = DUPLICATE_SPACE_TOOL_CONFIG.name;
 export const SPACE_INFO_TOOL_ID = 'space_info';

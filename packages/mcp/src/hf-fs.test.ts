@@ -541,6 +541,19 @@ describe('HfFsTool', () => {
 		expect(formatHfFsMarkdown(result)).toContain('# hf_fs ls');
 	});
 
+	it('clamps collection limit 0 to the internal collection maximum', async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify([])));
+
+		await new HfFsTool('token').run({
+			op: 'ls',
+			uri: 'hf://collections/huggingface',
+			limit: 0,
+		});
+
+		const url = new URL(vi.mocked(fetch).mock.calls[0]?.[0] as string);
+		expect(url.searchParams.get('limit')).toBe('250');
+	});
+
 	it('searches global model discovery roots', async () => {
 		vi.mocked(listModels).mockReturnValue(
 			entries([
@@ -587,7 +600,6 @@ describe('HfFsTool', () => {
 			entries: [{ type: 'repo', path: 'google/gemma-2-2b', uri: 'hf://models/google/gemma-2-2b' }],
 			truncated: true,
 			truncation_reason: 'limit',
-			next_cursor: 'offset:1',
 		});
 	});
 
