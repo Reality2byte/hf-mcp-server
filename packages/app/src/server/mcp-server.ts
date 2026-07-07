@@ -35,9 +35,14 @@ import {
 	type HubInspectParams,
 	HF_FILES_FLAG,
 	HF_FS_TOOL_ID,
+	HF_NAV_TOOL_ID,
 	HfFsTool,
 	formatHfFsMarkdown,
 	type HfFsParams,
+	HF_NAV_TOOL_CONFIG,
+	HfNavTool,
+	formatHfNavMarkdown,
+	type HfNavParams,
 	HfFsWriteTool,
 	formatHfFsWriteMarkdown,
 	type HfFsWriteParams,
@@ -109,7 +114,7 @@ import { getSkillCatalog } from './skills/skill-catalog-cache.js';
 
 // Fallback settings when API/user settings are unavailable.
 export const BOUQUET_FALLBACK: AppSettings = {
-	builtInTools: [...TOOL_ID_GROUPS.hf_api, HF_FS_TOOL_ID],
+	builtInTools: [...TOOL_ID_GROUPS.hf_api, HF_FS_TOOL_ID, HF_NAV_TOOL_ID],
 	spaceTools: [],
 };
 
@@ -902,6 +907,64 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 				return {
 					structuredContent: { ...result },
 					content: [{ type: 'text', text: formatHfFsMarkdown(result) }],
+				};
+			}
+		);
+
+		toolInstances[HF_NAV_TOOL_CONFIG.name] = server.registerTool(
+			HF_NAV_TOOL_CONFIG.name,
+			{
+				title: HF_NAV_TOOL_CONFIG.title,
+				description: HF_NAV_TOOL_CONFIG.description,
+				inputSchema: HF_NAV_TOOL_CONFIG.schema.shape,
+				outputSchema: HF_NAV_TOOL_CONFIG.outputSchema.shape,
+				annotations: HF_NAV_TOOL_CONFIG.annotations,
+			},
+			async (params: HfNavParams) => {
+				const result = await runWithQueryLogging(
+					logPromptQuery,
+					{
+						methodName: HF_NAV_TOOL_CONFIG.name,
+						query: params.query ?? params.uri,
+						parameters: {
+							op: params.op,
+							uri: params.uri,
+							glob: params.glob,
+							recursive: params.recursive,
+							max_depth: params.max_depth,
+							name: params.name,
+							path: params.path,
+							type: params.type,
+							target_type: params.target_type,
+							repo_type: params.repo_type,
+							query: params.query,
+							sort: params.sort,
+							limit: params.limit,
+							cursor: params.cursor ? '<present>' : undefined,
+						},
+						baseOptions: getLoggingOptions(),
+						successOptions: (navResult) => {
+							const shared =
+								'entries' in navResult
+									? navResult.entries.length
+									: navResult.op === 'stat' && !navResult.exists
+										? 0
+										: 1;
+							return {
+								totalResults: 'entries' in navResult ? navResult.entries.length : shared,
+								resultsShared: shared,
+								responseCharCount: formatHfNavMarkdown(navResult).length,
+							};
+						},
+					},
+					async () => {
+						const tool = new HfNavTool(hfToken, undefined);
+						return await tool.run(params);
+					}
+				);
+				return {
+					structuredContent: { ...result },
+					content: [{ type: 'text', text: formatHfNavMarkdown(result) }],
 				};
 			}
 		);
