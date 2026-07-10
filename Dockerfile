@@ -1,6 +1,8 @@
 
 FROM node:22-alpine
 
+ARG BUILD_COMMIT=unknown
+
 RUN npm install --global corepack@0.35.0 && \
     corepack enable pnpm
 
@@ -60,6 +62,7 @@ ENV NODE_ENV=production
 ENV TRANSPORT=streamableHttpJson
 ENV PORT=3000
 ENV HF_SKILLS_DIR=/mnt/hf-skills/distribution/latest
+ENV MCP_SERVER_BUILD_SHA=${BUILD_COMMIT}
 
 # Expose port
 EXPOSE 3000

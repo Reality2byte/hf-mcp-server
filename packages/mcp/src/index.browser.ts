@@ -88,8 +88,8 @@ export const HUB_REPO_DETAILS_TOOL_CONFIG: BrowserToolConfig = {
 export const HF_FS_TOOL_CONFIG: BrowserToolConfig = {
 	name: 'hf_fs',
 	description:
-		'List repositories, buckets, or files in Hugging Face model, dataset, Space, and bucket repositories using hf:// URIs. ' +
-		'Use owner URIs like hf://models/openai or hf://buckets/evalstate to list repos or buckets; use repo/file URIs with ls, cat, and stat for files.',
+		'List, read, find, and search Hugging Face repositories, buckets, collections, papers, and files using hf:// URIs. ' +
+		'Use hf://README.md for guidance and provider roots such as hf://models, hf://collections, or hf://papers for discovery.',
 	annotations: {
 		title: 'Hugging Face Filesystem',
 		destructiveHint: false,
