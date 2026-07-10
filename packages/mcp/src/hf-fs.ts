@@ -11,6 +11,7 @@ import {
 	modelInfo,
 	pathsInfo,
 	spaceInfo,
+	whoAmI,
 } from '@huggingface/hub';
 import type {
 	DatasetEntry,
@@ -27,13 +28,11 @@ import { createHuggingFaceHubPolicy } from './network/url-policy.js';
 import { assertTextFilePath, decodeTextFileContent } from './text-file-policy.js';
 import { escapeMarkdown, fitsWithinCharBudget, formatBytes, maxCharsForTokenBudget } from './utilities.js';
 import { HF_NAV_MAX_LIMIT, HfNavTool, type HfNavEntry, type HfNavParams, type HfNavResult } from './hf-nav.js';
-import { catGuidance, isRootGuidanceUri, statGuidance } from './hf-fs-guidance.js';
-import { HfFsPaperProvider, isPaperUri, paperListingOrder } from './hf-fs-papers.js';
 
 const HF_FS_OPERATIONS = ['ls', 'cat', 'stat', 'find', 'search'] as const;
-const HF_FS_ENTRY_TYPES = ['file', 'dir', 'repo', 'bucket', 'collection', 'paper', 'link'] as const;
-const HF_FS_STAT_TYPES = ['namespace', 'repo', 'dir', 'file', 'collection', 'paper', 'link', 'missing'] as const;
-const HF_URI_TYPES = ['models', 'datasets', 'spaces', 'buckets', 'collections', 'papers'] as const;
+const HF_FS_ENTRY_TYPES = ['file', 'dir', 'repo', 'bucket', 'collection', 'link'] as const;
+const HF_FS_STAT_TYPES = ['namespace', 'repo', 'dir', 'file', 'collection', 'link', 'missing'] as const;
+const HF_URI_TYPES = ['models', 'datasets', 'spaces', 'buckets', 'collections'] as const;
 const HF_REPO_TYPES = ['model', 'dataset', 'space', 'bucket'] as const;
 const HF_FS_SEARCH_SORTS = [
 	'createdAt',
@@ -62,30 +61,22 @@ const MAX_CAT_BYTES = HF_FS_MAX_OUTPUT_CHARS;
 
 export const HF_FILES_FLAG = 'hf_files' as const;
 
-function createHfFsSchema() {
+function hfFsUriDescription(username?: string): string {
+	const ownerHint = username ? `Authenticated OWNER is ${username}.` : '';
+	return `Hugging Face URI in the form hf://models|datasets|spaces|buckets/OWNER[/NAME[/PATH]] or hf://collections[/OWNER[/SLUG]]. ${ownerHint}`;
+}
+
+function createHfFsSchema(username?: string) {
 	return z.object({
 		op: z.enum(HF_FS_OPERATIONS),
-		uri: z
-			.string()
-			.min(1)
-			.describe(
-				'Hugging Face URI in the form hf://models|datasets|spaces|buckets/OWNER[/NAME[/PATH]] or hf://collections[/OWNER[/SLUG]] or hf://papers[/ARXIV_ID[/PATH]].'
-			),
+		uri: z.string().min(1).describe(hfFsUriDescription(username)),
 		glob: z.string().optional(),
 		recursive: z.boolean().optional().default(false),
 		entry_type: z.enum(HF_FS_ENTRY_TYPES).optional(),
 		name: z.string().optional().describe('find glob matched against entry name/basename.'),
 		path: z.string().optional().describe('find glob matched against entry path relative to the requested URI.'),
-		query: z
-			.string()
-			.optional()
-			.describe('Search query for hf://models, hf://datasets, hf://spaces, hf://collections, or hf://papers.'),
-		sort: z
-			.enum(HF_FS_SEARCH_SORTS)
-			.optional()
-			.describe(
-				'Sort for discovery listings/search. Use hf://papers/trending for the paper trending view; other sort values are provider-specific.'
-			),
+		query: z.string().optional().describe('Search query for hf://models, hf://datasets, hf://spaces, or hf://collections.'),
+		sort: z.enum(HF_FS_SEARCH_SORTS).optional().describe('Search/list sort field.'),
 		max_bytes: z
 			.number()
 			.int()
@@ -97,11 +88,11 @@ function createHfFsSchema() {
 		limit: z
 			.number()
 			.int()
-			.min(1)
+			.nonnegative()
 			.max(MAX_LS_LIMIT)
 			.optional()
 			.describe(
-				`ls/search max result size. ls default ${DEFAULT_LS_LIMIT.toString()}; ls hf://papers uses limit for its recent-paper sample (default 10, capped at 100) in addition to structural entries; paper batch and trending listings default to and are capped at 100; search default ${DEFAULT_SEARCH_LIMIT.toString()}.`
+				`ls/search max result size. ls default ${DEFAULT_LS_LIMIT.toString()}; search default ${DEFAULT_SEARCH_LIMIT.toString()}. 0 means the maximum allowed.`
 			),
 	});
 }
@@ -109,7 +100,7 @@ function createHfFsSchema() {
 export const HF_FS_TOOL_CONFIG = {
 	name: 'hf_fs',
 	title: 'Hugging Face Files',
-	description: 'Read, list, find, and search Hugging Face files, repos, buckets, collections, and papers',
+	description: 'Read, list, find, and search Hugging Face Hub files, repos, buckets, and collections',
 	schema: createHfFsSchema(),
 	outputSchema: createHfFsOutputSchema(),
 	annotations: {
@@ -136,6 +127,7 @@ function createHfFsOutputSchema() {
 		uri: z.string().optional(),
 		name: z.string().optional(),
 		target_uri: z.string().optional(),
+		target_type: z.enum(['repo', 'collection', 'paper', 'bucket']).optional(),
 		repo_type: z.enum(HF_REPO_TYPES).optional(),
 		size: z.number().optional(),
 		total_files: z.number().optional(),
@@ -145,22 +137,13 @@ function createHfFsOutputSchema() {
 		likes: z.number().optional(),
 		downloads: z.number().optional(),
 		task: z.string().optional(),
-		library: z.string().optional(),
-		tags: z.array(z.string()).optional(),
-		trending_score: z.number().optional(),
 		sdk: z.string().optional(),
 		title: z.string().optional(),
 		description: z.string().optional(),
 		upvotes: z.number().optional(),
 		created_at: z.string().optional(),
-		published_at: z.string().optional(),
-		daily_papers_date: z.string().optional(),
-		daily_papers_uri: z.string().optional(),
-		url: z.string().optional(),
-		arxiv_url: z.string().optional(),
-		observed_at: z.string().optional(),
 		updated_at: z.string().optional(),
-		content_type: z.enum(['application/json', 'text/markdown']).optional(),
+		content_type: z.literal('application/json').optional(),
 	});
 
 	return z.object({
@@ -169,32 +152,26 @@ function createHfFsOutputSchema() {
 		entries: z.array(entrySchema).optional(),
 		path: z.string().optional(),
 		content: z.string().optional(),
-		content_type: z.enum(['application/json', 'text/markdown']).optional(),
+		content_type: z.literal('application/json').optional(),
 		bytes: z.number().optional(),
 		exists: z.boolean().optional(),
 		type: z.enum(HF_FS_STAT_TYPES).optional(),
 		namespace: z.string().optional(),
 		size: z.number().optional(),
 		lfs: z.boolean().optional(),
-		target_uri: z.string().optional(),
-		published_at: z.string().optional(),
-		daily_papers_date: z.string().optional(),
-		daily_papers_uri: z.string().optional(),
-		url: z.string().optional(),
-		arxiv_url: z.string().optional(),
 		truncated: z.boolean().optional(),
-		truncation_reason: z.enum(['entry_limit', 'max_bytes', 'limit', 'provider_limit']).optional(),
+		truncation_reason: z.enum(['entry_limit', 'max_bytes', 'limit']).optional(),
 		truncation_message: z.string().optional(),
 		next_offset: z.number().optional(),
 	});
 }
 
 function normalizedLsLimit(limit: number | undefined): number {
-	return limit === undefined ? DEFAULT_LS_LIMIT : limit;
+	return limit === undefined ? DEFAULT_LS_LIMIT : limit === 0 ? MAX_LS_LIMIT : limit;
 }
 
 function normalizedSearchLimit(limit: number | undefined): number {
-	return limit === undefined ? DEFAULT_SEARCH_LIMIT : Math.min(limit, MAX_SEARCH_LIMIT);
+	return limit === undefined ? DEFAULT_SEARCH_LIMIT : limit === 0 ? MAX_SEARCH_LIMIT : Math.min(limit, MAX_SEARCH_LIMIT);
 }
 
 function normalizedCatMaxBytes(maxBytes: number | undefined): number {
@@ -202,12 +179,6 @@ function normalizedCatMaxBytes(maxBytes: number | undefined): number {
 }
 
 function validateHfFsParams(params: HfFsParams): void {
-	if (
-		params.limit !== undefined &&
-		(!Number.isInteger(params.limit) || params.limit < 1 || params.limit > MAX_LS_LIMIT)
-	) {
-		throw new Error(`EINVAL: limit must be an integer between 1 and ${MAX_LS_LIMIT.toString()}`);
-	}
 	if (params.glob !== undefined && params.op !== 'ls') {
 		throw new Error('EINVAL: glob applies only to ls');
 	}
@@ -243,7 +214,7 @@ function toNavParams(params: HfFsParams): HfNavParams {
 		...(params.recursive !== undefined ? { recursive: params.recursive } : {}),
 		...(params.name !== undefined ? { name: params.name } : {}),
 		...(params.path !== undefined ? { path: params.path } : {}),
-		...(params.op === 'find' && navEntryType !== undefined ? { type: navEntryType } : {}),
+		...(navEntryType !== undefined ? { type: navEntryType } : {}),
 		...(params.query !== undefined ? { query: params.query } : {}),
 		...(navLimit !== undefined ? { limit: navLimit } : {}),
 	};
@@ -272,7 +243,6 @@ function navResultToFsResult(result: HfNavResult): HfFsResult {
 				type: result.type,
 				path: result.path,
 				...(result.content_type ? { content_type: result.content_type } : {}),
-				...(result.target_uri ? { target_uri: result.target_uri } : {}),
 			};
 		case 'cat': {
 			const bytes = new TextEncoder().encode(result.content).byteLength;
@@ -296,7 +266,8 @@ function navEntryToFsEntry(entry: HfNavEntry): HfFsEntry {
 		uri: entry.uri,
 		name: entry.name,
 		target_uri: entry.target_uri,
-		...(entry.type === 'link' ? {} : { repo_type: entry.repo_type }),
+		target_type: entry.target_type,
+		repo_type: entry.repo_type,
 		private: entry.private,
 		title: entry.title,
 		description: entry.description,
@@ -335,6 +306,7 @@ export interface HfFsEntry {
 	uri?: string;
 	name?: string;
 	target_uri?: string;
+	target_type?: 'repo' | 'collection' | 'paper' | 'bucket';
 	repo_type?: RepoType;
 	size?: number;
 	total_files?: number;
@@ -344,32 +316,21 @@ export interface HfFsEntry {
 	likes?: number;
 	downloads?: number;
 	task?: string;
-	library?: string;
-	tags?: string[];
-	trending_score?: number;
 	sdk?: string;
 	title?: string;
 	description?: string;
 	upvotes?: number;
 	created_at?: string;
-	published_at?: string;
-	daily_papers_date?: string;
-	daily_papers_uri?: string;
-	url?: string;
-	arxiv_url?: string;
-	observed_at?: string;
 	updated_at?: string;
-	content_type?: HfFsContentType;
+	content_type?: 'application/json';
 }
-
-export type HfFsContentType = 'application/json' | 'text/markdown';
 
 export interface HfFsLsResult {
 	uri: string;
 	op: 'ls' | 'find' | 'search';
 	entries: HfFsEntry[];
 	truncated?: boolean;
-	truncation_reason?: 'entry_limit' | 'limit' | 'provider_limit';
+	truncation_reason?: 'entry_limit' | 'limit';
 	truncation_message?: string;
 	next_offset?: number;
 }
@@ -379,7 +340,7 @@ export interface HfFsCatResult {
 	op: 'cat';
 	path: string;
 	content: string;
-	content_type?: HfFsContentType;
+	content_type?: 'application/json';
 	bytes: number;
 	truncated: boolean;
 	truncation_reason?: 'max_bytes';
@@ -391,18 +352,12 @@ export interface HfFsStatResult {
 	uri: string;
 	op: 'stat';
 	exists: boolean;
-	type: 'namespace' | 'repo' | 'dir' | 'file' | 'collection' | 'paper' | 'link' | 'missing';
+	type: 'namespace' | 'repo' | 'dir' | 'file' | 'collection' | 'link' | 'missing';
 	path: string;
-	content_type?: HfFsContentType;
+	content_type?: 'application/json';
 	namespace?: string;
 	size?: number;
 	lfs?: boolean;
-	target_uri?: string;
-	published_at?: string;
-	daily_papers_date?: string;
-	daily_papers_uri?: string;
-	url?: string;
-	arxiv_url?: string;
 }
 
 export type HfFsResult = HfFsLsResult | HfFsCatResult | HfFsStatResult;
@@ -445,31 +400,25 @@ interface ApiBucketEntry {
 export class HfFsTool {
 	private readonly accessToken?: string;
 	private readonly hubUrl?: string;
-	private readonly paperProvider: HfFsPaperProvider;
 
 	constructor(hfToken?: string, hubUrl?: string) {
 		this.accessToken = hfToken;
 		this.hubUrl = hubUrl;
-		this.paperProvider = new HfFsPaperProvider(hfToken, hubUrl, async (params) => await this.run(params));
 	}
 
 	static createToolConfig(username?: string): HfFsToolConfig {
-		const ownerHint = username ? ` Authenticated OWNER is ${username}.` : '';
+		const ownerHint = username
+			? ` URIs without an owner default to ${username}.`
+			: ' Anonymous requests must include an owner.';
 		return {
 			...HF_FS_TOOL_CONFIG,
-			description: `List, read, find, or search Hugging Face repos, buckets, files, collections, and papers.${ownerHint}`,
-			schema: createHfFsSchema(),
+			description: `List, read, find, or search Hugging Face repos, buckets, files, and collections.${ownerHint}`,
+			schema: createHfFsSchema(username),
 		};
 	}
 
 	async run(params: HfFsParams): Promise<HfFsResult> {
 		validateHfFsParams(params);
-		if (isRootGuidanceUri(params.uri)) {
-			return await this.runRootGuidance(params);
-		}
-		if (isPaperUri(params.uri)) {
-			return await this.paperProvider.run(params);
-		}
 		if (isNavigationUri(params.uri)) {
 			return await this.runNavigation(params);
 		}
@@ -488,35 +437,9 @@ export class HfFsTool {
 		throw new Error('ENOTSUP: unsupported hf_fs operation');
 	}
 
-	private async runRootGuidance(params: HfFsParams): Promise<HfFsResult> {
-		switch (params.op) {
-			case 'cat':
-				return await catGuidance(
-					'root',
-					'hf://README.md',
-					'README.md',
-					params.offset ?? 0,
-					normalizedCatMaxBytes(params.max_bytes)
-				);
-			case 'stat':
-				return await statGuidance('root', 'hf://README.md', 'README.md');
-			case 'ls':
-			case 'find':
-			case 'search':
-				throw new Error('ENOTDIR: not a directory');
-		}
-	}
-
 	private async runNavigation(params: HfFsParams): Promise<HfFsResult> {
 		const tool = new HfNavTool(this.accessToken, this.hubUrl);
-		const result = navResultToFsResult(await tool.run(toNavParams(params)));
-		if (!params.entry_type || !('entries' in result)) {
-			return result;
-		}
-		return {
-			...result,
-			entries: result.entries.filter((entry) => entry.type === params.entry_type),
-		};
+		return navResultToFsResult(await tool.run(toNavParams(params)));
 	}
 
 	private async ls(params: HfFsParams): Promise<HfFsLsResult> {
@@ -524,21 +447,12 @@ export class HfFsTool {
 			return {
 				uri: 'hf://',
 				op: 'ls',
-				entries: [
-					{
-						type: 'file',
-						path: 'README.md',
-						name: 'README.md',
-						uri: 'hf://README.md',
-						content_type: 'text/markdown',
-					},
-					...['models', 'datasets', 'spaces', 'buckets', 'collections', 'papers'].map((name) => ({
-						type: 'dir' as const,
-						path: name,
-						name,
-						uri: `hf://${name}`,
-					})),
-				],
+				entries: ['collections', 'models', 'datasets', 'spaces', 'buckets'].map((name) => ({
+					type: 'dir',
+					path: name,
+					name,
+					uri: `hf://${name}`,
+				})),
 			};
 		}
 		const parsed = parseHfFsUri(params.uri);
@@ -557,7 +471,7 @@ export class HfFsTool {
 			repo: parsed.repo,
 			path: parsed.path || undefined,
 			recursive: params.recursive ?? false,
-			expand: false,
+			expand: true,
 			...(parsed.revision ? { revision: parsed.revision } : {}),
 			...(this.hubUrl ? { hubUrl: this.hubUrl } : {}),
 			...(this.accessToken ? { accessToken: this.accessToken } : {}),
@@ -606,7 +520,13 @@ export class HfFsTool {
 				const entry = statResultToFindEntry(stat);
 				const matchedEntries =
 					(params.offset ?? 0) === 0 && matchesFindFilters(entry, parentPath(parsed.path), filters) ? [entry] : [];
-				return buildEntriesResult(params.uri, 'find', matchedEntries, params.offset ?? 0, false);
+				return buildEntriesResult(
+					params.uri,
+					'find',
+					matchedEntries,
+					params.offset ?? 0,
+					false
+				);
 			}
 		}
 
@@ -621,7 +541,7 @@ export class HfFsTool {
 			repo: parsed.repo,
 			path: parsed.path || undefined,
 			recursive: true,
-			expand: false,
+			expand: true,
 			...(parsed.revision ? { revision: parsed.revision } : {}),
 			...(this.hubUrl ? { hubUrl: this.hubUrl } : {}),
 			...(this.accessToken ? { accessToken: this.accessToken } : {}),
@@ -650,15 +570,11 @@ export class HfFsTool {
 
 	private async search(params: HfFsParams): Promise<HfFsLsResult> {
 		if (isRootUri(params.uri)) {
-			throw new Error(
-				'ENOTSUP: search requires a scoped discovery root such as hf://models, hf://datasets, or hf://collections.'
-			);
+			throw new Error('ENOTSUP: search requires a scoped discovery root such as hf://models, hf://datasets, or hf://collections.');
 		}
 		const parsed = parseHfFsUri(params.uri);
 		if (parsed.kind === 'repo') {
-			throw new Error(
-				'ENOTSUP: search is supported on discovery roots or owner namespaces, not repository file paths.'
-			);
+			throw new Error('ENOTSUP: search is supported on discovery roots or owner namespaces, not repository file paths.');
 		}
 		if (parsed.repoType === 'bucket') {
 			throw new Error('ENOTSUP: bucket search is not supported.');
@@ -945,11 +861,19 @@ export class HfFsTool {
 		if (parsed.namespace) {
 			return parsed.namespace;
 		}
-		throw new Error(
-			`Listing ${uriTypeForRepoType(parsed.repoType)} requires an explicit owner. Use hf://${uriTypeForRepoType(
-				parsed.repoType
-			)}/<owner>.`
-		);
+		if (!this.accessToken) {
+			throw new Error(
+				`Listing ${uriTypeForRepoType(parsed.repoType)} without an owner requires authentication. Use hf://${uriTypeForRepoType(
+					parsed.repoType
+				)}/<owner> or provide an HF token.`
+			);
+		}
+
+		const identity = await whoAmI({
+			accessToken: this.accessToken,
+			...(this.hubUrl ? { hubUrl: this.hubUrl } : {}),
+		});
+		return identity.name;
 	}
 
 	private async *listNamespaceEntries(
@@ -1082,41 +1006,30 @@ function renderHfFsMarkdown(result: HfFsResult): string {
 }
 
 function renderLsMarkdown(result: HfFsLsResult): string {
-	const lines = [`# hf_fs ${result.op}`, ``, `URI: ${inlineCode(result.uri)}`];
-	const order = paperListingOrder(result);
-	if (order === 'trending') {
-		lines.push('', 'Order: Hugging Face global trending rank (not total upvotes)');
-	} else if (order === 'daily-batch') {
-		lines.push('', 'Order: Daily Papers batch upvotes, then feed placement');
-	}
-	lines.push('', `| Type | Path | URI | Target | Details |`, `|---|---|---|---|---|`);
+	const lines = [
+		`# hf_fs ${result.op}`,
+		``,
+		`URI: ${inlineCode(result.uri)}`,
+		``,
+		`| Type | Path | Size | Details |`,
+		`|---|---|---:|---|`,
+	];
 	for (const entry of result.entries) {
 		lines.push(
-			`| ${escapeMarkdown(entry.type)} | ${escapeMarkdown(entry.path)} | ${escapeMarkdown(entry.uri ?? '')} | ${escapeMarkdown(entry.target_uri ?? '')} | ${escapeMarkdown(entryDetails(entry))} |`
-		);
-	}
-	if (result.entries.some((entry) => entry.type === 'link')) {
-		lines.push(
-			'',
-			'Links resolve during direct operations but are not followed by recursive ls or find. Results use the canonical Target URI.'
+			`| ${escapeMarkdown(entry.type)} | ${escapeMarkdown(entry.path)} | ${entry.size === undefined ? '' : escapeMarkdown(formatBytes(entry.size))} | ${escapeMarkdown(entryDetails(entry))} |`
 		);
 	}
 	if (result.truncated) {
-		lines.push('', result.truncation_message ?? `Result truncated: ${result.truncation_reason ?? 'limit'}.`);
+		lines.push(
+			'',
+			result.truncation_message ?? `Result truncated. Resume with offset ${String(result.next_offset ?? 0)}.`
+		);
 	}
 	return lines.join('\n');
 }
 
 function renderCatMarkdown(result: HfFsCatResult): string {
-	const lines = [
-		`# hf_fs cat`,
-		``,
-		`URI: ${inlineCode(result.uri)}`,
-		`Path: ${inlineCode(result.path)}`,
-		...(result.content_type ? [`Content-Type: ${inlineCode(result.content_type)}`] : []),
-		`Bytes: ${result.bytes.toString()}`,
-		``,
-	];
+	const lines = [`# hf_fs cat`, ``, `Path: ${inlineCode(result.path)}`, `Bytes: ${result.bytes.toString()}`, ``];
 	lines.push(result.content);
 	if (result.truncated) {
 		lines.push(
@@ -1145,45 +1058,25 @@ function renderStatMarkdown(result: HfFsStatResult): string {
 	if (result.lfs !== undefined) {
 		lines.push(`- LFS: ${result.lfs ? 'yes' : 'no'}`);
 	}
-	if (result.target_uri) {
-		lines.push(`- Target: ${inlineCode(result.target_uri)}`);
-	}
-	if (result.daily_papers_uri) {
-		lines.push(`- Daily Papers cohort: ${inlineCode(result.daily_papers_uri)}`);
-	}
-	if (result.url) {
-		lines.push(`- Web: ${result.url}`);
-	}
-	if (result.arxiv_url) {
-		lines.push(`- arXiv: ${result.arxiv_url}`);
-	}
 	return lines.join('\n');
 }
 
 function entryDetails(entry: HfFsEntry): string {
 	const details = [
 		entry.repo_type ? `repo=${entry.repo_type}` : undefined,
+		entry.target_type ? `target=${entry.target_type}` : undefined,
 		entry.private === undefined ? undefined : entry.private ? 'private' : 'public',
 		entry.gated ? `gated=${entry.gated}` : undefined,
 		entry.lfs === undefined ? undefined : entry.lfs ? 'lfs' : 'non-lfs',
 		entry.total_files === undefined ? undefined : `files=${entry.total_files.toString()}`,
 		entry.likes === undefined ? undefined : `likes=${entry.likes.toString()}`,
 		entry.downloads === undefined ? undefined : `downloads=${entry.downloads.toString()}`,
-		entry.size === undefined ? undefined : `size=${formatBytes(entry.size)}`,
 		entry.task ? `task=${entry.task}` : undefined,
-		entry.library ? `library=${entry.library}` : undefined,
-		entry.tags?.length ? `tags=${entry.tags.join(',')}` : undefined,
-		entry.trending_score === undefined ? undefined : `trending score=${entry.trending_score.toString()}`,
 		entry.sdk ? `sdk=${entry.sdk}` : undefined,
 		entry.title ? `title=${entry.title}` : undefined,
-		entry.type !== 'paper' && entry.description ? entry.description : undefined,
 		entry.upvotes === undefined ? undefined : `upvotes=${entry.upvotes.toString()}`,
 		entry.updated_at ? `updated=${entry.updated_at}` : undefined,
 		entry.created_at ? `created=${entry.created_at}` : undefined,
-		entry.daily_papers_date ? `daily papers=${entry.daily_papers_date}` : undefined,
-		entry.url ? `web=${entry.url}` : undefined,
-		entry.arxiv_url ? `arXiv=${entry.arxiv_url}` : undefined,
-		entry.observed_at ? `observed=${entry.observed_at}` : undefined,
 	].filter((detail): detail is string => detail !== undefined);
 	return details.join(', ');
 }
@@ -1373,8 +1266,6 @@ function parseUriType(prefix: string): RepoType | 'collection' {
 			return 'bucket';
 		case 'collections':
 			return 'collection';
-		case 'papers':
-			throw new Error('Paper URIs are handled by the papers provider.');
 	}
 }
 

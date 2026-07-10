@@ -48,7 +48,9 @@ describe('parseHfNavUri', () => {
 		expect(() => parseHfNavUri('hf://collections//huggingface')).toThrow(
 			'EINVAL: URI path must not contain empty segments'
 		);
-		expect(() => parseHfNavUri('hf://collections/%E0%A4%A')).toThrow('EINVAL: invalid percent-encoding in URI segment');
+		expect(() => parseHfNavUri('hf://collections/%E0%A4%A')).toThrow(
+			'EINVAL: invalid percent-encoding in URI segment'
+		);
 	});
 });
 
@@ -174,8 +176,8 @@ describe('HfNavTool', () => {
 			throw new Error('Expected ls result');
 		}
 		expect(ls.entries.map((entry) => [entry.name, entry.target_uri, entry.repo_type])).toEqual([
-			['000-model-google-gemma-2-2b', 'hf://models/google/gemma-2-2b', undefined],
-			['001-dataset-openai-gsm8k', 'hf://datasets/openai/gsm8k', undefined],
+			['000-model-google-gemma-2-2b', 'hf://models/google/gemma-2-2b', 'model'],
+			['001-dataset-openai-gsm8k', 'hf://datasets/openai/gsm8k', 'dataset'],
 			[
 				'002-collection-evalstate-related-work-0123456789abcdef01234567',
 				'hf://collections/evalstate/related-work-0123456789abcdef01234567',
@@ -198,13 +200,14 @@ describe('HfNavTool', () => {
 			exists: true,
 			type: 'link',
 			path: 'huggingface/agents-course-0123456789abcdef01234567/items/000-model-google-gemma-2-2b',
-			target_uri: 'hf://models/google/gemma-2-2b',
 		});
 	});
 
 	it('finds model item links without following targets', async () => {
 		vi.mocked(fetch)
-			.mockResolvedValueOnce(jsonResponse([{ name: 'llama-set-0123456789abcdef01234567', title: 'Llama Set' }]))
+			.mockResolvedValueOnce(
+				jsonResponse([{ name: 'llama-set-0123456789abcdef01234567', title: 'Llama Set' }])
+			)
 			.mockResolvedValueOnce(
 				jsonResponse({
 					slug: 'llama-set-0123456789abcdef01234567',
