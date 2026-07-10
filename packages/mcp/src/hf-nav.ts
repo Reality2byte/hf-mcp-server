@@ -69,6 +69,7 @@ export interface HfNavStatResult extends BaseHfNavResult {
 	type: HfNavEntryType | 'missing';
 	path: string;
 	content_type?: 'application/json';
+	target_uri?: string;
 }
 
 export interface HfNavCatResult extends BaseHfNavResult {
@@ -334,7 +335,9 @@ export class HfNavTool {
 		};
 	}
 
-	private async statCollectionItem(parsed: Extract<ParsedHfNavUri, { kind: 'collection-item' }>): Promise<HfNavStatResult> {
+	private async statCollectionItem(
+		parsed: Extract<ParsedHfNavUri, { kind: 'collection-item' }>
+	): Promise<HfNavStatResult> {
 		const itemsUri = `hf://collections/${encodeHfPathSegment(parsed.owner)}/${encodeHfPathSegment(parsed.slug)}/items`;
 		try {
 			const collection = await this.getCollection(parsed.owner, parsed.slug);
@@ -345,6 +348,7 @@ export class HfNavTool {
 				exists: entry !== undefined,
 				type: entry ? 'link' : 'missing',
 				path: `${parsed.owner}/${parsed.slug}/items/${parsed.item}`,
+				...(entry?.target_uri ? { target_uri: entry.target_uri } : {}),
 			};
 		} catch (error) {
 			if (isEnoent(error)) {
@@ -420,7 +424,9 @@ export class HfNavTool {
 		});
 		const entries = page.collections.flatMap((collection) => {
 			const owner = parsed.kind === 'collection-owner' ? parsed.owner : stringValue(collection.owner?.name);
-			return owner ? [collectionSummaryToEntry(collection, owner, parsed.kind === 'collection-owner' ? '' : `${owner}/`)] : [];
+			return owner
+				? [collectionSummaryToEntry(collection, owner, parsed.kind === 'collection-owner' ? '' : `${owner}/`)]
+				: [];
 		});
 		return entriesResult(parsed.uri, 'search', entries, page.collections.length >= collectionLimit);
 	}
@@ -546,7 +552,10 @@ export class HfNavTool {
 	}
 
 	private async getCollectionHistory(owner: string, slug: string): Promise<unknown> {
-		const url = new URL(`/api/collections/${encodeURIComponent(owner)}/${encodeURIComponent(slug)}/history`, this.hubUrl);
+		const url = new URL(
+			`/api/collections/${encodeURIComponent(owner)}/${encodeURIComponent(slug)}/history`,
+			this.hubUrl
+		);
 		const { response } = await safeFetch(url.toString(), {
 			urlPolicy: createHuggingFaceHubPolicy(),
 			requestInit: { headers: this.headers() },
@@ -775,8 +784,6 @@ function collectionItemToEntry(item: unknown, itemsUri: string, index: number): 
 		path: name,
 		uri: `${itemsUri}/${encodeHfPathSegment(name)}`,
 		target_uri: target.uri,
-		target_type: target.targetType,
-		repo_type: target.repoType,
 		title: stringValue(record.title) ?? targetId,
 		private: booleanValue(record.private),
 		upvotes: numberValue(record.upvotes),
@@ -863,13 +870,47 @@ function matchesFindFilters(entry: HfNavEntry, filters: FindFilters): boolean {
 	if (filters.types && !filters.types.has(entry.type)) {
 		return false;
 	}
-	if (filters.targetTypes && (!entry.target_type || !filters.targetTypes.has(entry.target_type))) {
+	const targetType = entry.target_type ?? targetTypeFromUri(entry.target_uri);
+	const repoType = entry.repo_type ?? repoTypeFromUri(entry.target_uri);
+	if (filters.targetTypes && (!targetType || !filters.targetTypes.has(targetType))) {
 		return false;
 	}
-	if (filters.repoTypes && (!entry.repo_type || !filters.repoTypes.has(entry.repo_type))) {
+	if (filters.repoTypes && (!repoType || !filters.repoTypes.has(repoType))) {
 		return false;
 	}
 	return true;
+}
+
+function targetTypeFromUri(uri: string | undefined): HfNavTargetType | undefined {
+	if (!uri) {
+		return undefined;
+	}
+	if (/^hf:\/\/(?:models|datasets|spaces)\//.test(uri)) {
+		return 'repo';
+	}
+	if (uri.startsWith('hf://collections/')) {
+		return 'collection';
+	}
+	if (uri.startsWith('hf://papers/')) {
+		return 'paper';
+	}
+	if (uri.startsWith('hf://buckets/')) {
+		return 'bucket';
+	}
+	return undefined;
+}
+
+function repoTypeFromUri(uri: string | undefined): HfNavRepoType | undefined {
+	if (uri?.startsWith('hf://models/')) {
+		return 'model';
+	}
+	if (uri?.startsWith('hf://datasets/')) {
+		return 'dataset';
+	}
+	if (uri?.startsWith('hf://spaces/')) {
+		return 'space';
+	}
+	return undefined;
 }
 
 function asArray<T>(value: T | T[]): T[] {

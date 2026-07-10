@@ -10,7 +10,6 @@ import {
 	modelInfo,
 	pathsInfo,
 	spaceInfo,
-	whoAmI,
 } from '@huggingface/hub';
 import { HF_FS_MAX_OUTPUT_CHARS, HF_FS_TOOL_CONFIG, HfFsTool, formatHfFsMarkdown, parseHfFsUri } from './hf-fs.js';
 
@@ -34,7 +33,6 @@ vi.mock('@huggingface/hub', () => ({
 	spaceInfo: vi.fn(),
 	pathsInfo: vi.fn(),
 	downloadFile: vi.fn(),
-	whoAmI: vi.fn(),
 }));
 
 async function* entries<T>(items: T[]): AsyncGenerator<T> {
@@ -48,22 +46,20 @@ describe('HfFsTool config', () => {
 	it('keeps URI schema guidance simple while exposing authenticated owner context', () => {
 		const config = HfFsTool.createToolConfig('alice');
 
-		expect(config.description).toContain('default to alice');
+		expect(config.description).toContain('Authenticated OWNER is alice');
 		expect(config.schema.shape.uri.description).toContain(
 			'hf://models|datasets|spaces|buckets/OWNER[/NAME[/PATH]] or hf://collections[/OWNER[/SLUG]]'
 		);
-		expect(config.schema.shape.uri.description).toContain('Authenticated OWNER is alice');
-		expect(config.schema.shape.uri.description).not.toContain('omitted owner');
+		expect(config.schema.shape.uri.description).not.toContain('Authenticated OWNER');
 	});
 
-	it('does not add anonymous owner-omission wording to the URI schema', () => {
+	it('does not add owner authentication guidance for anonymous users', () => {
 		const config = HfFsTool.createToolConfig();
 
-		expect(config.description).toContain('Anonymous requests must include an owner');
+		expect(config.description).not.toContain('Authenticated OWNER');
 		expect(config.schema.shape.uri.description).toContain(
 			'hf://models|datasets|spaces|buckets/OWNER[/NAME[/PATH]] or hf://collections[/OWNER[/SLUG]]'
 		);
-		expect(config.schema.shape.uri.description).not.toContain('anonymous requests must include an owner');
 	});
 });
 
@@ -151,7 +147,6 @@ describe('HfFsTool', () => {
 		vi.mocked(spaceInfo).mockReset();
 		vi.mocked(pathsInfo).mockReset();
 		vi.mocked(downloadFile).mockReset();
-		vi.mocked(whoAmI).mockReset();
 		vi.stubGlobal('fetch', vi.fn());
 	});
 
@@ -179,7 +174,7 @@ describe('HfFsTool', () => {
 			repo: { type: 'model', name: 'org/repo' },
 			path: 'weights',
 			recursive: true,
-			expand: true,
+			expand: false,
 			accessToken: 'token',
 		});
 		expect(result).toEqual({
@@ -215,20 +210,17 @@ describe('HfFsTool', () => {
 		});
 	});
 
-	it('treats limit 0 as the maximum allowed list size', async () => {
+	it('rejects zero list limits', async () => {
 		vi.mocked(listFiles).mockReturnValue(entries([{ type: 'file', path: 'a.txt', size: 1 }]));
 
-		const result = await new HfFsTool().run({
-			op: 'ls',
-			uri: 'hf://datasets/org/repo',
-			limit: 0,
-		});
-
-		expect(result).toEqual({
-			uri: 'hf://datasets/org/repo',
-			op: 'ls',
-			entries: [{ type: 'file', path: 'a.txt', size: 1 }],
-		});
+		await expect(
+			new HfFsTool().run({
+				op: 'ls',
+				uri: 'hf://datasets/org/repo',
+				limit: 0,
+			})
+		).rejects.toThrow('EINVAL: limit must be an integer between 1 and 10000');
+		expect(listFiles).not.toHaveBeenCalled();
 	});
 
 	it('finds matching files in repository trees without routing through collection navigation', async () => {
@@ -253,7 +245,7 @@ describe('HfFsTool', () => {
 		expect(listFiles).toHaveBeenCalledWith({
 			repo: { type: 'model', name: 'org/repo' },
 			recursive: true,
-			expand: true,
+			expand: false,
 			accessToken: 'token',
 		});
 		expect(result).toEqual({
@@ -489,11 +481,19 @@ describe('HfFsTool', () => {
 			uri: 'hf://',
 			op: 'ls',
 			entries: [
-				{ type: 'dir', path: 'collections', name: 'collections', uri: 'hf://collections' },
+				{
+					type: 'file',
+					path: 'README.md',
+					name: 'README.md',
+					uri: 'hf://README.md',
+					content_type: 'text/markdown',
+				},
 				{ type: 'dir', path: 'models', name: 'models', uri: 'hf://models' },
 				{ type: 'dir', path: 'datasets', name: 'datasets', uri: 'hf://datasets' },
 				{ type: 'dir', path: 'spaces', name: 'spaces', uri: 'hf://spaces' },
 				{ type: 'dir', path: 'buckets', name: 'buckets', uri: 'hf://buckets' },
+				{ type: 'dir', path: 'collections', name: 'collections', uri: 'hf://collections' },
+				{ type: 'dir', path: 'papers', name: 'papers', uri: 'hf://papers' },
 			],
 		});
 	});
@@ -516,6 +516,7 @@ describe('HfFsTool', () => {
 		const result = await new HfFsTool('token').run({
 			op: 'ls',
 			uri: 'hf://collections/huggingface',
+			entry_type: 'collection',
 			limit: 20,
 		});
 
@@ -541,17 +542,64 @@ describe('HfFsTool', () => {
 		expect(formatHfFsMarkdown(result)).toContain('# hf_fs ls');
 	});
 
-	it('clamps collection limit 0 to the internal collection maximum', async () => {
-		vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify([])));
+	it('returns no collection listing entries for the paper entry type', async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(
+			new Response(
+				JSON.stringify([
+					{
+						name: 'huggingface/agents-course-0123456789abcdef01234567',
+						title: 'Agents Course',
+					},
+				])
+			)
+		);
 
-		await new HfFsTool('token').run({
-			op: 'ls',
+		await expect(
+			new HfFsTool().run({
+				op: 'ls',
+				uri: 'hf://collections/huggingface',
+				entry_type: 'paper',
+			})
+		).resolves.toEqual({
 			uri: 'hf://collections/huggingface',
-			limit: 0,
+			op: 'ls',
+			entries: [],
 		});
+	});
 
-		const url = new URL(vi.mocked(fetch).mock.calls[0]?.[0] as string);
-		expect(url.searchParams.get('limit')).toBe('250');
+	it('returns no collection find entries for the paper entry type', async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					slug: 'agents-course-0123456789abcdef01234567',
+					owner: { name: 'huggingface' },
+					items: [{ type: 'paper', id: '1706.03762', position: 0 }],
+				})
+			)
+		);
+
+		await expect(
+			new HfFsTool().run({
+				op: 'find',
+				uri: 'hf://collections/huggingface/agents-course-0123456789abcdef01234567',
+				entry_type: 'paper',
+			})
+		).resolves.toEqual({
+			uri: 'hf://collections/huggingface/agents-course-0123456789abcdef01234567',
+			op: 'find',
+			entries: [],
+		});
+	});
+
+	it('rejects zero collection limits before requesting the provider', async () => {
+		await expect(
+			new HfFsTool('token').run({
+				op: 'ls',
+				uri: 'hf://collections/huggingface',
+				limit: 0,
+			})
+		).rejects.toThrow('EINVAL: limit must be an integer between 1 and 10000');
+		expect(fetch).not.toHaveBeenCalled();
 	});
 
 	it('searches global model discovery roots', async () => {
@@ -603,40 +651,11 @@ describe('HfFsTool', () => {
 		});
 	});
 
-	it('defaults namespace listing to the authenticated user when omitted', async () => {
-		vi.mocked(whoAmI).mockResolvedValueOnce({
-			id: 'user-id',
-			type: 'user',
-			email: 'alice@example.com',
-			emailVerified: true,
-			isPro: false,
-			orgs: [],
-			name: 'alice',
-			fullname: 'Alice',
-			canPay: false,
-			avatarUrl: '',
-			periodEnd: null,
-			billingMode: 'prepaid',
-			auth: { type: 'access_token' },
-		});
-		vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify([])));
-
-		await expect(new HfFsTool('token').run({ op: 'ls', uri: 'hf://buckets' })).resolves.toEqual({
-			uri: 'hf://buckets',
-			op: 'ls',
-			entries: [],
-		});
-		expect(whoAmI).toHaveBeenCalledWith({ accessToken: 'token' });
-		expect(fetch).toHaveBeenCalledWith(
-			'https://huggingface.co/api/buckets/alice',
-			expect.objectContaining({ redirect: 'manual' })
+	it('requires an explicit owner for namespace listings regardless of authentication', async () => {
+		await expect(new HfFsTool('token').run({ op: 'ls', uri: 'hf://buckets' })).rejects.toThrow(
+			'Listing buckets requires an explicit owner. Use hf://buckets/<owner>.'
 		);
-	});
-
-	it('requires authentication for omitted namespace listings', async () => {
-		await expect(new HfFsTool().run({ op: 'ls', uri: 'hf://buckets' })).rejects.toThrow(
-			'without an owner requires authentication'
-		);
+		expect(fetch).not.toHaveBeenCalled();
 	});
 
 	it('stats repo roots, files, directories, and missing paths', async () => {
