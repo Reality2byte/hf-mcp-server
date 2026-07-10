@@ -46,4 +46,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
+          build-args: |
+            BUILD_COMMIT=${{ github.sha }}
           #,linux/arm64

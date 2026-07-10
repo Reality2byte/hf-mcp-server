@@ -1,6 +1,7 @@
 import pino, { type Logger, type LoggerOptions } from 'pino';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { SERVER_BUILD_SHA, SERVER_VERSION } from '../server-build-info.js';
 
 // Feature flags: enable/disable per-log-type; defaults to true
 const QUERY_LOGS_ENABLED = (process.env.LOG_QUERY_EVENTS ?? 'true').toLowerCase() === 'true';
@@ -16,6 +17,8 @@ const __dirname = dirname(__filename);
  */
 interface QueryLogEntry {
 	mcpServerSessionId: string; // MCP Server to Dataset connection
+	serverVersion: string;
+	serverBuildSha: string;
 	clientSessionId?: string | null; // Client to MCP Server connection
 	name?: string | null; // ClientInfo.name
 	version?: string | null; // ClientInfo.version
@@ -221,6 +224,8 @@ function logQueryEvent(
 		parameters: serializedParameters,
 		requestJson: JSON.stringify(requestPayload),
 		mcpServerSessionId,
+		serverVersion: SERVER_VERSION,
+		serverBuildSha: SERVER_BUILD_SHA,
 		clientSessionId: options?.clientSessionId || null,
 		isAuthenticated: options?.isAuthenticated ?? false,
 		name: options?.clientName || null,

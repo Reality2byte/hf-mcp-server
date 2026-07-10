@@ -2,7 +2,6 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult, ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type { z } from 'zod';
-import { createRequire } from 'module';
 import { performance } from 'node:perf_hooks';
 import { whoAmI, type WhoAmI } from '@huggingface/hub';
 import {
@@ -106,6 +105,7 @@ import { applyResultPostProcessing, type GradioToolCallOptions } from './utils/g
 import { registerSkillResources } from './skills/skill-resources.js';
 import { isClientDenied } from '../shared/client-denylist.js';
 import { getSkillCatalog } from './skills/skill-catalog-cache.js';
+import { SERVER_VERSION } from './server-build-info.js';
 
 // Fallback settings when API/user settings are unavailable.
 export const BOUQUET_FALLBACK: AppSettings = {
@@ -120,9 +120,6 @@ export const BOUQUET_FALLBACK: AppSettings = {
  * The shared ApiClient provides global tool state management across all server instances
  */
 export const createServerFactory = (_webServerInstance: WebServer, sharedApiClient: McpApiClient): ServerFactory => {
-	const require = createRequire(import.meta.url);
-	const { version } = require('../../package.json') as { version: string };
-
 	return async (
 		headers: Record<string, string> | null,
 		userSettings?: AppSettings,
@@ -258,7 +255,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 		const server = new McpServer(
 			{
 				name: '@huggingface/mcp-services',
-				version: version,
+				version: SERVER_VERSION,
 				title: 'Hugging Face',
 				websiteUrl: 'https://huggingface.co/mcp',
 				icons: [
@@ -1486,7 +1483,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 		// Register Gradio widget resource for OpenAI MCP client (skybridge)
 		if (sessionInfo?.clientInfo?.name === 'openai-mcp') {
 			logger.debug('Registering Gradio widget resource for skybridge client');
-			const widgetConfig = createGradioWidgetResourceConfig(version);
+			const widgetConfig = createGradioWidgetResourceConfig(SERVER_VERSION);
 			server.registerResource(widgetConfig.name, widgetConfig.uri, {}, async () => ({
 				contents: [
 					{
