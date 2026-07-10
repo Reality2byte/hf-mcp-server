@@ -755,7 +755,7 @@ export class HfFsTool {
 		}
 		const parsed = parseHfFsUri(params.uri);
 		if (parsed.kind === 'namespace') {
-			const namespace = await this.resolveNamespace(parsed);
+			const namespace = this.resolveNamespace(parsed);
 			return {
 				uri: params.uri,
 				op: 'stat',
@@ -876,7 +876,7 @@ export class HfFsTool {
 	}
 
 	private async lsNamespace(params: HfFsParams, parsed: ParsedNamespaceHfUri): Promise<HfFsLsResult> {
-		const namespace = await this.resolveNamespace(parsed);
+		const namespace = this.resolveNamespace(parsed);
 		const offset = params.offset ?? 0;
 		const limit = normalizedLsLimit(params.limit);
 		const matcher = params.glob ? picomatch(params.glob, { dot: true }) : undefined;
@@ -911,7 +911,7 @@ export class HfFsTool {
 	}
 
 	private async findNamespace(params: HfFsParams, parsed: ParsedNamespaceHfUri): Promise<HfFsLsResult> {
-		const namespace = await this.resolveNamespace(parsed);
+		const namespace = this.resolveNamespace(parsed);
 		const offset = params.offset ?? 0;
 		const limit = normalizedLsLimit(params.limit);
 		const filters = createFindFilters(params);
@@ -941,7 +941,7 @@ export class HfFsTool {
 		return buildEntriesResult(params.uri, 'find', entries, offset, truncated, truncated ? 'entry_limit' : undefined);
 	}
 
-	private async resolveNamespace(parsed: ParsedNamespaceHfUri): Promise<string> {
+	private resolveNamespace(parsed: ParsedNamespaceHfUri): string {
 		if (parsed.namespace) {
 			return parsed.namespace;
 		}
