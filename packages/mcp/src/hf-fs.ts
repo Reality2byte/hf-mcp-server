@@ -131,10 +131,8 @@ export const HF_FS_TOOL_CONFIG = {
 	// model discovery
 	description:
 		'Navigate Hugging Face resources with ls, cat, find, stat, and search over hf:// URIs. ' +
-		'Use search on discovery roots; use find beneath a known directory. ' +
 		'Roots: hf://models, hf://datasets, hf://spaces, hf://buckets, hf://collections, hf://papers. ' +
-		'Papers: ls hf://papers/ARXIV_ID, then cat .../paper.md or .../metadata.json. ' +
-		'Collections are curated lists of Hub items, not file storage: search hf://collections, ls hf://collections/OWNER/COLLECTION, then cat .../metadata.json or .../history.json.',
+		'For papers, ls hf://papers/ARXIV_ID to discover related resources; cat hf://papers/ARXIV_ID/paper.md or metadata.json.',
 	schema: createHfFsSchema(),
 	outputSchema: createHfFsOutputSchema(),
 	annotations: {
