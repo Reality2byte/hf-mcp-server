@@ -88,8 +88,9 @@ export const HUB_REPO_DETAILS_TOOL_CONFIG: BrowserToolConfig = {
 export const HF_FS_TOOL_CONFIG: BrowserToolConfig = {
 	name: 'hf_fs',
 	description:
-		'List, read, find, and search Hugging Face repositories, buckets, collections, papers, and files using hf:// URIs. ' +
-		'Use hf://README.md for guidance and provider roots such as hf://models, hf://collections, or hf://papers for discovery.',
+		'Navigate Hugging Face resources with ls, cat, find, stat, and search over hf:// URIs. ' +
+		'Roots: hf://models, hf://datasets, hf://spaces, hf://buckets, hf://collections, hf://papers. ' +
+		'For papers, ls hf://papers/ARXIV_ID to discover related resources; cat hf://papers/ARXIV_ID/paper.md or metadata.json.',
 	annotations: {
 		title: 'Hugging Face Filesystem',
 		destructiveHint: false,
@@ -175,7 +176,6 @@ export const ALL_BUILTIN_TOOL_IDS = [
 	REPO_SEARCH_TOOL_ID,
 	CREATE_REPO_TOOL_ID,
 	MODEL_DETAIL_TOOL_ID,
-	PAPER_SEARCH_TOOL_ID,
 	DATASET_SEARCH_TOOL_ID,
 	DATASET_DETAIL_TOOL_ID,
 	HUB_REPO_DETAILS_TOOL_ID,
@@ -191,7 +191,7 @@ export const ALL_BUILTIN_TOOL_IDS = [
 ] as const;
 
 export const TOOL_ID_GROUPS = {
-	search: [SPACE_SEARCH_TOOL_ID, REPO_SEARCH_TOOL_ID, PAPER_SEARCH_TOOL_ID, DOCS_SEMANTIC_SEARCH_TOOL_ID] as const,
+	search: [SPACE_SEARCH_TOOL_ID, REPO_SEARCH_TOOL_ID, DOCS_SEMANTIC_SEARCH_TOOL_ID] as const,
 	spaces: [
 		SPACE_SEARCH_TOOL_ID,
 		DUPLICATE_SPACE_TOOL_ID,
@@ -205,7 +205,6 @@ export const TOOL_ID_GROUPS = {
 		SPACE_SEARCH_TOOL_ID,
 		REPO_SEARCH_TOOL_ID,
 		CREATE_REPO_TOOL_ID,
-		PAPER_SEARCH_TOOL_ID,
 		HUB_REPO_DETAILS_TOOL_ID,
 		DOCS_SEMANTIC_SEARCH_TOOL_ID,
 	] as const,

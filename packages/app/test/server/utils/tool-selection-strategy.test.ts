@@ -10,10 +10,12 @@ import type { TransportInfo } from '../../../src/shared/transport-info.js';
 import {
 	ALL_BUILTIN_TOOL_IDS,
 	CREATE_REPO_TOOL_ID,
+	HF_FILES_FLAG,
 	HF_FS_TOOL_ID,
 	HF_SANDBOX_EXEC_TOOL_ID,
 	HF_SANDBOX_FS_TOOL_ID,
 	HF_SANDBOX_TOOL_ID,
+	HUB_REPO_DETAILS_TOOL_ID,
 	REPO_SEARCH_TOOL_ID,
 	TOOL_ID_GROUPS,
 } from '@llmindset/hf-mcp';
@@ -124,6 +126,22 @@ describe('BOUQUETS configuration', () => {
 		expect(bouquet).toBeDefined();
 		if (bouquet) {
 			expect(bouquet.builtInTools).toEqual([HF_FS_TOOL_ID]);
+			expect(bouquet.spaceTools).toEqual([]);
+		}
+	});
+
+	it('should expose the research toolkit through research bouquet', () => {
+		const bouquet = BOUQUETS.research;
+		expect(bouquet).toBeDefined();
+		if (bouquet) {
+			expect(bouquet.builtInTools).toEqual([
+				HF_FILES_FLAG,
+				...TOOL_ID_GROUPS.sandbox,
+				...TOOL_ID_GROUPS.docs,
+				CREATE_REPO_TOOL_ID,
+				HUB_REPO_DETAILS_TOOL_ID,
+			]);
+			expect(normalizeBuiltInTools(bouquet.builtInTools)).toContain(HF_FS_TOOL_ID);
 			expect(bouquet.spaceTools).toEqual([]);
 		}
 	});

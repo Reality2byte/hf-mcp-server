@@ -48,7 +48,7 @@ export interface HfNavEntry {
 	upvotes?: number;
 	updated_at?: string;
 	created_at?: string;
-	content_type?: 'application/json';
+	content_type?: 'application/json' | 'text/markdown';
 }
 
 interface BaseHfNavResult {
@@ -61,6 +61,7 @@ export interface HfNavEntriesResult extends BaseHfNavResult {
 	entries: HfNavEntry[];
 	truncated?: boolean;
 	truncation_reason?: 'limit';
+	truncation_message?: string;
 }
 
 export interface HfNavStatResult extends BaseHfNavResult {
@@ -68,14 +69,14 @@ export interface HfNavStatResult extends BaseHfNavResult {
 	exists: boolean;
 	type: HfNavEntryType | 'missing';
 	path: string;
-	content_type?: 'application/json';
+	content_type?: 'application/json' | 'text/markdown';
 	target_uri?: string;
 }
 
 export interface HfNavCatResult extends BaseHfNavResult {
 	op: 'cat';
 	content: string;
-	content_type: 'application/json';
+	content_type: 'application/json' | 'text/markdown';
 }
 
 export type HfNavResult = HfNavEntriesResult | HfNavStatResult | HfNavCatResult;
@@ -83,6 +84,7 @@ export type HfNavResult = HfNavEntriesResult | HfNavStatResult | HfNavCatResult;
 type ParsedHfNavUri =
 	| { kind: 'root'; uri: 'hf://'; segments: [] }
 	| { kind: 'collections-root'; uri: 'hf://collections'; segments: ['collections'] }
+	| { kind: 'collections-readme'; uri: 'hf://collections/README.md'; segments: ['collections', 'README.md'] }
 	| { kind: 'collection-owner'; uri: string; segments: ['collections', string]; owner: string }
 	| { kind: 'collection'; uri: string; segments: ['collections', string, string]; owner: string; slug: string }
 	| {
@@ -202,13 +204,16 @@ export class HfNavTool {
 		const page = await this.lsDirect(parsed, params);
 		const matcher = createLsMatcher(params.glob);
 		const entries = matcher ? page.entries.filter(matcher) : page.entries;
-		return entriesResult(parsed.uri, 'ls', entries, page.truncated);
+		return {
+			...entriesResult(parsed.uri, 'ls', entries, page.truncated),
+			...(page.truncation_message ? { truncation_message: page.truncation_message } : {}),
+		};
 	}
 
 	private async lsDirect(
 		parsed: ParsedHfNavUri,
 		params: Pick<HfNavParams, 'limit'>
-	): Promise<{ entries: HfNavEntry[]; truncated?: boolean }> {
+	): Promise<{ entries: HfNavEntry[]; truncated?: boolean; truncation_message?: string }> {
 		const limit = params.limit ?? DEFAULT_LIMIT;
 		switch (parsed.kind) {
 			case 'root':
@@ -221,13 +226,20 @@ export class HfNavTool {
 					expand: true,
 				});
 				return {
-					entries: page.collections.flatMap((collection) => {
-						const owner = stringValue(collection.owner?.name);
-						return owner ? [collectionSummaryToEntry(collection, owner, `${owner}/`)] : [];
-					}),
+					entries: [
+						collectionReadmeEntry(),
+						...page.collections.flatMap((collection) => {
+							const owner = stringValue(collection.owner?.name);
+							return owner ? [collectionSummaryToEntry(collection, owner, `${owner}/`)] : [];
+						}),
+					],
 					truncated: page.collections.length >= Math.min(limit, GLOBAL_EXPANDED_LIMIT),
+					truncation_message:
+						'Showing a bounded collection sample; use search hf://collections with query or ls hf://collections/OWNER.',
 				};
 			}
+			case 'collections-readme':
+				throw new Error('ENOTDIR: not a directory');
 			case 'collection-owner': {
 				const page = await this.listCollections({
 					owner: parsed.owner,
@@ -240,7 +252,16 @@ export class HfNavTool {
 				};
 			}
 			case 'collection': {
-				await this.getCollection(parsed.owner, parsed.slug);
+				try {
+					await this.getCollection(parsed.owner, parsed.slug);
+				} catch (error) {
+					if (isEnoent(error)) {
+						throw new Error(
+							`ENOENT: no such collection ${parsed.owner}/${parsed.slug}; use search hf://collections with query or ls hf://collections/${encodeHfPathSegment(parsed.owner)}`
+						);
+					}
+					throw error;
+				}
 				return { entries: collectionChildren(parsed.uri) };
 			}
 			case 'collection-child':
@@ -253,7 +274,9 @@ export class HfNavTool {
 				if (parsed.child === 'metadata.json' || parsed.child === 'history.json') {
 					throw new Error('ENOTDIR: not a directory');
 				}
-				throw new Error('ENOENT: no such file or directory');
+				throw new Error(
+					`ENOENT: no such collection child "${parsed.child}"; valid children are metadata.json, history.json, and items`
+				);
 			case 'collection-item':
 				throw new Error('ENOTDIR: not a directory');
 			case 'unsupported':
@@ -267,6 +290,15 @@ export class HfNavTool {
 				return { uri: parsed.uri, op: 'stat', exists: true, type: 'dir', path: '' };
 			case 'collections-root':
 				return { uri: parsed.uri, op: 'stat', exists: true, type: 'dir', path: 'collections' };
+			case 'collections-readme':
+				return {
+					uri: parsed.uri,
+					op: 'stat',
+					exists: true,
+					type: 'file',
+					path: 'README.md',
+					content_type: 'text/markdown',
+				};
 			case 'collection-owner':
 				return { uri: parsed.uri, op: 'stat', exists: true, type: 'dir', path: parsed.owner };
 			case 'collection':
@@ -308,7 +340,9 @@ export class HfNavTool {
 		parsed: Extract<ParsedHfNavUri, { kind: 'collection-child' }>
 	): Promise<HfNavStatResult> {
 		if (parsed.child !== 'metadata.json' && parsed.child !== 'items' && parsed.child !== 'history.json') {
-			throw new Error('ENOENT: no such file or directory');
+			throw new Error(
+				`ENOENT: no such collection child "${parsed.child}"; valid children are metadata.json, history.json, and items`
+			);
 		}
 		try {
 			await this.getCollection(parsed.owner, parsed.slug);
@@ -365,11 +399,26 @@ export class HfNavTool {
 	}
 
 	private async cat(_params: HfNavParams, parsed: ParsedHfNavUri): Promise<HfNavCatResult> {
+		if (parsed.kind === 'collections-readme') {
+			return {
+				uri: parsed.uri,
+				op: 'cat',
+				content_type: 'text/markdown',
+				content: COLLECTIONS_README,
+			};
+		}
+		if (parsed.kind === 'collection') {
+			throw new Error(
+				`EISDIR: ${parsed.uri} is a collection directory; use ls ${parsed.uri}, cat ${parsed.uri}/metadata.json or ${parsed.uri}/history.json, or ls ${parsed.uri}/items`
+			);
+		}
 		if (parsed.kind !== 'collection-child') {
-			throw new Error('EISDIR: cat requires a file-like URI');
+			throw new Error(
+				'EISDIR: collections are structured directories; use ls to discover metadata.json, history.json, and items'
+			);
 		}
 		if (parsed.child === 'items') {
-			throw new Error('EISDIR: cat requires a file-like URI');
+			throw new Error(`EISDIR: ${parsed.uri} is an items directory; use ls ${parsed.uri} to list linked Hub resources`);
 		}
 		if (parsed.child === 'metadata.json') {
 			const collection = await this.getCollection(parsed.owner, parsed.slug);
@@ -389,12 +438,16 @@ export class HfNavTool {
 				content: JSON.stringify(history, null, 2),
 			};
 		}
-		throw new Error('ENOENT: no such file or directory');
+		throw new Error(
+			`ENOENT: no such collection child "${parsed.child}"; valid children are metadata.json, history.json, and items`
+		);
 	}
 
 	private async find(params: HfNavParams, parsed: ParsedHfNavUri): Promise<HfNavEntriesResult> {
 		if (parsed.kind === 'root' || parsed.kind === 'collections-root') {
-			throw new Error('ENOTSUP: find is not supported for global collection crawling in v1');
+			throw new Error(
+				'ENOTSUP: find cannot crawl all collections; use search hf://collections with query, or scope find to hf://collections/OWNER or hf://collections/OWNER/SLUG'
+			);
 		}
 		const filters = createFindFilters(params);
 		const page = await this.traverse(parsed, {
@@ -407,7 +460,9 @@ export class HfNavTool {
 
 	private async search(params: HfNavParams, parsed: ParsedHfNavUri): Promise<HfNavEntriesResult> {
 		if (parsed.kind !== 'collections-root' && parsed.kind !== 'collection-owner') {
-			throw new Error('ENOTSUP: search is supported only on hf://collections or hf://collections/{owner}');
+			throw new Error(
+				'ENOTSUP: collection search is supported only on hf://collections or hf://collections/OWNER; use ls or find to inspect a selected collection'
+			);
 		}
 		const query = params.query?.trim();
 		if (!query) {
@@ -480,9 +535,12 @@ export class HfNavTool {
 		switch (parsed.kind) {
 			case 'root':
 			case 'collections-root':
+			case 'collections-readme':
 			case 'collection-owner':
 			case 'collection':
-				return (await this.lsDirect(parsed, { limit: HF_NAV_MAX_LIMIT })).entries;
+				return parsed.kind === 'collections-readme'
+					? []
+					: (await this.lsDirect(parsed, { limit: HF_NAV_MAX_LIMIT })).entries;
 			case 'collection-child':
 				if (parsed.child === 'items') {
 					return (await this.lsDirect(parsed, { limit: HF_NAV_MAX_LIMIT })).entries;
@@ -604,6 +662,9 @@ export function parseHfNavUri(uri: string): ParsedHfNavUri {
 	}
 	if (segments.length === 1) {
 		return { kind: 'collections-root', uri: 'hf://collections', segments: ['collections'] };
+	}
+	if (segments.length === 2 && segments[1] === 'README.md') {
+		return { kind: 'collections-readme', uri: 'hf://collections/README.md', segments: ['collections', 'README.md'] };
 	}
 	if (segments.length === 2) {
 		return {
@@ -746,6 +807,28 @@ function collectionChildren(collectionUri: string): HfNavEntry[] {
 			content_type: 'application/json',
 		},
 	];
+}
+
+const COLLECTIONS_README = `# Hugging Face Collections
+
+Collections are curated lists of Hub items, not file storage.
+
+- Search globally: search hf://collections with query
+- List an owner's collections: ls hf://collections/OWNER
+- Inspect a collection: ls hf://collections/OWNER/SLUG
+- Read metadata: cat hf://collections/OWNER/SLUG/metadata.json
+- Read history: cat hf://collections/OWNER/SLUG/history.json
+- List linked Hub items: ls hf://collections/OWNER/SLUG/items
+`;
+
+function collectionReadmeEntry(): HfNavEntry {
+	return {
+		type: 'file',
+		name: 'README.md',
+		path: 'README.md',
+		uri: 'hf://collections/README.md',
+		content_type: 'text/markdown',
+	};
 }
 
 function collectionItemsToEntries(collection: ApiCollectionDetail, itemsUri: string): HfNavEntry[] {
@@ -961,7 +1044,7 @@ async function assertOk(response: Response, label: string): Promise<void> {
 		return;
 	}
 	if (response.status === 401 || response.status === 403) {
-		throw new Error('EACCES: permission denied');
+		throw new Error('EACCES: collection is private or inaccessible; authenticate with a token that can access it');
 	}
 	if (response.status === 404) {
 		throw new Error('ENOENT: no such file or directory');
@@ -998,23 +1081,40 @@ function renderEntriesMarkdown(result: HfNavEntriesResult): string {
 		);
 	}
 	if (result.truncated) {
-		lines.push('', 'Truncated: limit');
+		lines.push('', result.truncation_message ?? 'Truncated: limit');
 	}
 	return lines.join('\n');
 }
 
 function renderStatMarkdown(result: HfNavStatResult): string {
-	return [
+	const lines = [
 		'# hf_nav stat',
 		'',
 		`URI: \`${escapeMarkdown(result.uri)}\``,
 		`Exists: \`${String(result.exists)}\``,
 		`Type: \`${result.type}\``,
 		`Path: \`${escapeMarkdown(result.path)}\``,
-	].join('\n');
+	];
+	if (result.content_type) {
+		lines.push(`Content-Type: \`${result.content_type}\``);
+	}
+	if (result.target_uri) {
+		lines.push(`Target: \`${escapeMarkdown(result.target_uri)}\``);
+	}
+	return lines.join('\n');
 }
 
 function renderCatMarkdown(result: HfNavCatResult): string {
+	if (result.content_type === 'text/markdown') {
+		return [
+			'# hf_nav cat',
+			'',
+			`URI: \`${escapeMarkdown(result.uri)}\``,
+			`Content-Type: \`${result.content_type}\``,
+			'',
+			result.content,
+		].join('\n');
+	}
 	return [
 		'# hf_nav cat',
 		'',
@@ -1045,6 +1145,9 @@ function entryDetails(entry: HfNavEntry): string {
 	if (entry.title) {
 		details.push(`title=${entry.title}`);
 	}
+	if (entry.description) {
+		details.push(`description=${boundedInlineText(entry.description)}`);
+	}
 	if (entry.upvotes !== undefined) {
 		details.push(`upvotes=${entry.upvotes.toString()}`);
 	}
@@ -1059,7 +1162,18 @@ function entryDetails(entry: HfNavEntry): string {
 	if (entry.content_type) {
 		details.push(entry.content_type);
 	}
+	if (entry.updated_at) {
+		details.push(`updated=${entry.updated_at}`);
+	}
+	if (entry.created_at) {
+		details.push(`created=${entry.created_at}`);
+	}
 	return details.join(', ');
+}
+
+function boundedInlineText(value: string, maxLength = 240): string {
+	const compact = value.replace(/\s+/g, ' ').trim();
+	return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
 function targetUriImpliesRepoType(targetUri: string | undefined, repoType: HfNavRepoType): boolean {

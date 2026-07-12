@@ -9,6 +9,7 @@ import {
 	REPO_SEARCH_TOOL_ID,
 	CREATE_REPO_TOOL_ID,
 	DOCS_SEMANTIC_SEARCH_TOOL_ID,
+	HF_FILES_FLAG,
 } from '@llmindset/hf-mcp';
 import type { AppSettings } from './settings.js';
 import { README_INCLUDE_FLAG, GRADIO_IMAGE_FILTER_FLAG } from './behavior-flags.js';
@@ -41,6 +42,16 @@ export const BOUQUETS: Record<string, AppSettings> = {
 			REPO_SEARCH_TOOL_ID,
 			DOCS_SEMANTIC_SEARCH_TOOL_ID,
 			HF_JOBS_TOOL_ID,
+		],
+		spaceTools: [],
+	},
+	research: {
+		builtInTools: [
+			HF_FILES_FLAG,
+			...TOOL_ID_GROUPS.sandbox,
+			...TOOL_ID_GROUPS.docs,
+			CREATE_REPO_TOOL_ID,
+			HUB_REPO_DETAILS_TOOL_ID,
 		],
 		spaceTools: [],
 	},
@@ -112,6 +123,15 @@ const PRESET_META: Array<Omit<BouquetPreset, 'builtInTools'>> = [
 		label: 'Skills Toolkit',
 		description:
 			'Tools that work well with Hugging Face Skills (https://github.com/huggingface/skills). Pair with an MCP Skills Extension-aware client to load `skill://` resources directly from this server.',
+		category: 'core',
+		supportsBouquet: true,
+		supportsMix: true,
+	},
+	{
+		key: 'research',
+		label: 'Research Toolkit',
+		description:
+			'Read and write Hub files, search documentation, inspect repositories, create repositories, and run research in sandboxes.',
 		category: 'core',
 		supportsBouquet: true,
 		supportsMix: true,

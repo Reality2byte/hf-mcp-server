@@ -383,6 +383,10 @@ describe('paper search and files', () => {
 			truncation_reason: 'limit',
 		});
 		expect('next_cursor' in result).toBe(false);
+		const markdown = formatHfFsMarkdown(result);
+		expect(markdown).toContain('summary=A generated summary.');
+		expect(markdown).toContain('published=2024-01-02T00:00:00.000Z');
+		expect(markdown).toContain('daily papers uri=hf://papers/daily/2024/01/03');
 	});
 
 	it('stats papers and lists their fixed children without collections', async () => {
@@ -391,7 +395,8 @@ describe('paper search and files', () => {
 			{ path: '/api/papers/2401.00002', response: () => json({}, { status: 404 }) },
 		]);
 		const tool = new HfFsTool();
-		await expect(tool.run({ op: 'stat', uri: 'hf://papers/2401.00001' })).resolves.toEqual({
+		const stat = await tool.run({ op: 'stat', uri: 'hf://papers/2401.00001' });
+		expect(stat).toEqual({
 			uri: 'hf://papers/2401.00001',
 			op: 'stat',
 			exists: true,
@@ -403,6 +408,9 @@ describe('paper search and files', () => {
 			url: 'https://huggingface.co/papers/2401.00001',
 			arxiv_url: 'https://arxiv.org/abs/2401.00001',
 		});
+		const statMarkdown = formatHfFsMarkdown(stat);
+		expect(statMarkdown).toContain('Published: 2024-01-02T00:00:00.000Z');
+		expect(statMarkdown).toContain('Daily Papers date: 2024-01-03');
 		await expect(tool.run({ op: 'stat', uri: 'hf://papers/2401.00002' })).resolves.toEqual({
 			uri: 'hf://papers/2401.00002',
 			op: 'stat',

@@ -308,6 +308,33 @@ describe('HfFsTool', () => {
 		expect(markdown).toContain('Markdown view truncated');
 	});
 
+	it('renders available structured entry metadata in markdown details', () => {
+		const markdown = formatHfFsMarkdown({
+			uri: 'hf://models',
+			op: 'search',
+			entries: [
+				{
+					type: 'repo',
+					path: 'owner/model',
+					uri: 'hf://models/owner/model',
+					likes: 123,
+					downloads: 456,
+					trending_score: 12.5,
+					published_at: '2026-07-02T00:00:00.000Z',
+					daily_papers_uri: 'hf://papers/daily/2026/07/02',
+					content_type: 'application/json',
+				},
+			],
+		});
+
+		expect(markdown).toContain('likes=123');
+		expect(markdown).toContain('downloads=456');
+		expect(markdown).toContain('trending score=12.5');
+		expect(markdown).toContain('published=2026-07-02T00:00:00.000Z');
+		expect(markdown).toContain('daily papers uri=hf://papers/daily/2026/07/02');
+		expect(markdown).toContain('content type=application/json');
+	});
+
 	it('lists model repositories for a namespace', async () => {
 		vi.mocked(listModels).mockReturnValue(
 			entries([
@@ -540,6 +567,13 @@ describe('HfFsTool', () => {
 		]);
 		expect(HF_FS_TOOL_CONFIG.outputSchema.parse(result)).toEqual(result);
 		expect(formatHfFsMarkdown(result)).toContain('# hf_fs ls');
+	});
+
+	it('does not route collection-like URI types through collection navigation', async () => {
+		await expect(new HfFsTool().run({ op: 'ls', uri: 'hf://collections:local/workspace' })).rejects.toThrow(
+			"Invalid URI type 'collections:local'"
+		);
+		expect(fetch).not.toHaveBeenCalled();
 	});
 
 	it('returns no collection listing entries for the paper entry type', async () => {

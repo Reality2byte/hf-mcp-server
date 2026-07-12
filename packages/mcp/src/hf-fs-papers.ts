@@ -135,7 +135,7 @@ export function parsePaperUri(uri: string): ParsedPaperUri {
 	}
 	const rawPaperId = segments[0];
 	if (!rawPaperId) {
-		throw new Error('EINVAL: invalid arXiv paper id');
+		throw new Error('EINVAL: invalid arXiv paper id; expected an id such as 2502.16161 in hf://papers/2502.16161');
 	}
 	const paperId = normalizePaperId(rawPaperId);
 	const paperUri = `hf://papers/${paperId}`;
@@ -288,7 +288,9 @@ export class HfFsPaperProvider {
 		if (parsed.kind === 'paper-file') {
 			const paper = await this.getPaper(parsed.paperId);
 			if (!paper) {
-				throw new Error('ENOENT: no such paper');
+				throw new Error(
+					`ENOENT: no such paper at hf://papers/${parsed.paperId}; verify the arXiv ID or use search hf://papers with query`
+				);
 			}
 			const content =
 				parsed.path === 'metadata.json'
@@ -305,6 +307,11 @@ export class HfFsPaperProvider {
 		}
 		if (parsed.kind === 'paper-linked-item') {
 			return (await this.forwardLink(params, parsed)) as HfFsCatResult;
+		}
+		if (parsed.kind === 'paper') {
+			throw new Error(
+				`EISDIR: ${parsed.uri} is a paper directory; read ${parsed.uri}/paper.md or ${parsed.uri}/metadata.json`
+			);
 		}
 		throw new Error('EISDIR: cat requires a file-like URI');
 	}
@@ -413,7 +420,9 @@ export class HfFsPaperProvider {
 			throw new Error('ENOTDIR: not a directory');
 		}
 		if (parsed.kind !== 'papers-root') {
-			throw new Error('ENOTSUP: paper search is supported only on hf://papers');
+			throw new Error(
+				'ENOTSUP: paper search is supported only on hf://papers; retry with the same query and uri="hf://papers"'
+			);
 		}
 		const query = params.query?.trim();
 		if (!query) {
@@ -449,7 +458,9 @@ export class HfFsPaperProvider {
 			throw new Error('EINVAL: sort is not supported on hf://papers; list hf://papers/trending instead');
 		}
 		if (params.recursive) {
-			throw new Error('ENOTSUP: recursive ls is not supported on hf://papers; inspect a bounded child directory');
+			throw new Error(
+				'ENOTSUP: recursive ls is not supported on hf://papers; use search hf://papers with query, ls hf://papers/trending, or ls hf://papers/daily/latest'
+			);
 		}
 		const structuralEntries: HfFsEntry[] = [
 			{
@@ -543,7 +554,9 @@ export class HfFsPaperProvider {
 				throw new Error('ENOENT: Daily Papers date predates the archive');
 			}
 			if (date > latest) {
-				throw new Error('ENOENT: future Daily Papers date');
+				throw new Error(
+					`ENOENT: Daily Papers for ${date} are not available yet; latest available date is ${latest}; use ls hf://papers/daily/latest`
+				);
 			}
 			const limit = Math.min(params.limit ?? DAILY_PAPERS_LIMIT, DAILY_PAPERS_LIMIT);
 			const url = new URL('/api/daily_papers', this.hubUrl);
@@ -942,7 +955,7 @@ export class HfFsPaperProvider {
 function normalizePaperId(value: string): string {
 	const match = /^(\d{4})\.(\d{3,5})$/.exec(value);
 	if (!match) {
-		throw new Error('EINVAL: invalid arXiv paper id');
+		throw new Error('EINVAL: invalid arXiv paper id; expected an id such as 2502.16161 in hf://papers/2502.16161');
 	}
 	const prefix = match[1] ?? '';
 	const suffix = match[2] ?? '';
