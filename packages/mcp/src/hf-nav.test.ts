@@ -23,6 +23,7 @@ describe('parseHfNavUri', () => {
 		expect(parseHfNavUri('hf://')).toMatchObject({ kind: 'root', uri: 'hf://' });
 		expect(parseHfNavUri('hf:///')).toMatchObject({ kind: 'root', uri: 'hf://' });
 		expect(parseHfNavUri('hf://collections')).toMatchObject({ kind: 'collections-root' });
+		expect(parseHfNavUri('hf://collections/README.md')).toMatchObject({ kind: 'collections-readme' });
 		expect(parseHfNavUri('hf://collections/huggingface/')).toMatchObject({
 			kind: 'collection-owner',
 			owner: 'huggingface',
@@ -107,6 +108,69 @@ describe('HfNavTool', () => {
 				},
 			],
 		});
+	});
+
+	it('exposes collection guidance and corrective directory errors', async () => {
+		const readme = await new HfNavTool().run({ op: 'cat', uri: 'hf://collections/README.md' });
+		expect(readme).toMatchObject({
+			op: 'cat',
+			content_type: 'text/markdown',
+		});
+		if (readme.op !== 'cat') {
+			throw new Error('Expected cat result');
+		}
+		expect(readme.content).toContain('Collections are curated lists of Hub items, not file storage.');
+		const readmeMarkdown = formatHfNavMarkdown(readme);
+		expect(readmeMarkdown).toContain('# Hugging Face Collections');
+		expect(readmeMarkdown).not.toContain('```json');
+
+		await expect(
+			new HfNavTool().run({
+				op: 'cat',
+				uri: 'hf://collections/huggingface/agents-course-0123456789abcdef01234567',
+			})
+		).rejects.toThrow('/metadata.json');
+		await expect(new HfNavTool().run({ op: 'find', uri: 'hf://collections' })).rejects.toThrow(
+			'use search hf://collections with query'
+		);
+	});
+
+	it('renders structured navigation metadata and custom truncation guidance', () => {
+		const listing = formatHfNavMarkdown({
+			uri: 'hf://collections',
+			op: 'ls',
+			entries: [
+				{
+					type: 'collection',
+					name: 'example',
+					path: 'owner/example',
+					uri: 'hf://collections/owner/example',
+					title: 'Example',
+					description: 'A collection description.',
+					created_at: '2026-07-01T00:00:00.000Z',
+					updated_at: '2026-07-02T00:00:00.000Z',
+				},
+			],
+			truncated: true,
+			truncation_reason: 'limit',
+			truncation_message: 'Use search for more collections.',
+		});
+		expect(listing).toContain('description=A collection description.');
+		expect(listing).toContain('created=2026-07-01T00:00:00.000Z');
+		expect(listing).toContain('updated=2026-07-02T00:00:00.000Z');
+		expect(listing).toContain('Use search for more collections.');
+
+		const stat = formatHfNavMarkdown({
+			uri: 'hf://collections/owner/example/items/000-model-owner-model',
+			op: 'stat',
+			exists: true,
+			type: 'link',
+			path: 'owner/example/items/000-model-owner-model',
+			content_type: 'application/json',
+			target_uri: 'hf://models/owner/model',
+		});
+		expect(stat).toContain('Content-Type: `application/json`');
+		expect(stat).toContain('Target: `hf://models/owner/model`');
 	});
 
 	it('searches owner collections with q and sort params', async () => {

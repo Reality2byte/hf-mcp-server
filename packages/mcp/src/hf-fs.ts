@@ -64,27 +64,43 @@ export const HF_FILES_FLAG = 'hf_files' as const;
 
 function createHfFsSchema() {
 	return z.object({
-		op: z.enum(HF_FS_OPERATIONS),
+		op: z
+			.enum(HF_FS_OPERATIONS)
+			.describe(
+				'Operation: ls lists a directory; cat reads a text-like file; stat checks one URI; find filters entries beneath a known directory; search discovers Hub resources from a supported discovery root.'
+			),
 		uri: z
 			.string()
 			.min(1)
 			.describe(
 				'Hugging Face URI in the form hf://models|datasets|spaces|buckets/OWNER[/NAME[/PATH]] or hf://collections[/OWNER[/SLUG]] or hf://papers[/ARXIV_ID[/PATH]].'
 			),
-		glob: z.string().optional(),
-		recursive: z.boolean().optional().default(false),
-		entry_type: z.enum(HF_FS_ENTRY_TYPES).optional(),
-		name: z.string().optional().describe('find glob matched against entry name/basename.'),
-		path: z.string().optional().describe('find glob matched against entry path relative to the requested URI.'),
+		glob: z.string().optional().describe('ls-only glob matched against entries in the listed directory.'),
+		recursive: z
+			.boolean()
+			.optional()
+			.default(false)
+			.describe('ls-only recursive traversal; unsupported on unbounded discovery roots such as hf://papers.'),
+		entry_type: z
+			.enum(HF_FS_ENTRY_TYPES)
+			.optional()
+			.describe('Optional ls/find/search result-type filter; it does not change URI interpretation.'),
+		name: z.string().optional().describe('find-only glob matched against entry names/basenames.'),
+		path: z
+			.string()
+			.optional()
+			.describe('find-only glob matched against paths relative to the requested directory URI.'),
 		query: z
 			.string()
 			.optional()
-			.describe('Search query for hf://models, hf://datasets, hf://spaces, hf://collections, or hf://papers.'),
+			.describe(
+				'search-only keyword or natural-language query. Use a discovery URI: hf://models, hf://datasets, hf://spaces, hf://collections, hf://collections/OWNER, or hf://papers. Paper search is supported only at exactly hf://papers.'
+			),
 		sort: z
 			.enum(HF_FS_SEARCH_SORTS)
 			.optional()
 			.describe(
-				'Sort for discovery listings/search. Use hf://papers/trending for the paper trending view; other sort values are provider-specific.'
+				'Optional sort for supported discovery listings/search only. Do not pass sort to hf://papers or dated Daily Papers listings; use ls hf://papers/trending for trending papers.'
 			),
 		max_bytes: z
 			.number()
@@ -101,15 +117,24 @@ function createHfFsSchema() {
 			.max(MAX_LS_LIMIT)
 			.optional()
 			.describe(
-				`ls/search max result size. ls default ${DEFAULT_LS_LIMIT.toString()}; ls hf://papers uses limit for its recent-paper sample (default 10, capped at 100) in addition to structural entries; paper batch and trending listings default to and are capped at 100; search default ${DEFAULT_SEARCH_LIMIT.toString()}.`
+				`ls/search maximum results. Default ${DEFAULT_LS_LIMIT.toString()} for ls and ${DEFAULT_SEARCH_LIMIT.toString()} for search. Paper listings are capped at 100.`
 			),
 	});
 }
 
 export const HF_FS_TOOL_CONFIG = {
 	name: 'hf_fs',
-	title: 'Hugging Face Files',
-	description: 'Read, list, find, and search Hugging Face files, repos, buckets, collections, and papers',
+	// human discovery
+	title:
+		'Hugging Face Hub: Access models, datasets, spaces, buckets, papers and collections. ' +
+		'Search and get details for items across the hub. Read daily papers reports, and browse trending content. ',
+	// model discovery
+	description:
+		'Navigate Hugging Face resources with ls, cat, find, stat, and search over hf:// URIs. ' +
+		'Use search on discovery roots; use find beneath a known directory. ' +
+		'Roots: hf://models, hf://datasets, hf://spaces, hf://buckets, hf://collections, hf://papers. ' +
+		'Papers: ls hf://papers/ARXIV_ID, then cat .../paper.md or .../metadata.json. ' +
+		'Collections are curated lists of Hub items, not file storage: search hf://collections, ls hf://collections/OWNER/COLLECTION, then cat .../metadata.json or .../history.json.',
 	schema: createHfFsSchema(),
 	outputSchema: createHfFsOutputSchema(),
 	annotations: {
@@ -209,16 +234,16 @@ function validateHfFsParams(params: HfFsParams): void {
 		throw new Error(`EINVAL: limit must be an integer between 1 and ${MAX_LS_LIMIT.toString()}`);
 	}
 	if (params.glob !== undefined && params.op !== 'ls') {
-		throw new Error('EINVAL: glob applies only to ls');
+		throw new Error(`EINVAL: glob is not valid for ${params.op}; glob applies only to ls`);
 	}
 	if (params.query !== undefined && params.op !== 'search') {
-		throw new Error('EINVAL: query applies only to search');
+		throw new Error(`EINVAL: query is not valid for ${params.op}; query applies only to search`);
 	}
 	if (params.recursive === true && params.op !== 'ls') {
-		throw new Error('EINVAL: recursive applies only to ls');
+		throw new Error(`EINVAL: recursive is not valid for ${params.op}; recursive applies only to ls`);
 	}
 	if ((params.name !== undefined || params.path !== undefined) && params.op !== 'find') {
-		throw new Error('EINVAL: name and path apply only to find');
+		throw new Error(`EINVAL: name and path are not valid for ${params.op}; they apply only to find`);
 	}
 	if (params.op === 'search' && !params.query?.trim()) {
 		throw new Error('EINVAL: search requires query');
@@ -226,7 +251,7 @@ function validateHfFsParams(params: HfFsParams): void {
 }
 
 function isNavigationUri(uri: string): boolean {
-	return uri.startsWith('hf://collections');
+	return uri === 'hf://collections' || uri.startsWith('hf://collections/');
 }
 
 function isRootUri(uri: string): boolean {
@@ -263,6 +288,7 @@ function navResultToFsResult(result: HfNavResult): HfFsResult {
 				op: result.op,
 				entries: result.entries.map(navEntryToFsEntry),
 				...(result.truncated ? { truncated: true, truncation_reason: 'limit' as const } : {}),
+				...(result.truncation_message ? { truncation_message: result.truncation_message } : {}),
 			};
 		case 'stat':
 			return {
@@ -1148,6 +1174,15 @@ function renderStatMarkdown(result: HfFsStatResult): string {
 	if (result.target_uri) {
 		lines.push(`- Target: ${inlineCode(result.target_uri)}`);
 	}
+	if (result.content_type) {
+		lines.push(`- Content-Type: ${inlineCode(result.content_type)}`);
+	}
+	if (result.published_at) {
+		lines.push(`- Published: ${result.published_at}`);
+	}
+	if (result.daily_papers_date) {
+		lines.push(`- Daily Papers date: ${result.daily_papers_date}`);
+	}
 	if (result.daily_papers_uri) {
 		lines.push(`- Daily Papers cohort: ${inlineCode(result.daily_papers_uri)}`);
 	}
@@ -1176,16 +1211,28 @@ function entryDetails(entry: HfFsEntry): string {
 		entry.trending_score === undefined ? undefined : `trending score=${entry.trending_score.toString()}`,
 		entry.sdk ? `sdk=${entry.sdk}` : undefined,
 		entry.title ? `title=${entry.title}` : undefined,
-		entry.type !== 'paper' && entry.description ? entry.description : undefined,
+		entry.description
+			? entry.type === 'paper'
+				? `summary=${boundedInlineText(entry.description)}`
+				: entry.description
+			: undefined,
 		entry.upvotes === undefined ? undefined : `upvotes=${entry.upvotes.toString()}`,
 		entry.updated_at ? `updated=${entry.updated_at}` : undefined,
 		entry.created_at ? `created=${entry.created_at}` : undefined,
+		entry.published_at ? `published=${entry.published_at}` : undefined,
 		entry.daily_papers_date ? `daily papers=${entry.daily_papers_date}` : undefined,
+		entry.daily_papers_uri ? `daily papers uri=${entry.daily_papers_uri}` : undefined,
 		entry.url ? `web=${entry.url}` : undefined,
 		entry.arxiv_url ? `arXiv=${entry.arxiv_url}` : undefined,
 		entry.observed_at ? `observed=${entry.observed_at}` : undefined,
+		entry.content_type ? `content type=${entry.content_type}` : undefined,
 	].filter((detail): detail is string => detail !== undefined);
 	return details.join(', ');
+}
+
+function boundedInlineText(value: string, maxLength = 240): string {
+	const compact = value.replace(/\s+/g, ' ').trim();
+	return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
 function trimMarkdownToBudget(markdown: string, maxChars: number): string {
