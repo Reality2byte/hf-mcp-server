@@ -43,23 +43,12 @@ async function* entries<T>(items: T[]): AsyncGenerator<T> {
 }
 
 describe('HfFsTool config', () => {
-	it('keeps URI schema guidance simple while exposing authenticated owner context', () => {
-		const config = HfFsTool.createToolConfig('alice');
-
-		expect(config.description).toContain('Authenticated OWNER is alice');
-		expect(config.schema.shape.uri.description).toContain(
-			'hf://models|datasets|spaces|buckets/OWNER[/NAME[/PATH]] or hf://collections[/OWNER[/SLUG]]'
-		);
-		expect(config.schema.shape.uri.description).not.toContain('Authenticated OWNER');
-	});
-
-	it('does not add owner authentication guidance for anonymous users', () => {
-		const config = HfFsTool.createToolConfig();
-
-		expect(config.description).not.toContain('Authenticated OWNER');
-		expect(config.schema.shape.uri.description).toContain(
-			'hf://models|datasets|spaces|buckets/OWNER[/NAME[/PATH]] or hf://collections[/OWNER[/SLUG]]'
-		);
+	it('exposes the argv schema and command grammar', () => {
+		expect(Object.keys(HF_FS_TOOL_CONFIG.schema.shape)).toEqual(['cmd', 'args']);
+		expect(HF_FS_TOOL_CONFIG.description).toContain('Grammar; each token below is one args array element');
+		expect(HF_FS_TOOL_CONFIG.description).toContain('ls hf://models/trending');
+		expect(HF_FS_TOOL_CONFIG.description).toContain('ls hf://papers/trending');
+		expect(HF_FS_TOOL_CONFIG.description).toContain('hf://README.md');
 	});
 });
 
@@ -205,8 +194,7 @@ describe('HfFsTool', () => {
 			entries: [{ type: 'file', path: 'a.txt', size: 1 }],
 			truncated: true,
 			truncation_reason: 'entry_limit',
-			truncation_message: 'Result truncated after reaching the entry limit. Resume with offset 1.',
-			next_offset: 1,
+			truncation_message: 'Result truncated after reaching the entry limit. Rerun with a larger --limit, up to 10000.',
 		});
 	});
 
@@ -392,6 +380,21 @@ describe('HfFsTool', () => {
 		});
 	});
 
+	it('honors requested sort order for namespace listings', async () => {
+		vi.mocked(listModels).mockReturnValue(entries([]) as ReturnType<typeof listModels>);
+
+		await new HfFsTool().run({
+			cmd: 'ls',
+			args: ['hf://models/openai', '--sort', 'downloads'],
+		});
+
+		expect(listModels).toHaveBeenCalledWith({
+			search: { owner: 'openai' },
+			sort: 'downloads',
+			limit: 1001,
+		});
+	});
+
 	it('keeps scanning namespace repositories before applying glob filters locally', async () => {
 		vi.mocked(listModels).mockReturnValue(
 			entries([
@@ -523,6 +526,96 @@ describe('HfFsTool', () => {
 				{ type: 'dir', path: 'papers', name: 'papers', uri: 'hf://papers' },
 			],
 		});
+	});
+
+	it('exposes repository trending virtual directories', async () => {
+		await expect(
+			new HfFsTool().run({
+				cmd: 'ls',
+				args: ['hf://models'],
+			})
+		).resolves.toEqual({
+			uri: 'hf://models',
+			op: 'ls',
+			entries: [
+				{
+					type: 'dir',
+					path: 'trending',
+					name: 'trending',
+					uri: 'hf://models/trending',
+					description: 'Browse the 20 currently trending models.',
+				},
+			],
+		});
+		await expect(
+			new HfFsTool().run({
+				cmd: 'stat',
+				args: ['hf://spaces/trending'],
+			})
+		).resolves.toEqual({
+			uri: 'hf://spaces/trending',
+			op: 'stat',
+			exists: true,
+			type: 'dir',
+			path: 'trending',
+		});
+	});
+
+	it('lists the dedicated repository trending feed and reports softened arguments', async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					recentlyTrending: [
+						{
+							repoType: 'model',
+							repoData: {
+								id: 'org/trending-model',
+								repoType: 'model',
+								private: false,
+								gated: false,
+								likes: 42,
+								downloads: 1000,
+								pipeline_tag: 'text-generation',
+								lastModified: '2026-07-13T10:00:00.000Z',
+							},
+						},
+					],
+				})
+			)
+		);
+
+		const result = await new HfFsTool('token').run({
+			cmd: 'ls',
+			args: ['hf://models/trending', '--sort', 'trending', '--type', 'model'],
+		});
+
+		expect(fetch).toHaveBeenCalledWith(
+			'https://huggingface.co/api/trending?type=model&limit=20',
+			expect.objectContaining({ redirect: 'manual' })
+		);
+		expect(result).toEqual({
+			uri: 'hf://models/trending',
+			op: 'ls',
+			entries: [
+				{
+					type: 'repo',
+					path: 'org/trending-model',
+					uri: 'hf://models/org/trending-model',
+					repo_type: 'model',
+					private: false,
+					gated: false,
+					likes: 42,
+					downloads: 1000,
+					task: 'text-generation',
+					updated_at: '2026-07-13T10:00:00.000Z',
+				},
+			],
+			warnings: [
+				'Ignored --sort trending because hf://models/trending already implies trending order.',
+				'Ignored --type repo because hf://models/trending contains only repositories.',
+			],
+		});
+		expect(formatHfFsMarkdown(result)).toContain('## Warnings');
 	});
 
 	it('lists collections through hf_fs', async () => {

@@ -23,6 +23,7 @@ import { callStreamableHttpTool, readStreamableHttpResource } from './utils/stre
 import type { ProxyToolDefinition, ProxyToolInputSchema } from './utils/proxy-tools-config.js';
 import { cacheDiscoveredProxyAppTool, getProxyToolsConfig } from './utils/proxy-tools-config.js';
 import { discoverProxyAppToolCalls, rewriteProxyAppToolMeta } from './utils/proxy-apps.js';
+import { disableConfiguredTool } from './utils/disabled-tools.js';
 
 // Define the Qwen Image prompt configuration
 const QWEN_IMAGE_PROMPT_CONFIG = {
@@ -119,7 +120,7 @@ function registerProxyToolsFromConfig(
 		};
 
 		try {
-			server.registerTool(
+			const registeredTool = server.registerTool(
 				config.toolName,
 				{
 					title,
@@ -133,6 +134,7 @@ function registerProxyToolsFromConfig(
 				},
 				handler
 			);
+			disableConfiguredTool(config.toolName, registeredTool);
 		} catch (error) {
 			if (isDuplicateRegistrationError(error)) {
 				logger.warn(
@@ -400,7 +402,7 @@ export const createProxyServerFactory = (
 
 		if (fileSource && hfToken && !fileListingProvidedByProxy) {
 			try {
-				server.registerTool(
+				const registeredTool = server.registerTool(
 					LIST_FILES_TOOL_CONFIG.name,
 					{
 						title: LIST_FILES_TOOL_CONFIG.annotations.title,
@@ -431,6 +433,7 @@ export const createProxyServerFactory = (
 						};
 					}
 				);
+				disableConfiguredTool(LIST_FILES_TOOL_CONFIG.name, registeredTool);
 			} catch (error) {
 				if (isDuplicateRegistrationError(error)) {
 					logger.warn(

@@ -33,10 +33,11 @@ import {
 	HubInspectTool,
 	type HubInspectParams,
 	HF_FILES_FLAG,
+	HF_FS_TOOL_CONFIG,
 	HF_FS_TOOL_ID,
 	HfFsTool,
 	formatHfFsMarkdown,
-	type HfFsParams,
+	type HfFsRequest,
 	HfFsWriteTool,
 	formatHfFsWriteMarkdown,
 	type HfFsWriteParams,
@@ -106,6 +107,7 @@ import { registerSkillResources } from './skills/skill-resources.js';
 import { isClientDenied } from '../shared/client-denylist.js';
 import { getSkillCatalog } from './skills/skill-catalog-cache.js';
 import { SERVER_VERSION } from './server-build-info.js';
+import { disableConfiguredTool, parseDisabledTools } from './utils/disabled-tools.js';
 
 // Fallback settings when API/user settings are unavailable.
 export const BOUQUET_FALLBACK: AppSettings = {
@@ -280,19 +282,22 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			disable(): void;
 		}
 
+		const disabledTools = parseDisabledTools();
+
 		const rawNoImageHeader = headers?.['x-mcp-no-image-content'];
 		const noImageContentHeaderEnabled =
 			typeof rawNoImageHeader === 'string' && rawNoImageHeader.trim().toLowerCase() === 'true';
 
 		// Always register all tools and store instances for dynamic control
 		const toolInstances: { [name: string]: Tool } = {};
+		const fixedToolInstances: { [name: string]: Tool } = {};
 
 		const whoDescription = userDetails
 			? `Hugging Face tools are being used by authenticated user '${username}'`
 			: 'Hugging Face tools are being used anonymously and may be rate limited. Call this tool for instructions on joining and authenticating.';
 
 		const response = userDetails ? `You are authenticated as ${username ?? 'unknown'}.` : CONFIG_GUIDANCE;
-		server.registerTool(
+		fixedToolInstances.hf_whoami = server.registerTool(
 			'hf_whoami',
 			{
 				title: 'Hugging Face User Info',
@@ -307,7 +312,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 
 		/** always leave tool active so flow can complete / allow uid change */
 		if (process.env.AUTHENTICATE_TOOL === 'true') {
-			server.registerTool(
+			fixedToolInstances.Authenticate = server.registerTool(
 				'Authenticate',
 				{
 					title: 'Hugging Face Authentication',
@@ -854,7 +859,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			}
 		);
 
-		const hfFsToolConfig = HfFsTool.createToolConfig(username);
+		const hfFsToolConfig = HF_FS_TOOL_CONFIG;
 		toolInstances[hfFsToolConfig.name] = server.registerTool(
 			hfFsToolConfig.name,
 			{
@@ -864,34 +869,20 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 				outputSchema: hfFsToolConfig.outputSchema.shape,
 				annotations: hfFsToolConfig.annotations,
 			},
-			async (params: HfFsParams) => {
+			async (request: HfFsRequest) => {
 				const result = await runWithQueryLogging(
 					logPromptQuery,
 					{
 						methodName: hfFsToolConfig.name,
-						query: params.uri,
+						query: [request.cmd, ...request.args].join(' '),
 						parameters: {
-							op: params.op,
-							uri: params.uri,
-							glob: params.glob,
-							recursive: params.recursive,
-							entry_type: params.entry_type,
-							name: params.name,
-							path: params.path,
-							query: params.query,
-							sort: params.sort,
-							max_bytes: params.max_bytes,
-							offset: params.offset,
-							limit: params.limit,
+							cmd: request.cmd,
+							args: request.args,
 						},
 						baseOptions: getLoggingOptions(),
 						successOptions: (fsResult) => {
 							const shared =
-								'entries' in fsResult
-									? fsResult.entries.length
-									: fsResult.op === 'stat' && !fsResult.exists
-										? 0
-										: 1;
+								'entries' in fsResult ? fsResult.entries.length : fsResult.op === 'stat' && !fsResult.exists ? 0 : 1;
 							return {
 								totalResults: 'entries' in fsResult ? fsResult.entries.length : shared,
 								resultsShared: shared,
@@ -901,7 +892,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					},
 					async () => {
 						const tool = new HfFsTool(hfToken, undefined);
-						return await tool.run(params);
+						return await tool.run(request);
 					}
 				);
 				return {
@@ -913,7 +904,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 
 		if (hfToken && toolSelection.enabledToolIds.includes(HF_FILES_FLAG)) {
 			const hfFsWriteToolConfig = HfFsWriteTool.createToolConfig();
-			server.registerTool(
+			fixedToolInstances[hfFsWriteToolConfig.name] = server.registerTool(
 				hfFsWriteToolConfig.name,
 				{
 					title: hfFsWriteToolConfig.title,
@@ -1521,13 +1512,19 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 
 			// Apply the desired state to each tool (tools start enabled by default)
 			for (const [toolName, toolInstance] of Object.entries(toolInstances)) {
-				if (toolSelection.enabledToolIds.includes(toolName)) {
+				if (disabledTools.has(toolName)) {
+					toolInstance.disable();
+				} else if (toolSelection.enabledToolIds.includes(toolName)) {
 					toolInstance.enable();
 				} else {
 					toolInstance.disable();
 				}
 			}
 		};
+
+		for (const [toolName, toolInstance] of Object.entries({ ...toolInstances, ...fixedToolInstances })) {
+			disableConfiguredTool(toolName, toolInstance, disabledTools);
+		}
 
 		// Always register capabilities consistently for stateless vs stateful modes
 		const transportInfo = sharedApiClient.getTransportInfo();
@@ -1545,7 +1542,12 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 				const toolStateChangeHandler = (toolId: string, enabled: boolean) => {
 					const toolInstance = toolInstances[toolId];
 					if (toolInstance) {
-						if (enabled && (!(AUTHENTICATED_BUILTIN_TOOL_IDS as readonly string[]).includes(toolId) || hfToken)) {
+						if (disabledTools.has(toolId)) {
+							toolInstance.disable();
+						} else if (
+							enabled &&
+							(!(AUTHENTICATED_BUILTIN_TOOL_IDS as readonly string[]).includes(toolId) || hfToken)
+						) {
 							toolInstance.enable();
 						} else {
 							toolInstance.disable();

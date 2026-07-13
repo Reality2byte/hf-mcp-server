@@ -19,6 +19,7 @@ import { buildOAuthResourceHeader } from '../utils/oauth-resource.js';
 import { randomUUID } from 'node:crypto';
 import { logSystemEvent } from '../utils/query-logger.js';
 import { rewriteLegacySearchToolCallRequest } from '../utils/repo-search-shim.js';
+import { disabledToolCallName, disabledToolMessage } from '../utils/disabled-tools.js';
 import { isClientDenied } from '../../shared/client-denylist.js';
 import { getSkillCatalog } from '../skills/skill-catalog-cache.js';
 import { listSkillResources, readSkillResource, readSkillDirectory } from '../skills/skill-resource-data.js';
@@ -307,6 +308,21 @@ export class StatelessHttpTransport extends BaseTransport {
 		if (!authResult.shouldContinue || trackingName === 'tools/call:Authenticate') {
 			res.set('WWW-Authenticate', buildOAuthResourceHeader(req));
 			res.status(authResult.statusCode || 401).send('Unauthorized');
+			return;
+		}
+
+		const disabledTool = disabledToolCallName(requestBody);
+		if (disabledTool) {
+			const disabledSessionId = headers['mcp-session-id'];
+			const clientInfo =
+				this.extractClientInfoFromRequest(requestBody) ??
+				(typeof disabledSessionId === 'string'
+					? this.analyticsSessions.get(disabledSessionId)?.metadata.clientInfo
+					: undefined);
+			this.trackMethodCall(trackingName, startTime, true, clientInfo);
+			res
+				.status(200)
+				.json(JsonRpcErrors.invalidParams(disabledToolMessage(disabledTool), extractJsonRpcId(req.body)));
 			return;
 		}
 

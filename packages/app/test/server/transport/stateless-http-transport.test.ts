@@ -7,12 +7,18 @@ import express from 'express';
 describe('StatelessHttpTransport', () => {
 	let transport: StatelessHttpTransport;
 	const originalAnalyticsMode = process.env.ANALYTICS_MODE;
+	const originalDisableTools = process.env.DISABLE_TOOLS;
 
 	beforeEach(() => {
 		if (originalAnalyticsMode === undefined) {
 			delete process.env.ANALYTICS_MODE;
 		} else {
 			process.env.ANALYTICS_MODE = originalAnalyticsMode;
+		}
+		if (originalDisableTools === undefined) {
+			delete process.env.DISABLE_TOOLS;
+		} else {
+			process.env.DISABLE_TOOLS = originalDisableTools;
 		}
 		// Create a minimal instance for testing private methods
 		const mockServerFactory = vi.fn() as unknown as ServerFactory;
@@ -25,6 +31,11 @@ describe('StatelessHttpTransport', () => {
 			delete process.env.ANALYTICS_MODE;
 		} else {
 			process.env.ANALYTICS_MODE = originalAnalyticsMode;
+		}
+		if (originalDisableTools === undefined) {
+			delete process.env.DISABLE_TOOLS;
+		} else {
+			process.env.DISABLE_TOOLS = originalDisableTools;
 		}
 	});
 
@@ -227,6 +238,46 @@ describe('StatelessHttpTransport', () => {
 			expect(methodMetrics?.byClient.get(clientInfo.name)?.count).toBe(1);
 			expect(mockServerFactory).not.toHaveBeenCalled();
 			expect(res.status).toHaveBeenCalledWith(200);
+		});
+	});
+
+	describe('disabled tools', () => {
+		it('rejects disabled calls before dispatch and records a dashboard error', async () => {
+			process.env.DISABLE_TOOLS = 'model_search';
+			const mockServerFactory = vi.fn() as unknown as ServerFactory;
+			transport = new StatelessHttpTransport(mockServerFactory, express());
+
+			const req = {
+				headers: {},
+				query: {},
+				body: {
+					jsonrpc: '2.0',
+					id: 1,
+					method: 'tools/call',
+					params: { name: 'model_search', arguments: { query: 'bert' } },
+				},
+				ip: '127.0.0.1',
+			};
+			const res = {
+				set: vi.fn().mockReturnThis(),
+				status: vi.fn().mockReturnThis(),
+				json: vi.fn().mockReturnThis(),
+				send: vi.fn().mockReturnThis(),
+			};
+
+			await (transport as any).handleJsonRpcRequest(req, res);
+
+			const methodMetrics = transport.getMetrics().methods.get('tools/call:model_search');
+			expect(methodMetrics).toMatchObject({ count: 1, errors: 1 });
+			expect(mockServerFactory).not.toHaveBeenCalled();
+			expect(res.status).toHaveBeenCalledWith(200);
+			expect(res.json).toHaveBeenCalledWith(
+				expect.objectContaining({
+					error: expect.objectContaining({
+						message: 'Invalid params: Tool model_search is disabled by server configuration',
+					}),
+				})
+			);
 		});
 	});
 });
