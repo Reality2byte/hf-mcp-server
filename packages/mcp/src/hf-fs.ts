@@ -29,30 +29,29 @@ import { escapeMarkdown, fitsWithinCharBudget, formatBytes, maxCharsForTokenBudg
 import { HF_NAV_MAX_LIMIT, HfNavTool, type HfNavEntry, type HfNavParams, type HfNavResult } from './hf-nav.js';
 import { catGuidance, isRootGuidanceUri, statGuidance } from './hf-fs-guidance.js';
 import { HfFsPaperProvider, isPaperUri, paperListingOrder } from './hf-fs-papers.js';
+import {
+	HF_FS_DESCRIPTION,
+	HF_FS_ENTRY_TYPES,
+	HF_FS_OPERATIONS,
+	HF_FS_SCHEMA,
+	isRepoTrendingUri,
+	parseHfFsRequest,
+	type HfFsEntryType,
+	type HfFsParams,
+	type HfFsRequest,
+	type HfFsSort,
+} from './hf-fs-contract.js';
 
-const HF_FS_OPERATIONS = ['ls', 'cat', 'stat', 'find', 'search'] as const;
-const HF_FS_ENTRY_TYPES = ['file', 'dir', 'repo', 'bucket', 'collection', 'paper', 'link'] as const;
 const HF_FS_STAT_TYPES = ['namespace', 'repo', 'dir', 'file', 'collection', 'paper', 'link', 'missing'] as const;
 const HF_URI_TYPES = ['models', 'datasets', 'spaces', 'buckets', 'collections', 'papers'] as const;
 const HF_REPO_TYPES = ['model', 'dataset', 'space', 'bucket'] as const;
-const HF_FS_SEARCH_SORTS = [
-	'createdAt',
-	'downloads',
-	'likes',
-	'lastModified',
-	'likes30d',
-	'trendingScore',
-	'mainSize',
-	'id',
-	'trending',
-	'upvotes',
-] as const;
 const SPECIAL_REFS_REVISION_RE = /^refs\/(?:convert\/[\w.-]+|pr\/\d+)/;
 const UNSUPPORTED_RAW_SLASH_REVISION_RE = /^refs\/(?:heads|tags)\//;
 const DEFAULT_LS_LIMIT = 1000;
 const MAX_LS_LIMIT = 10_000;
 const DEFAULT_SEARCH_LIMIT = 100;
 const MAX_SEARCH_LIMIT = 1000;
+const DEFAULT_TRENDING_LIMIT = 20;
 const DEFAULT_CAT_MAX_BYTES = 20_000;
 const APPROX_CHARS_PER_TOKEN = 4;
 const MAX_UTF8_SEQUENCE_BYTES = 4;
@@ -62,66 +61,6 @@ const MAX_CAT_BYTES = HF_FS_MAX_OUTPUT_CHARS;
 
 export const HF_FILES_FLAG = 'hf_files' as const;
 
-function createHfFsSchema() {
-	return z.object({
-		op: z
-			.enum(HF_FS_OPERATIONS)
-			.describe(
-				'Operation: ls lists a directory; cat reads a text-like file; stat checks one URI; find filters entries beneath a known directory; search discovers Hub resources from a supported discovery root.'
-			),
-		uri: z
-			.string()
-			.min(1)
-			.describe(
-				'Hugging Face URI in the form hf://models|datasets|spaces|buckets/OWNER[/NAME[/PATH]] or hf://collections[/OWNER[/SLUG]] or hf://papers[/ARXIV_ID[/PATH]].'
-			),
-		glob: z.string().optional().describe('ls-only glob matched against entries in the listed directory.'),
-		recursive: z
-			.boolean()
-			.optional()
-			.default(false)
-			.describe('ls-only recursive traversal; unsupported on unbounded discovery roots such as hf://papers.'),
-		entry_type: z
-			.enum(HF_FS_ENTRY_TYPES)
-			.optional()
-			.describe('Optional ls/find/search result-type filter; it does not change URI interpretation.'),
-		name: z.string().optional().describe('find-only glob matched against entry names/basenames.'),
-		path: z
-			.string()
-			.optional()
-			.describe('find-only glob matched against paths relative to the requested directory URI.'),
-		query: z
-			.string()
-			.optional()
-			.describe(
-				'search-only keyword or natural-language query. Use a discovery URI: hf://models, hf://datasets, hf://spaces, hf://collections, hf://collections/OWNER, or hf://papers. Paper search is supported only at exactly hf://papers.'
-			),
-		sort: z
-			.enum(HF_FS_SEARCH_SORTS)
-			.optional()
-			.describe(
-				'Optional sort for supported discovery listings/search only. Do not pass sort to hf://papers or dated Daily Papers listings; use ls hf://papers/trending for trending papers.'
-			),
-		max_bytes: z
-			.number()
-			.int()
-			.nonnegative()
-			.max(MAX_CAT_BYTES)
-			.optional()
-			.describe(`cat max read length. 0 means the maximum allowed ${MAX_CAT_BYTES.toString()} bytes.`),
-		offset: z.number().int().nonnegative().optional().describe('cat read start offset.'),
-		limit: z
-			.number()
-			.int()
-			.min(1)
-			.max(MAX_LS_LIMIT)
-			.optional()
-			.describe(
-				`ls/search maximum results. Default ${DEFAULT_LS_LIMIT.toString()} for ls and ${DEFAULT_SEARCH_LIMIT.toString()} for search. Paper listings are capped at 100.`
-			),
-	});
-}
-
 export const HF_FS_TOOL_CONFIG = {
 	name: 'hf_fs',
 	// human discovery
@@ -129,11 +68,8 @@ export const HF_FS_TOOL_CONFIG = {
 		'Hugging Face Hub: Access models, datasets, spaces, buckets, papers and collections. ' +
 		'Search and get details for items across the hub. Read daily papers reports, and browse trending content. ',
 	// model discovery
-	description:
-		'Navigate Hugging Face resources with ls, cat, find, stat, and search over hf:// URIs. ' +
-		'Roots: hf://models, hf://datasets, hf://spaces, hf://buckets, hf://collections, hf://papers. ' +
-		'For papers, ls hf://papers/ARXIV_ID to discover related resources; cat hf://papers/ARXIV_ID/paper.md or metadata.json.',
-	schema: createHfFsSchema(),
+	description: HF_FS_DESCRIPTION,
+	schema: HF_FS_SCHEMA,
 	outputSchema: createHfFsOutputSchema(),
 	annotations: {
 		destructiveHint: false,
@@ -142,15 +78,7 @@ export const HF_FS_TOOL_CONFIG = {
 	},
 } as const;
 
-type HfFsToolSchema = ReturnType<typeof createHfFsSchema>;
-type HfFsToolConfig = Omit<typeof HF_FS_TOOL_CONFIG, 'description' | 'schema'> & {
-	description: string;
-	schema: HfFsToolSchema;
-};
-
-export type HfFsParams = z.input<typeof HF_FS_TOOL_CONFIG.schema>;
-export type HfFsOperation = (typeof HF_FS_OPERATIONS)[number];
-export type HfFsEntryType = (typeof HF_FS_ENTRY_TYPES)[number];
+export type { HfFsEntryType, HfFsOperation, HfFsParams, HfFsRequest } from './hf-fs-contract.js';
 
 function createHfFsOutputSchema() {
 	const entrySchema = z.object({
@@ -209,6 +137,7 @@ function createHfFsOutputSchema() {
 		truncation_reason: z.enum(['entry_limit', 'max_bytes', 'limit', 'provider_limit']).optional(),
 		truncation_message: z.string().optional(),
 		next_offset: z.number().optional(),
+		warnings: z.array(z.string()).optional(),
 	});
 }
 
@@ -346,7 +275,7 @@ function navCompatibleEntryType(entryType: HfFsParams['entry_type']): HfNavParam
 	return undefined;
 }
 
-function repoSearchSort(sort: (typeof HF_FS_SEARCH_SORTS)[number] | undefined): RepoSearchSort | undefined {
+function repoSearchSort(sort: HfFsSort | undefined): RepoSearchSort | undefined {
 	if (sort === 'trending' || sort === 'upvotes') {
 		return 'trendingScore';
 	}
@@ -429,7 +358,7 @@ export interface HfFsStatResult {
 	arxiv_url?: string;
 }
 
-export type HfFsResult = HfFsLsResult | HfFsCatResult | HfFsStatResult;
+export type HfFsResult = (HfFsLsResult | HfFsCatResult | HfFsStatResult) & { warnings?: string[] };
 
 export type ParsedHfUri = ParsedNamespaceHfUri | ParsedRepoHfUri;
 
@@ -440,7 +369,7 @@ export interface ParsedNamespaceHfUri {
 	path: '';
 }
 
-type RepoSearchSort = Exclude<(typeof HF_FS_SEARCH_SORTS)[number], 'trending' | 'upvotes'>;
+type RepoSearchSort = Exclude<HfFsSort, 'trending' | 'upvotes'>;
 
 export interface ParsedRepoHfUri {
 	kind: 'repo';
@@ -474,22 +403,25 @@ export class HfFsTool {
 	constructor(hfToken?: string, hubUrl?: string) {
 		this.accessToken = hfToken;
 		this.hubUrl = hubUrl;
-		this.paperProvider = new HfFsPaperProvider(hfToken, hubUrl, async (params) => await this.run(params));
+		this.paperProvider = new HfFsPaperProvider(hfToken, hubUrl, async (params) => await this.runCanonical(params));
 	}
 
-	static createToolConfig(username?: string): HfFsToolConfig {
-		const ownerHint = username ? ` Authenticated OWNER is ${username}.` : '';
-		return {
-			...HF_FS_TOOL_CONFIG,
-			description: `List, read, find, or search Hugging Face repos, buckets, files, collections, and papers.${ownerHint}`,
-			schema: createHfFsSchema(),
-		};
+	async run(request: HfFsRequest | HfFsParams): Promise<HfFsResult> {
+		if ('op' in request) {
+			return await this.runCanonical(request);
+		}
+		const parsed = parseHfFsRequest(request);
+		const result = await this.runCanonical(parsed.params);
+		return parsed.warnings.length === 0 ? result : { ...result, warnings: parsed.warnings };
 	}
 
-	async run(params: HfFsParams): Promise<HfFsResult> {
+	async runCanonical(params: HfFsParams): Promise<HfFsResult> {
 		validateHfFsParams(params);
 		if (isRootGuidanceUri(params.uri)) {
 			return await this.runRootGuidance(params);
+		}
+		if (isRepoTrendingUri(params.uri)) {
+			return await this.runRepoTrending(params);
 		}
 		if (isPaperUri(params.uri)) {
 			return await this.paperProvider.run(params);
@@ -531,6 +463,67 @@ export class HfFsTool {
 		}
 	}
 
+	private async runRepoTrending(params: HfFsParams): Promise<HfFsResult> {
+		switch (params.op) {
+			case 'ls':
+				return await this.listRepoTrending(params);
+			case 'stat':
+				return {
+					uri: params.uri,
+					op: 'stat',
+					exists: true,
+					type: 'dir',
+					path: 'trending',
+				};
+			case 'cat':
+				throw new Error(`EISDIR: ${params.uri} is a directory`);
+			case 'find':
+				throw new Error(`ENOTSUP: find is not supported on ${params.uri}; use ls`);
+			case 'search':
+				throw new Error(
+					`ENOTSUP: search is not supported on ${params.uri}; search its resource root with --sort trendingScore`
+				);
+		}
+	}
+
+	private async listRepoTrending(params: HfFsParams): Promise<HfFsLsResult> {
+		if (params.sort !== undefined && params.sort !== 'trending' && params.sort !== 'trendingScore') {
+			throw new Error(`EINVAL: ${params.uri} does not accept another sort`);
+		}
+		if (params.limit !== undefined && (params.limit < 1 || params.limit > DEFAULT_TRENDING_LIMIT)) {
+			throw new Error(`EINVAL: trending limit must be between 1 and ${DEFAULT_TRENDING_LIMIT.toString()}`);
+		}
+
+		const repoType = trendingRepoType(params.uri);
+		const limit = params.limit ?? DEFAULT_TRENDING_LIMIT;
+		const url = new URL('/api/trending', this.hubUrl ?? HUB_URL);
+		url.searchParams.set('type', repoType);
+		url.searchParams.set('limit', limit.toString());
+		const { response } = await safeFetch(url, {
+			urlPolicy: createHuggingFaceHubPolicy(),
+			requestInit: {
+				headers: {
+					accept: 'application/json',
+					...(this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : {}),
+				},
+			},
+		});
+		if (!response.ok) {
+			throw new Error(`Trending listing failed with status ${response.status.toString()}: ${await response.text()}`);
+		}
+
+		const body: unknown = await response.json();
+		if (!isRecord(body) || !Array.isArray(body.recentlyTrending)) {
+			throw new Error('Trending listing returned an invalid response');
+		}
+		const entries = body.recentlyTrending.flatMap((item) => trendingItemToEntry(item, repoType));
+		return {
+			uri: params.uri,
+			op: 'ls',
+			entries: params.entry_type === undefined || params.entry_type === 'repo' ? entries.slice(0, limit) : [],
+		};
+	}
+
 	private async runNavigation(params: HfFsParams): Promise<HfFsResult> {
 		const tool = new HfNavTool(this.accessToken, this.hubUrl);
 		const result = navResultToFsResult(await tool.run(toNavParams(params)));
@@ -565,9 +558,36 @@ export class HfFsTool {
 				],
 			};
 		}
+		if (isRepoDiscoveryRoot(params.uri)) {
+			if (params.sort !== undefined) {
+				throw new Error(`EINVAL: sort is not supported on ${params.uri}; list ${params.uri}/trending instead`);
+			}
+			if (params.recursive) {
+				throw new Error(`ENOTSUP: recursive ls is not supported on ${params.uri}`);
+			}
+			const entry: HfFsEntry = {
+				type: 'dir',
+				path: 'trending',
+				name: 'trending',
+				uri: `${params.uri}/trending`,
+				description: `Browse the 20 currently trending ${params.uri.slice('hf://'.length)}.`,
+			};
+			return {
+				uri: params.uri,
+				op: 'ls',
+				entries:
+					(params.entry_type === undefined || params.entry_type === 'dir') &&
+					(params.glob === undefined || picomatch(params.glob, { dot: true })('trending'))
+						? [entry]
+						: [],
+			};
+		}
 		const parsed = parseHfFsUri(params.uri);
 		if (parsed.kind === 'namespace') {
 			return await this.lsNamespace(params, parsed);
+		}
+		if (params.sort !== undefined) {
+			throw new Error(`EINVAL: sort is not supported for repository file listings: ${params.uri}`);
 		}
 
 		const offset = params.offset ?? 0;
@@ -611,7 +631,7 @@ export class HfFsTool {
 			matchedCount += 1;
 		}
 
-		return buildLsResult(params.uri, entries, offset, truncated, truncated ? 'entry_limit' : undefined);
+		return buildLsResult(params.uri, entries, truncated, truncated ? 'entry_limit' : undefined);
 	}
 
 	private async find(params: HfFsParams): Promise<HfFsLsResult> {
@@ -630,7 +650,7 @@ export class HfFsTool {
 				const entry = statResultToFindEntry(stat);
 				const matchedEntries =
 					(params.offset ?? 0) === 0 && matchesFindFilters(entry, parentPath(parsed.path), filters) ? [entry] : [];
-				return buildEntriesResult(params.uri, 'find', matchedEntries, params.offset ?? 0, false);
+				return buildEntriesResult(params.uri, 'find', matchedEntries, false);
 			}
 		}
 
@@ -669,7 +689,7 @@ export class HfFsTool {
 			matchedCount += 1;
 		}
 
-		return buildEntriesResult(params.uri, 'find', entries, offset, truncated, truncated ? 'entry_limit' : undefined);
+		return buildEntriesResult(params.uri, 'find', entries, truncated, truncated ? 'entry_limit' : undefined);
 	}
 
 	private async search(params: HfFsParams): Promise<HfFsLsResult> {
@@ -686,6 +706,13 @@ export class HfFsTool {
 		}
 		if (parsed.repoType === 'bucket') {
 			throw new Error('ENOTSUP: bucket search is not supported.');
+		}
+		if (params.entry_type !== undefined && params.entry_type !== 'repo') {
+			return {
+				uri: params.uri,
+				op: 'search',
+				entries: [],
+			};
 		}
 
 		const query = params.query?.trim();
@@ -909,7 +936,12 @@ export class HfFsTool {
 		let truncated = false;
 
 		const namespaceFetchLimit = matcher ? undefined : limit + offset + 1;
-		for await (const entry of this.listNamespaceEntries(parsed.repoType, namespace, namespaceFetchLimit)) {
+		for await (const entry of this.listNamespaceEntries(
+			parsed.repoType,
+			namespace,
+			namespaceFetchLimit,
+			repoSearchSort(params.sort)
+		)) {
 			if (params.entry_type && entry.type !== params.entry_type) {
 				continue;
 			}
@@ -931,7 +963,7 @@ export class HfFsTool {
 			matchedCount += 1;
 		}
 
-		return buildLsResult(params.uri, entries, offset, truncated, truncated ? 'entry_limit' : undefined);
+		return buildLsResult(params.uri, entries, truncated, truncated ? 'entry_limit' : undefined);
 	}
 
 	private async findNamespace(params: HfFsParams, parsed: ParsedNamespaceHfUri): Promise<HfFsLsResult> {
@@ -962,7 +994,7 @@ export class HfFsTool {
 			matchedCount += 1;
 		}
 
-		return buildEntriesResult(params.uri, 'find', entries, offset, truncated, truncated ? 'entry_limit' : undefined);
+		return buildEntriesResult(params.uri, 'find', entries, truncated, truncated ? 'entry_limit' : undefined);
 	}
 
 	private resolveNamespace(parsed: ParsedNamespaceHfUri): string {
@@ -979,13 +1011,14 @@ export class HfFsTool {
 	private async *listNamespaceEntries(
 		repoType: RepoType,
 		namespace: string,
-		limit?: number
+		limit?: number,
+		sort: RepoSearchSort = 'lastModified'
 	): AsyncGenerator<HfFsEntry> {
 		switch (repoType) {
 			case 'model':
 				for await (const model of listModels({
 					search: { owner: namespace },
-					sort: 'lastModified',
+					sort,
 					...(limit === undefined ? {} : { limit }),
 					...(this.hubUrl ? { hubUrl: this.hubUrl } : {}),
 					...(this.accessToken ? { accessToken: this.accessToken } : {}),
@@ -996,7 +1029,7 @@ export class HfFsTool {
 			case 'dataset':
 				for await (const dataset of listDatasets({
 					search: { owner: namespace },
-					sort: 'lastModified',
+					sort,
 					...(limit === undefined ? {} : { limit }),
 					...(this.hubUrl ? { hubUrl: this.hubUrl } : {}),
 					...(this.accessToken ? { accessToken: this.accessToken } : {}),
@@ -1007,7 +1040,7 @@ export class HfFsTool {
 			case 'space':
 				for await (const space of listSpaces({
 					search: { owner: namespace },
-					sort: 'lastModified',
+					sort,
 					...(this.hubUrl ? { hubUrl: this.hubUrl } : {}),
 					...(this.accessToken ? { accessToken: this.accessToken } : {}),
 				})) {
@@ -1089,7 +1122,11 @@ export function formatHfFsResult(result: HfFsResult): string {
 }
 
 export function formatHfFsMarkdown(result: HfFsResult, maxChars = HF_FS_MAX_OUTPUT_CHARS): string {
-	return trimMarkdownToBudget(renderHfFsMarkdown(result), maxChars);
+	const markdown = renderHfFsMarkdown(result);
+	const withWarnings = result.warnings?.length
+		? `${markdown}\n\n## Warnings\n\n${result.warnings.map((warning) => `- ${warning}`).join('\n')}`
+		: markdown;
+	return trimMarkdownToBudget(withWarnings, maxChars);
 }
 
 function renderHfFsMarkdown(result: HfFsResult): string {
@@ -1297,18 +1334,16 @@ function isNotFoundError(error: unknown): boolean {
 function buildLsResult(
 	uri: string,
 	entries: HfFsEntry[],
-	offset: number,
 	truncated: boolean,
 	truncationReason?: HfFsLsResult['truncation_reason']
 ): HfFsLsResult {
-	return buildEntriesResult(uri, 'ls', entries, offset, truncated, truncationReason);
+	return buildEntriesResult(uri, 'ls', entries, truncated, truncationReason);
 }
 
 function buildEntriesResult(
 	uri: string,
 	op: HfFsLsResult['op'],
 	entries: HfFsEntry[],
-	offset: number,
 	truncated: boolean,
 	truncationReason?: HfFsLsResult['truncation_reason']
 ): HfFsLsResult {
@@ -1320,8 +1355,8 @@ function buildEntriesResult(
 			? {
 					truncated,
 					truncation_reason: truncationReason,
-					truncation_message: `Result truncated after reaching the entry limit. Resume with offset ${(offset + entries.length).toString()}.`,
-					next_offset: offset + entries.length,
+					truncation_message:
+						'Result truncated after reaching the entry limit. Rerun with a larger --limit, up to 10000.',
 				}
 			: {}),
 	};
@@ -1649,6 +1684,75 @@ function bucketToEntry(bucket: ApiBucketEntry): HfFsEntry {
 		created_at: bucket.createdAt,
 		updated_at: bucket.updatedAt,
 	};
+}
+
+type TrendingRepoType = 'model' | 'dataset' | 'space';
+
+function trendingRepoType(uri: string): TrendingRepoType {
+	if (uri === 'hf://models/trending') return 'model';
+	if (uri === 'hf://datasets/trending') return 'dataset';
+	if (uri === 'hf://spaces/trending') return 'space';
+	throw new Error(`EINVAL: unsupported trending URI: ${uri}`);
+}
+
+function trendingItemToEntry(item: unknown, expectedType: TrendingRepoType): HfFsEntry[] {
+	if (!isRecord(item) || item.repoType !== expectedType || !isRecord(item.repoData)) {
+		return [];
+	}
+	const data = item.repoData;
+	if (typeof data.id !== 'string') {
+		return [];
+	}
+
+	const uriType = uriTypeForRepoType(expectedType);
+	return [
+		compactEntry({
+			type: 'repo',
+			path: data.id,
+			uri: `hf://${uriType}/${data.id}`,
+			repo_type: expectedType,
+			private: optionalBooleanValue(data.private),
+			gated: optionalGatedValue(data.gated),
+			likes: optionalNumberValue(data.likes),
+			downloads: optionalNumberValue(data.downloads),
+			task: optionalStringValue(data.pipeline_tag),
+			tags: optionalStringArray(data.tags),
+			trending_score: optionalNumberValue(data.trendingScore),
+			sdk: optionalStringValue(data.sdk),
+			title: optionalStringValue(data.title),
+			description: optionalStringValue(data.shortDescription) ?? optionalStringValue(data.ai_short_description),
+			created_at: optionalStringValue(data.createdAt),
+			updated_at: optionalStringValue(data.lastModified),
+		}),
+	];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null;
+}
+
+function optionalStringValue(value: unknown): string | undefined {
+	return typeof value === 'string' ? value : undefined;
+}
+
+function optionalNumberValue(value: unknown): number | undefined {
+	return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function optionalBooleanValue(value: unknown): boolean | undefined {
+	return typeof value === 'boolean' ? value : undefined;
+}
+
+function optionalGatedValue(value: unknown): HfFsEntry['gated'] {
+	return value === false || value === 'auto' || value === 'manual' ? value : undefined;
+}
+
+function optionalStringArray(value: unknown): string[] | undefined {
+	return Array.isArray(value) && value.every((item): item is string => typeof item === 'string') ? value : undefined;
+}
+
+function isRepoDiscoveryRoot(uri: string): boolean {
+	return uri === 'hf://models' || uri === 'hf://datasets' || uri === 'hf://spaces';
 }
 
 function relativeEntryPath(basePath: string, entryPath: string): string {

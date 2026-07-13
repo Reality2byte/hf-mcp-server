@@ -9,6 +9,7 @@ import { extractQueryParamsToHeaders } from '../utils/query-params.js';
 import { buildOAuthResourceHeader } from '../utils/oauth-resource.js';
 import { logSystemEvent } from '../utils/query-logger.js';
 import { rewriteLegacySearchToolCallRequest } from '../utils/repo-search-shim.js';
+import { disabledToolCallName, disabledToolMessage } from '../utils/disabled-tools.js';
 
 interface StreamableHttpConnection extends BaseSession<StreamableHTTPServerTransport> {
 	activeResponse?: Response;
@@ -156,6 +157,15 @@ export class StreamableHttpTransport extends StatefulTransport<Session> {
 				this.trackError(404);
 				this.metrics.trackMethod(trackingName, undefined, true);
 				res.status(404).json(JsonRpcErrors.sessionNotFound(sessionId, extractJsonRpcId(req.body)));
+				return;
+			}
+
+			const disabledTool = disabledToolCallName(req.body);
+			if (disabledTool) {
+				this.metrics.trackMethod(trackingName, undefined, true);
+				res
+					.status(200)
+					.json(JsonRpcErrors.invalidParams(disabledToolMessage(disabledTool), extractJsonRpcId(req.body)));
 				return;
 			}
 

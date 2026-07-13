@@ -13,6 +13,7 @@ import { createGradioToolName } from './utils/gradio-utils.js';
 import { createAudioPlayerUIResource } from './utils/ui/audio-player.js';
 import { spaceMetadataCache, CACHE_CONFIG } from './utils/gradio-cache.js';
 import { callGradioTool, applyResultPostProcessing, type GradioToolCallOptions } from './utils/gradio-tool-caller.js';
+import { disableConfiguredTool } from './utils/disabled-tools.js';
 import * as hfMcp from '@llmindset/hf-mcp';
 import { fetchWithProfile, NETWORK_FETCH_PROFILES } from '@llmindset/hf-mcp/network';
 
@@ -586,6 +587,7 @@ export function registerRemoteTools(
 			},
 			handler
 		);
+		disableConfiguredTool(outwardFacingName, theTool);
 
 		if (sessionInfo?.clientInfo?.name == 'openai-mcp') {
 			theTool._meta = {
