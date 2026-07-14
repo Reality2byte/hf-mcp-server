@@ -309,6 +309,8 @@ describe('HfFsTool', () => {
 					likes: 123,
 					downloads: 456,
 					trending_score: 12.5,
+					category: 'Code Generation',
+					semantic_relevance: 0.875,
 					published_at: '2026-07-02T00:00:00.000Z',
 					daily_papers_uri: 'hf://papers/daily/2026/07/02',
 					content_type: 'application/json',
@@ -319,6 +321,8 @@ describe('HfFsTool', () => {
 		expect(markdown).toContain('likes=123');
 		expect(markdown).toContain('downloads=456');
 		expect(markdown).toContain('trending score=12.5');
+		expect(markdown).toContain('category=Code Generation');
+		expect(markdown).toContain('semantic relevance=87.5%');
 		expect(markdown).toContain('published=2026-07-02T00:00:00.000Z');
 		expect(markdown).toContain('daily papers uri=hf://papers/daily/2026/07/02');
 		expect(markdown).toContain('content type=application/json');
@@ -778,6 +782,64 @@ describe('HfFsTool', () => {
 			truncated: true,
 			truncation_reason: 'limit',
 		});
+	});
+
+	it('semantically searches Spaces with tag and MCP filters', async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(
+			Response.json([
+				{
+					id: 'org/python-mcp',
+					private: false,
+					likes: 42,
+					sdk: 'gradio',
+					title: 'Python MCP',
+					ai_short_description: 'Run Python code and get results',
+					ai_category: 'Code Generation',
+					trendingScore: 3,
+					semanticRelevancyScore: 0.91,
+					tags: ['gradio', 'mcp-server'],
+					lastModified: '2026-07-14T00:00:00.000Z',
+				},
+				{
+					id: 'org/other-mcp',
+					semanticRelevancyScore: 0.8,
+					tags: ['gradio', 'mcp-server'],
+				},
+			])
+		);
+
+		const result = await new HfFsTool('token').run({
+			op: 'search',
+			uri: 'hf://spaces',
+			query: 'python execution',
+			tags: ['gradio'],
+			space_kind: 'mcp',
+			limit: 1,
+		});
+
+		const requestUrl = new URL(String(vi.mocked(fetch).mock.calls[0]?.[0]));
+		expect(requestUrl.pathname).toBe('/api/spaces/semantic-search');
+		expect(requestUrl.searchParams.get('q')).toBe('python execution');
+		expect(requestUrl.searchParams.getAll('filter')).toEqual(['gradio', 'mcp-server']);
+		expect(result).toMatchObject({
+			uri: 'hf://spaces',
+			op: 'search',
+			entries: [
+				{
+					type: 'repo',
+					path: 'org/python-mcp',
+					uri: 'hf://spaces/org/python-mcp',
+					title: 'Python MCP',
+					description: 'Run Python code and get results',
+					category: 'Code Generation',
+					semantic_relevance: 0.91,
+					tags: ['gradio', 'mcp-server'],
+				},
+			],
+			truncated: true,
+			truncation_reason: 'limit',
+		});
+		expect(listSpaces).not.toHaveBeenCalled();
 	});
 
 	it('requires an explicit owner for namespace listings regardless of authentication', async () => {

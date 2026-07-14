@@ -102,6 +102,8 @@ function createHfFsOutputSchema() {
 		trending_score: z.number().optional(),
 		sdk: z.string().optional(),
 		title: z.string().optional(),
+		category: z.string().optional(),
+		semantic_relevance: z.number().optional(),
 		anchor: z.string().optional(),
 		description: z.string().optional(),
 		upvotes: z.number().optional(),
@@ -305,6 +307,8 @@ export interface HfFsEntry {
 	trending_score?: number;
 	sdk?: string;
 	title?: string;
+	category?: string;
+	semantic_relevance?: number;
 	anchor?: string;
 	description?: string;
 	upvotes?: number;
@@ -399,6 +403,22 @@ interface ApiBucketEntry {
 	repoType: 'bucket';
 	cdnRegions?: string[];
 	resourceGroup?: { id: string; name: string };
+}
+
+interface SemanticSpaceSearchHit {
+	id: string;
+	private?: boolean;
+	likes?: number;
+	sdk?: string;
+	title?: string;
+	shortDescription?: string;
+	ai_short_description?: string;
+	ai_category?: string;
+	trendingScore?: number;
+	semanticRelevancyScore?: number;
+	tags?: string[];
+	createdAt?: string;
+	lastModified?: string;
 }
 
 export class HfFsTool {
@@ -732,6 +752,9 @@ export class HfFsTool {
 		}
 
 		const limit = normalizedSearchLimit(params.limit);
+		if (parsed.repoType === 'space' && !parsed.namespace) {
+			return await this.searchSemanticSpaces(params, limit);
+		}
 		const fetchLimit = limit + 1;
 		const entries: HfFsEntry[] = [];
 		for await (const entry of this.searchRepoEntries(parsed.repoType, {
@@ -756,6 +779,45 @@ export class HfFsTool {
 			uri: params.uri,
 			op: 'search',
 			entries,
+		};
+	}
+
+	private async searchSemanticSpaces(params: HfFsParams, limit: number): Promise<HfFsLsResult> {
+		if ((params.query?.length ?? 0) > 250) {
+			throw new Error('EINVAL: Space semantic search query must not exceed 250 characters');
+		}
+		const url = new URL('/api/spaces/semantic-search', this.hubUrl ?? HUB_URL);
+		url.searchParams.set('q', params.query ?? '');
+		const tags = new Set(params.tags ?? []);
+		if (params.space_kind === 'mcp') tags.add('mcp-server');
+		for (const tag of tags) url.searchParams.append('filter', tag);
+
+		const { response } = await safeFetch(url.toString(), {
+			urlPolicy: createHuggingFaceHubPolicy(),
+			requestInit: {
+				headers: {
+					accept: 'application/json',
+					...(this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : {}),
+				},
+			},
+		});
+		if (!response.ok) {
+			throw new Error(
+				`Space semantic search failed with status ${response.status.toString()}: ${await response.text()}`
+			);
+		}
+
+		const hits = sortSemanticSpaceHits(
+			((await response.json()) as SemanticSpaceSearchHit[]).filter((hit) =>
+				[...tags].every((tag) => hit.tags?.includes(tag))
+			),
+			params.sort
+		);
+		return {
+			uri: params.uri,
+			op: 'search',
+			entries: hits.slice(0, limit).map(semanticSpaceToEntry),
+			...(hits.length > limit ? { truncated: true, truncation_reason: 'limit' as const } : {}),
 		};
 	}
 
@@ -1258,6 +1320,10 @@ function entryDetails(entry: HfFsEntry): string {
 		entry.trending_score === undefined ? undefined : `trending score=${entry.trending_score.toString()}`,
 		entry.sdk ? `sdk=${entry.sdk}` : undefined,
 		entry.title ? `title=${entry.title}` : undefined,
+		entry.category ? `category=${entry.category}` : undefined,
+		entry.semantic_relevance === undefined
+			? undefined
+			: `semantic relevance=${(entry.semantic_relevance * 100).toFixed(1)}%`,
 		entry.anchor ? `anchor=${entry.anchor}` : undefined,
 		entry.description
 			? entry.type === 'paper'
@@ -1670,6 +1736,50 @@ function datasetToEntry(dataset: DatasetEntry): HfFsEntry {
 		downloads: dataset.downloads,
 		updated_at: dataset.updatedAt.toISOString(),
 	};
+}
+
+function semanticSpaceToEntry(space: SemanticSpaceSearchHit): HfFsEntry {
+	return {
+		type: 'repo',
+		path: space.id,
+		uri: `hf://spaces/${space.id}`,
+		repo_type: 'space',
+		...(space.private === undefined ? {} : { private: space.private }),
+		...(space.likes === undefined ? {} : { likes: space.likes }),
+		...(space.tags ? { tags: space.tags } : {}),
+		...(space.trendingScore === undefined ? {} : { trending_score: space.trendingScore }),
+		...(space.sdk ? { sdk: space.sdk } : {}),
+		...(space.title ? { title: space.title } : {}),
+		...(space.ai_category ? { category: space.ai_category } : {}),
+		...(space.semanticRelevancyScore === undefined
+			? {}
+			: { semantic_relevance: space.semanticRelevancyScore }),
+		...(space.shortDescription || space.ai_short_description
+			? { description: space.shortDescription ?? space.ai_short_description }
+			: {}),
+		...(space.lastModified ? { updated_at: space.lastModified } : {}),
+		...(space.createdAt ? { created_at: space.createdAt } : {}),
+	};
+}
+
+function sortSemanticSpaceHits(hits: SemanticSpaceSearchHit[], sort: HfFsSort | undefined): SemanticSpaceSearchHit[] {
+	if (!sort) return hits;
+	const value = (hit: SemanticSpaceSearchHit): number => {
+		switch (sort) {
+			case 'likes':
+				return hit.likes ?? 0;
+			case 'trending':
+			case 'trendingScore':
+				return hit.trendingScore ?? 0;
+			case 'createdAt':
+				return Date.parse(hit.createdAt ?? '') || 0;
+			case 'lastModified':
+				return Date.parse(hit.lastModified ?? '') || 0;
+			default:
+				return hit.semanticRelevancyScore ?? 0;
+		}
+	};
+	return [...hits].sort((left, right) => value(right) - value(left));
 }
 
 function spaceToEntry(space: SpaceEntry): HfFsEntry {
