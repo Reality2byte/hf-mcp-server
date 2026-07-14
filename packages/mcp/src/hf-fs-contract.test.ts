@@ -57,6 +57,16 @@ describe('parseHfFsRequest', () => {
 			uri: 'hf://datasets/org',
 			query: 'speech',
 		});
+		expect(
+			parseHfFsRequest({
+				cmd: 'search',
+				args: ['hf://docs/transformers', 'pipeline loading'],
+			}).params
+		).toEqual({
+			op: 'search',
+			uri: 'hf://docs/transformers',
+			query: 'pipeline loading',
+		});
 	});
 
 	it('softens redundant trending arguments with warnings', () => {

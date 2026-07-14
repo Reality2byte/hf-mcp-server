@@ -29,6 +29,7 @@ import { escapeMarkdown, fitsWithinCharBudget, formatBytes, maxCharsForTokenBudg
 import { HF_NAV_MAX_LIMIT, HfNavTool, type HfNavEntry, type HfNavParams, type HfNavResult } from './hf-nav.js';
 import { catGuidance, isRootGuidanceUri, statGuidance } from './hf-fs-guidance.js';
 import { HfFsPaperProvider, isPaperUri, paperListingOrder } from './hf-fs-papers.js';
+import { HfFsDocsProvider, isDocsUri } from './hf-fs-docs.js';
 import {
 	HF_FS_DESCRIPTION,
 	HF_FS_ENTRY_TYPES,
@@ -65,7 +66,7 @@ export const HF_FS_TOOL_CONFIG = {
 	name: 'hf_fs',
 	// human discovery
 	title:
-		'Hugging Face Hub: Access models, datasets, spaces, buckets, papers and collections. ' +
+		'Hugging Face Hub: Access models, datasets, spaces, buckets, papers, documentation and collections. ' +
 		'Search and get details for items across the hub. Read daily papers reports, and browse trending content. ',
 	// model discovery
 	description: HF_FS_DESCRIPTION,
@@ -399,11 +400,13 @@ export class HfFsTool {
 	private readonly accessToken?: string;
 	private readonly hubUrl?: string;
 	private readonly paperProvider: HfFsPaperProvider;
+	private readonly docsProvider: HfFsDocsProvider;
 
 	constructor(hfToken?: string, hubUrl?: string) {
 		this.accessToken = hfToken;
 		this.hubUrl = hubUrl;
 		this.paperProvider = new HfFsPaperProvider(hfToken, hubUrl, async (params) => await this.runCanonical(params));
+		this.docsProvider = new HfFsDocsProvider(hubUrl);
 	}
 
 	async run(request: HfFsRequest | HfFsParams): Promise<HfFsResult> {
@@ -425,6 +428,9 @@ export class HfFsTool {
 		}
 		if (isPaperUri(params.uri)) {
 			return await this.paperProvider.run(params);
+		}
+		if (isDocsUri(params.uri)) {
+			return await this.docsProvider.run(params);
 		}
 		if (isNavigationUri(params.uri)) {
 			return await this.runNavigation(params);
@@ -549,7 +555,7 @@ export class HfFsTool {
 						uri: 'hf://README.md',
 						content_type: 'text/markdown',
 					},
-					...['models', 'datasets', 'spaces', 'buckets', 'collections', 'papers'].map((name) => ({
+					...['models', 'datasets', 'spaces', 'buckets', 'collections', 'papers', 'docs'].map((name) => ({
 						type: 'dir' as const,
 						path: name,
 						name,

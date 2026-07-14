@@ -14,6 +14,7 @@ export * from './dataset-viewer-inspect.js';
 export * from './hub-inspect.js';
 export * from './hf-fs.js';
 export * from './hf-fs-papers.js';
+export * from './hf-fs-docs.js';
 export * from './hf-nav.js';
 export * from './hf-fs-write.js';
 export * from './duplicate-space.js';

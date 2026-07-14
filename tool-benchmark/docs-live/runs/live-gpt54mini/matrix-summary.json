@@ -1,0 +1,63 @@
+{
+  "runs": [
+    {
+      "model_label": "gpt54mini",
+      "model": "responses.gpt-5.4-mini?reasoning=medium",
+      "variant": "docs",
+      "repetition": 1,
+      "input_sha256": "0e8cf9891d4260fcd03184649177338dcddf597aa8667db340914e38f82756de",
+      "report": "tool-benchmark/docs-live/runs/live-gpt54mini/gpt54mini-docs-run-1.score.json",
+      "batch_ok_rate": 1.0,
+      "completion_rate": 0.9166666666666666,
+      "error_free_rate": 0.08333333333333333,
+      "recovered_tool_error_rate": 0.9166666666666666,
+      "mean_duration_ms": 8023.319166666667,
+      "mean_turns": 8.416666666666666,
+      "mean_tool_calls": 7.5,
+      "mean_input_tokens": 65365.583333333336,
+      "mean_cached_input_tokens": 33642.666666666664,
+      "mean_output_tokens": 1608.5,
+      "mean_reasoning_output_tokens": 718.4166666666666,
+      "mean_total_tokens": 66974.08333333333
+    },
+    {
+      "model_label": "gpt54mini",
+      "model": "responses.gpt-5.4-mini?reasoning=medium",
+      "variant": "files",
+      "repetition": 1,
+      "input_sha256": "0e8cf9891d4260fcd03184649177338dcddf597aa8667db340914e38f82756de",
+      "report": "tool-benchmark/docs-live/runs/live-gpt54mini/gpt54mini-files-run-1.score.json",
+      "batch_ok_rate": 1.0,
+      "completion_rate": 0.75,
+      "error_free_rate": 0.3333333333333333,
+      "recovered_tool_error_rate": 0.4166666666666667,
+      "mean_duration_ms": 7682.195833333334,
+      "mean_turns": 9.166666666666666,
+      "mean_tool_calls": 8.416666666666666,
+      "mean_input_tokens": 63634.5,
+      "mean_cached_input_tokens": 32618.666666666668,
+      "mean_output_tokens": 1534.6666666666667,
+      "mean_reasoning_output_tokens": 608.4166666666666,
+      "mean_total_tokens": 65169.166666666664
+    }
+  ],
+  "paired_deltas": [
+    {
+      "model_label": "gpt54mini",
+      "model": "responses.gpt-5.4-mini?reasoning=medium",
+      "repetition": 1,
+      "files_minus_docs:batch_ok_rate": 0.0,
+      "files_minus_docs:completion_rate": -0.16666666666666663,
+      "files_minus_docs:error_free_rate": 0.25,
+      "files_minus_docs:recovered_tool_error_rate": -0.49999999999999994,
+      "files_minus_docs:mean_duration_ms": -341.123333333333,
+      "files_minus_docs:mean_turns": 0.75,
+      "files_minus_docs:mean_tool_calls": 0.9166666666666661,
+      "files_minus_docs:mean_input_tokens": -1731.0833333333358,
+      "files_minus_docs:mean_cached_input_tokens": -1023.9999999999964,
+      "files_minus_docs:mean_output_tokens": -73.83333333333326,
+      "files_minus_docs:mean_reasoning_output_tokens": -110.0,
+      "files_minus_docs:mean_total_tokens": -1804.9166666666642
+    }
+  ]
+}

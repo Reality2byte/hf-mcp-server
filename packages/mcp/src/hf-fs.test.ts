@@ -48,6 +48,7 @@ describe('HfFsTool config', () => {
 		expect(HF_FS_TOOL_CONFIG.description).toContain('Grammar; each token below is one args array element');
 		expect(HF_FS_TOOL_CONFIG.description).toContain('ls hf://models/trending');
 		expect(HF_FS_TOOL_CONFIG.description).toContain('ls hf://papers/trending');
+		expect(HF_FS_TOOL_CONFIG.description).toContain('ls hf://docs/PRODUCT');
 		expect(HF_FS_TOOL_CONFIG.description).toContain('hf://README.md');
 	});
 });
@@ -524,6 +525,7 @@ describe('HfFsTool', () => {
 				{ type: 'dir', path: 'buckets', name: 'buckets', uri: 'hf://buckets' },
 				{ type: 'dir', path: 'collections', name: 'collections', uri: 'hf://collections' },
 				{ type: 'dir', path: 'papers', name: 'papers', uri: 'hf://papers' },
+				{ type: 'dir', path: 'docs', name: 'docs', uri: 'hf://docs' },
 			],
 		});
 	});

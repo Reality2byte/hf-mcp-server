@@ -34,7 +34,7 @@ export interface HfFsParams {
 	limit?: number;
 }
 
-export const HF_FS_DESCRIPTION = `Navigate Hugging Face resources with ls, cat, find, stat, and search over hf:// URIs. Roots: hf://models, hf://datasets, hf://spaces, hf://buckets, hf://collections, hf://papers. For papers, ls hf://papers/ARXIV_ID to discover related resources; cat hf://papers/ARXIV_ID/paper.md or metadata.json.
+export const HF_FS_DESCRIPTION = `Navigate Hugging Face resources with ls, cat, find, stat, and search over hf:// URIs. Roots: hf://models, hf://datasets, hf://spaces, hf://buckets, hf://collections, hf://papers, hf://docs. For papers, ls hf://papers/ARXIV_ID to discover related resources; cat hf://papers/ARXIV_ID/paper.md or metadata.json. Documentation paths include the current version from each product's llms.txt manifest.
 
 Grammar; each token below is one args array element:
   ls     URI [(-R|-r|--recursive)] [--glob GLOB]
@@ -49,7 +49,8 @@ TYPE = file|dir|repo|bucket|collection|paper|link.
 Type aliases: f=file, d=dir, l=link, model|dataset|space=repo.
 SORT = createdAt|downloads|likes|lastModified|likes30d|trendingScore|mainSize|id|trending|upvotes.
 URI starts with hf://. QUERY and GLOB are each one string token.
-Search URI: hf://models|datasets|spaces[/OWNER], hf://collections[/OWNER], or exactly hf://papers; not hf://.
+Search URI: hf://models|datasets|spaces[/OWNER], hf://collections[/OWNER], hf://docs[/PRODUCT], or exactly hf://papers; not hf://.
+Documentation: ls hf://docs, then ls hf://docs/PRODUCT to discover the current manifest version; cat or find versioned .md paths, or search hf://docs/PRODUCT QUERY.
 Trending listings: ls hf://models/trending, hf://datasets/trending, or hf://spaces/trending. They return up to 20 entries.
 Trending paths imply trending order; --sort trending|trendingScore is redundant but valid.
 Trending papers: ls hf://papers/trending.
@@ -260,6 +261,9 @@ function softenParsedParams(params: HfFsParams): ParsedHfFsRequest {
 
 function validSearchUri(uri: string): boolean {
 	if (uri === 'hf://papers') {
+		return true;
+	}
+	if (uri === 'hf://docs' || /^hf:\/\/docs\/[^/]+$/.test(uri)) {
 		return true;
 	}
 	return /^hf:\/\/(?:models|datasets|spaces|collections)(?:\/[^/]+)?$/.test(uri) && !isRepoTrendingUri(uri);

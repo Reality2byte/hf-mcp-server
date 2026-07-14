@@ -1,9 +1,9 @@
 import { logger } from './logger.js';
 import type { AppSettings, SpaceTool } from '../../shared/settings.js';
-import { ALL_BUILTIN_TOOL_IDS, CREATE_REPO_TOOL_ID } from '@llmindset/hf-mcp';
+import { ALL_BUILTIN_TOOL_IDS, CREATE_REPO_TOOL_ID, HF_FS_TOOL_ID } from '@llmindset/hf-mcp';
 import type { McpApiClient } from './mcp-api-client.js';
 import { extractAuthBouquetAndMix } from '../utils/auth-utils.js';
-import { normalizeBuiltInTools } from '../../shared/tool-normalizer.js';
+import { normalizeBuiltInTools, withoutLegacyDocTools } from '../../shared/tool-normalizer.js';
 import { BOUQUETS } from '../../shared/bouquet-presets.js';
 import { parseGradioSpaceIds } from './gradio-utils.js';
 import { getProxyToolsConfig } from './proxy-tools-config.js';
@@ -137,7 +137,8 @@ export class ToolSelectionStrategy {
 	 * Applies built-in tool dependency rules.
 	 */
 	private applyToolDependencies(enabledToolIds: string[]): string[] {
-		return this.applySandboxEnablesExec(this.applySearchEnablesFetch(enabledToolIds));
+		const requiredTools = enabledToolIds.includes(HF_FS_TOOL_ID) ? enabledToolIds : [...enabledToolIds, HF_FS_TOOL_ID];
+		return this.applySandboxEnablesExec(this.applySearchEnablesFetch(requiredTools));
 	}
 
 	private getProxyToolNames(): string[] {
@@ -207,7 +208,10 @@ export class ToolSelectionStrategy {
 		}
 
 		// 2. Get base user settings
-		const baseSettings = await this.getUserSettings(context);
+		const rawBaseSettings = await this.getUserSettings(context);
+		const baseSettings = rawBaseSettings
+			? { ...rawBaseSettings, builtInTools: withoutLegacyDocTools(rawBaseSettings.builtInTools) }
+			: null;
 
 		// 3. Apply mix if specified and we have base settings
 		if (mixList.length > 0 && baseSettings) {
@@ -281,8 +285,8 @@ export class ToolSelectionStrategy {
 			};
 		}
 
-		// 5. Fallback - all tools enabled
-		logger.warn('No settings available, using fallback (all tools enabled)');
+		// 5. Fallback
+		logger.warn('No settings available, using fallback');
 		const fallbackMixes = mixList.filter((mixName) => {
 			const isValid = Boolean(BOUQUETS[mixName]);
 			if (!isValid) {
@@ -292,7 +296,7 @@ export class ToolSelectionStrategy {
 		});
 		const fallbackMixTools = fallbackMixes.flatMap((mixName) => BOUQUETS[mixName]?.builtInTools ?? []);
 		let enabledToolIds = normalizeBuiltInTools(
-			this.applyToolDependencies([...ALL_BUILTIN_TOOL_IDS, ...fallbackMixTools])
+			this.applyToolDependencies([...withoutLegacyDocTools(ALL_BUILTIN_TOOL_IDS), ...fallbackMixTools])
 		);
 		if (includesProxyMix && proxyToolNames.length > 0) {
 			enabledToolIds = this.appendProxyTools(enabledToolIds);

@@ -109,9 +109,12 @@ import { getSkillCatalog } from './skills/skill-catalog-cache.js';
 import { SERVER_VERSION } from './server-build-info.js';
 import { disableConfiguredTool, parseDisabledTools } from './utils/disabled-tools.js';
 
-// Fallback settings when API/user settings are unavailable.
+// Fallback settings for anonymous users and unavailable API/user settings.
 export const BOUQUET_FALLBACK: AppSettings = {
-	builtInTools: [...TOOL_ID_GROUPS.hf_api, HF_FS_TOOL_ID],
+	builtInTools: [
+		...TOOL_ID_GROUPS.hf_api.filter((toolId) => toolId !== DOCS_SEMANTIC_SEARCH_CONFIG.name),
+		HF_FS_TOOL_ID,
+	],
 	spaceTools: [],
 };
 
