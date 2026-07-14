@@ -67,6 +67,16 @@ describe('parseHfFsRequest', () => {
 			uri: 'hf://docs/transformers',
 			query: 'pipeline loading',
 		});
+		expect(
+			parseHfFsRequest({
+				cmd: 'search',
+				args: ['hf://docs/transformers/v5.13.1/internal/generation_utils.md', 'TextIteratorStreamer'],
+			}).params
+		).toEqual({
+			op: 'search',
+			uri: 'hf://docs/transformers/v5.13.1/internal/generation_utils.md',
+			query: 'TextIteratorStreamer',
+		});
 	});
 
 	it('softens redundant trending arguments with warnings', () => {

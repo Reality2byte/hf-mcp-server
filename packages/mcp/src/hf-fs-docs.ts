@@ -1,5 +1,6 @@
 import { HUB_URL } from '@huggingface/hub';
 import picomatch from 'picomatch';
+import { extractMarkdownSection } from './hf-fs-docs-sections.js';
 import { sliceUtf8 } from './hf-fs-guidance.js';
 import type { HfFsCatResult, HfFsEntry, HfFsLsResult, HfFsParams, HfFsResult, HfFsStatResult } from './hf-fs.js';
 import { fetchWithProfile, NETWORK_FETCH_PROFILES } from './network/fetch-profile.js';
@@ -8,8 +9,10 @@ const CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_CAT_MAX_BYTES = 20_000;
 const MAX_CAT_BYTES = 80_000;
 const DEFAULT_LIMIT = 1000;
+const DEFAULT_SEARCH_LIMIT = 5;
 const MAX_SEARCH_LIMIT = 25;
-const MAX_SEARCH_EXCERPT_LENGTH = 400;
+const PRIMARY_SEARCH_EXCERPT_LENGTH = 1_200;
+const SECONDARY_SEARCH_EXCERPT_LENGTH = 400;
 const DOC_LINK_RE = /\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g;
 const VERSION_SEGMENT_RE = /^(?:main|v\d[^/]*)$/;
 const LANGUAGE_SEGMENT_RE = /^[a-z]{2}(?:-[A-Z]{2})?$/;
@@ -44,6 +47,7 @@ interface ParsedDocsUri {
 	uri: string;
 	product?: string;
 	path: string;
+	anchor?: string;
 }
 
 interface SemanticSearchHit {
@@ -53,6 +57,9 @@ interface SemanticSearchHit {
 	source_page_url: string;
 	source_page_title: string;
 	heading2?: string;
+	heading3?: string;
+	heading4?: string;
+	heading5?: string;
 }
 
 interface FullTextSearchHit {
@@ -67,19 +74,23 @@ const catalogCache = new Map<string, CacheEntry<DocsCatalogEntry[]>>();
 const manifestCache = new Map<string, CacheEntry<DocsManifest | undefined>>();
 
 export function isDocsUri(uri: string): boolean {
-	return uri === 'hf://docs' || uri.startsWith('hf://docs/');
+	const base = uri.split('#', 1)[0] ?? uri;
+	return base === 'hf://docs' || base.startsWith('hf://docs/');
 }
 
 export function parseDocsUri(uri: string): ParsedDocsUri {
 	if (!isDocsUri(uri)) {
 		throw new Error('EINVAL: URI must start with hf://docs');
 	}
-	const location = uri.slice('hf://'.length).replace(/\/+$/, '');
+	const hash = uri.indexOf('#');
+	const baseUri = hash === -1 ? uri : uri.slice(0, hash);
+	const anchor = hash === -1 ? undefined : decodeAnchor(uri.slice(hash + 1));
+	const location = baseUri.slice('hf://'.length).replace(/\/+$/, '');
 	if (location.includes('//')) {
 		throw new Error('EINVAL: URI path must not contain empty segments');
 	}
 	if (location === 'docs') {
-		return { kind: 'root', uri: 'hf://docs', path: '' };
+		return compactParsedUri({ kind: 'root', uri: anchoredDocsUri('hf://docs', anchor), path: '', anchor });
 	}
 	const rawSegments = location.split('/').slice(1);
 	const segments = rawSegments.map(decodeSegment);
@@ -88,15 +99,22 @@ export function parseDocsUri(uri: string): ParsedDocsUri {
 		throw new Error('EINVAL: documentation product must not be empty');
 	}
 	if (segments.length === 1) {
-		return { kind: 'product', uri: `hf://docs/${encodeSegment(product)}`, product, path: '' };
+		return compactParsedUri({
+			kind: 'product',
+			uri: anchoredDocsUri(`hf://docs/${encodeSegment(product)}`, anchor),
+			product,
+			path: '',
+			anchor,
+		});
 	}
 	const path = segments.slice(1).join('/');
-	return {
+	return compactParsedUri({
 		kind: 'path',
-		uri: `hf://docs/${encodeSegment(product)}/${encodePath(path)}`,
+		uri: anchoredDocsUri(`hf://docs/${encodeSegment(product)}/${encodePath(path)}`, anchor),
 		product,
 		path,
-	};
+		anchor,
+	});
 }
 
 export class HfFsDocsProvider {
@@ -124,6 +142,7 @@ export class HfFsDocsProvider {
 
 	private async ls(params: HfFsParams): Promise<HfFsLsResult> {
 		const parsed = parseDocsUri(params.uri);
+		assertNoSectionAnchor(parsed, 'ls');
 		if (parsed.kind === 'root') {
 			if (params.recursive) {
 				const { glob, ...findParams } = params;
@@ -157,6 +176,12 @@ export class HfFsDocsProvider {
 			if (manifest.directories.has(parsed.path)) {
 				throw new Error(`EISDIR: ${parsed.uri} is a directory`);
 			}
+			const corrected = correctedDoubledProductPath(manifest, parsed.path);
+			if (corrected) {
+				throw new Error(
+					`EINVAL: the product appears twice in this documentation URI. Use: ${docsEntryUri(manifest.product, corrected, parsed.anchor)}`
+				);
+			}
 			throw new Error('ENOENT: document is not present in the current llms.txt manifest');
 		}
 		const { response } = await fetchWithProfile(entry.url, NETWORK_FETCH_PROFILES.hfDocs(), {
@@ -170,14 +195,22 @@ export class HfFsDocsProvider {
 			throw new Error(`Documentation fetch returned unsupported content type: ${contentType || 'unknown'}`);
 		}
 		const content = await response.text();
+		const section = parsed.anchor ? extractMarkdownSection(content, parsed.anchor) : undefined;
+		if (parsed.anchor && !section) {
+			throw new Error(
+				`ENOENT: documentation section '#${parsed.anchor}' was not found. Try: cat ${docsEntryUri(manifest.product, entry.path)}`
+			);
+		}
+		const selectedContent = section?.content ?? content;
 		const offset = params.offset ?? 0;
-		const range = sliceUtf8(content, offset, normalizedCatMaxBytes(params.max_bytes));
+		const range = sliceUtf8(selectedContent, offset, normalizedCatMaxBytes(params.max_bytes));
 		return {
 			uri: parsed.uri,
 			op: 'cat',
 			path: parsed.path,
 			content: range.content,
 			content_type: 'text/markdown',
+			...(section?.heading ? { section: section.heading } : {}),
 			bytes: range.bytes,
 			truncated: range.truncated,
 			...(range.truncated ? { truncation_reason: 'max_bytes', next_offset: range.nextOffset } : {}),
@@ -186,6 +219,7 @@ export class HfFsDocsProvider {
 
 	private async stat(params: HfFsParams): Promise<HfFsStatResult> {
 		const parsed = parseDocsUri(params.uri);
+		assertNoSectionAnchor(parsed, 'stat');
 		if (parsed.kind === 'root') {
 			return { uri: parsed.uri, op: 'stat', exists: true, type: 'dir', path: '' };
 		}
@@ -212,6 +246,7 @@ export class HfFsDocsProvider {
 
 	private async find(params: HfFsParams): Promise<HfFsLsResult> {
 		const parsed = parseDocsUri(params.uri);
+		assertNoSectionAnchor(parsed, 'find');
 		if (parsed.kind === 'path') {
 			const manifest = await this.requireManifest(parsed.product);
 			const exact = manifest.entries.get(parsed.path);
@@ -241,70 +276,106 @@ export class HfFsDocsProvider {
 
 	private async search(params: HfFsParams): Promise<HfFsLsResult> {
 		const parsed = parseDocsUri(params.uri);
-		if (parsed.kind === 'path') {
-			throw new Error('ENOTSUP: documentation search is supported only on hf://docs or a product root');
-		}
 		const query = params.query?.trim();
 		if (!query) {
 			throw new Error('EINVAL: search requires query');
 		}
 		const product = parsed.product;
 		const scopedManifest = product ? await this.requireManifest(product) : undefined;
+		if (parsed.anchor) {
+			throw new Error(
+				`EINVAL: search scope must not include a section anchor. Try: search ${stripAnchor(parsed.uri)} "${query}"`
+			);
+		}
+		if (scopedManifest && parsed.kind === 'path') {
+			this.validateSearchScope(scopedManifest, parsed, query);
+		}
 		if (params.entry_type !== undefined && params.entry_type !== 'file') {
 			return { uri: params.uri, op: 'search', entries: [] };
 		}
-		const limit = params.limit ?? 10;
+		const limit = params.limit ?? DEFAULT_SEARCH_LIMIT;
 		let entries: HfFsEntry[] = [];
 		try {
-			const hits = (await this.semanticSearch(query, product, limit)).map((hit) => ({
+			const hits = (await this.semanticSearch(query, product, MAX_SEARCH_LIMIT)).map((hit) => ({
 				product: hit.product,
-				title: hit.heading2 ?? hit.heading1 ?? hit.source_page_title,
+				title: hit.heading5 ?? hit.heading4 ?? hit.heading3 ?? hit.heading2 ?? hit.heading1 ?? hit.source_page_title,
 				text: hit.text,
 				url: hit.source_page_url,
 			}));
-			entries = await this.resolveSearchHits(hits);
+			entries = await this.resolveSearchHits(hits, parsed, limit);
 		} catch {
 			// Full-text search below is also the fallback for semantic API failures.
 		}
 		if (entries.length === 0) {
-			const hits = (await this.fullTextSearch(query, scopedManifest?.slug, limit)).map((hit) => ({
+			const hits = (await this.fullTextSearch(query, scopedManifest?.slug, MAX_SEARCH_LIMIT)).map((hit) => ({
 				product: product ?? productFromDocsUrl(hit.url) ?? '',
 				title: hit.hierarchy_lvl2 ?? hit.hierarchy_lvl1 ?? hit.hierarchy_lvl0 ?? 'Documentation',
 				text: hit.content ?? '',
 				url: hit.url,
 			}));
-			entries = await this.resolveSearchHits(hits);
+			entries = await this.resolveSearchHits(hits, parsed, limit);
 		}
 		return { uri: params.uri, op: 'search', entries };
 	}
 
 	private async resolveSearchHits(
-		hits: Array<{ product: string; title: string; text: string; url: string }>
+		hits: Array<{ product: string; title: string; text: string; url: string }>,
+		scope: ParsedDocsUri,
+		limit: number
 	): Promise<HfFsEntry[]> {
-		const entries: HfFsEntry[] = [];
+		const resolved: Array<{
+			entry: DocsManifestEntry;
+			manifest: DocsManifest;
+			hit: { product: string; title: string; text: string; url: string };
+			anchor?: string;
+		}> = [];
 		const seen = new Set<string>();
 		for (const hit of hits) {
 			if (!hit.product) continue;
 			const manifest = await this.getManifestForProduct(hit.product);
 			if (!manifest) continue;
-			const entry = resolveSearchEntry(manifest, hit.url, this.hubUrl);
+			if (scope.product && manifest.product !== scope.product && manifest.slug !== scope.product) continue;
+			const match = resolveSearchEntry(manifest, hit.url, this.hubUrl);
+			const entry = match?.entry;
+			if (!entry || !inSearchScope(entry.path, scope)) continue;
 			if (!entry || seen.has(`${manifest.product}/${entry.path}`)) continue;
 			seen.add(`${manifest.product}/${entry.path}`);
-			entries.push(
-				compactEntry({
-					type: 'file',
-					name: basename(entry.path),
-					path: `${manifest.product}/${entry.path}`,
-					uri: docsEntryUri(manifest.product, entry.path),
-					title: hit.title,
-					description: cleanExcerpt(hit.text),
-					library: manifest.product,
-					url: hit.url.startsWith('http') ? hit.url : new URL(hit.url, this.hubUrl).toString(),
-					content_type: 'text/markdown',
-				})
-			);
+			resolved.push({ entry, manifest, hit, ...(match.anchor ? { anchor: match.anchor } : {}) });
+			if (resolved.length >= limit) break;
 		}
-		return entries;
+		return resolved.map(({ entry, manifest, hit, anchor }, index) =>
+			compactEntry({
+				type: 'file',
+				name: basename(entry.path),
+				path: searchResultPath(manifest.product, entry.path, scope),
+				uri: docsEntryUri(manifest.product, entry.path, anchor),
+				title: hit.title,
+				anchor,
+				description: cleanExcerpt(
+					hit.text,
+					index === 0 ? PRIMARY_SEARCH_EXCERPT_LENGTH : SECONDARY_SEARCH_EXCERPT_LENGTH
+				),
+				library: manifest.product,
+				url: hit.url.startsWith('http') ? hit.url : new URL(hit.url, this.hubUrl).toString(),
+				content_type: 'text/markdown',
+			})
+		);
+	}
+
+	private validateSearchScope(manifest: DocsManifest, parsed: ParsedDocsUri, query: string): void {
+		if (manifest.entries.has(parsed.path) || manifest.directories.has(parsed.path)) return;
+		const parts = parsed.path.split('/');
+		if (parts[0] === manifest.product || parts[0] === manifest.slug) {
+			const corrected = parts.slice(1).join('/');
+			if (manifest.entries.has(corrected) || manifest.directories.has(corrected)) {
+				throw new Error(
+					`EINVAL: the product appears twice in this documentation URI. Use: ${docsEntryUri(manifest.product, corrected)}`
+				);
+			}
+		}
+		throw new Error(
+			`ENOENT: documentation search scope is not present in the current llms.txt manifest. Try: search hf://docs/${manifest.product} "${query}"`
+		);
 	}
 
 	private async semanticSearch(
@@ -518,6 +589,13 @@ function entriesResult(params: HfFsParams, source: HfFsEntry[], op: 'ls' | 'find
 		uri: params.uri,
 		op,
 		entries,
+		...(op === 'find' && entries.length === 0 && (params.name || params.path)
+			? {
+					warnings: [
+						'--name matches a basename; --path matches the complete path relative to the find root. Try --name "*term*" or --path "**/*term*".',
+					],
+				}
+			: {}),
 		...(truncated ? { truncated: true, truncation_reason: 'entry_limit' as const } : {}),
 	};
 }
@@ -529,7 +607,11 @@ function matchesFind(entry: HfFsEntry, basePath: string, params: HfFsParams): bo
 	return !params.path || picomatch(params.path, { dot: true })(relative);
 }
 
-function resolveSearchEntry(manifest: DocsManifest, value: string, hubUrl: string): DocsManifestEntry | undefined {
+function resolveSearchEntry(
+	manifest: DocsManifest,
+	value: string,
+	hubUrl: string
+): { entry: DocsManifestEntry; anchor?: string } | undefined {
 	let url: URL;
 	try {
 		url = new URL(value, hubUrl);
@@ -543,10 +625,12 @@ function resolveSearchEntry(manifest: DocsManifest, value: string, hubUrl: strin
 			? `/docs/${manifest.product}/`
 			: undefined;
 	if (!prefix) return undefined;
-	return (
+	const entry =
 		manifest.entries.get(decodePath(url.pathname.slice(prefix.length))) ??
-		manifest.aliases.get(searchAlias(url.pathname.slice(prefix.length)))
-	);
+		manifest.aliases.get(searchAlias(url.pathname.slice(prefix.length)));
+	if (!entry) return undefined;
+	const anchor = url.hash ? decodeAnchor(url.hash.slice(1)) : undefined;
+	return { entry, ...(anchor ? { anchor } : {}) };
 }
 
 function searchAlias(path: string): string {
@@ -573,15 +657,13 @@ function docsSlug(value: string): string | undefined {
 	return match?.[1];
 }
 
-function cleanExcerpt(value: string): string | undefined {
+function cleanExcerpt(value: string, maxLength: number): string | undefined {
 	const clean = value
 		.replace(/<[^>]*>/g, '')
 		.replace(/\s+/g, ' ')
 		.trim();
 	if (!clean) return undefined;
-	return clean.length <= MAX_SEARCH_EXCERPT_LENGTH
-		? clean
-		: `${clean.slice(0, MAX_SEARCH_EXCERPT_LENGTH - 1).trimEnd()}…`;
+	return clean.length <= maxLength ? clean : `${clean.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
 function validateDocsParams(params: HfFsParams): void {
@@ -619,8 +701,8 @@ function parentPath(path: string): string {
 	return slash === -1 ? '' : path.slice(0, slash);
 }
 
-function docsEntryUri(product: string, path: string): string {
-	return `hf://docs/${encodeSegment(product)}/${encodePath(path)}`;
+function docsEntryUri(product: string, path: string, anchor?: string): string {
+	return anchoredDocsUri(`hf://docs/${encodeSegment(product)}/${encodePath(path)}`, anchor);
 }
 
 function encodeSegment(value: string): string {
@@ -646,6 +728,63 @@ function decodeSegment(value: string): string {
 
 function decodePath(value: string): string {
 	return value.split('/').map(decodeSegment).join('/');
+}
+
+function decodeAnchor(value: string): string {
+	if (!value) throw new Error('EINVAL: documentation section anchor must not be empty');
+	let decoded: string;
+	try {
+		decoded = decodeURIComponent(value);
+	} catch {
+		throw new Error('EINVAL: documentation section anchor contains invalid percent-encoding');
+	}
+	if (
+		decoded.length > 500 ||
+		[...decoded].some((character) => {
+			const codePoint = character.codePointAt(0) ?? 0;
+			return codePoint < 32 || codePoint === 127;
+		})
+	) {
+		throw new Error('EINVAL: documentation section anchor is invalid');
+	}
+	return decoded;
+}
+
+function anchoredDocsUri(uri: string, anchor: string | undefined): string {
+	return anchor ? `${uri}#${encodeURIComponent(anchor)}` : uri;
+}
+
+function stripAnchor(uri: string): string {
+	const hash = uri.indexOf('#');
+	return hash === -1 ? uri : uri.slice(0, hash);
+}
+
+function compactParsedUri(uri: ParsedDocsUri): ParsedDocsUri {
+	return Object.fromEntries(Object.entries(uri).filter(([, value]) => value !== undefined)) as ParsedDocsUri;
+}
+
+function inSearchScope(path: string, scope: ParsedDocsUri): boolean {
+	return scope.kind !== 'path' || path === scope.path || path.startsWith(`${scope.path}/`);
+}
+
+function assertNoSectionAnchor(parsed: ParsedDocsUri, op: 'ls' | 'find' | 'stat'): void {
+	if (parsed.anchor) {
+		throw new Error(`EINVAL: section anchors apply only to documentation file reads, not ${op}`);
+	}
+}
+
+function searchResultPath(product: string, path: string, scope: ParsedDocsUri): string {
+	if (scope.kind === 'root') return `${product}/${path}`;
+	if (scope.kind === 'product') return path;
+	if (path === scope.path) return basename(path);
+	return path.slice(scope.path.length + 1);
+}
+
+function correctedDoubledProductPath(manifest: DocsManifest, path: string): string | undefined {
+	const parts = path.split('/');
+	if (parts[0] !== manifest.product && parts[0] !== manifest.slug) return undefined;
+	const corrected = parts.slice(1).join('/');
+	return manifest.entries.has(corrected) || manifest.directories.has(corrected) ? corrected : undefined;
 }
 
 function compactEntry(entry: HfFsEntry): HfFsEntry {

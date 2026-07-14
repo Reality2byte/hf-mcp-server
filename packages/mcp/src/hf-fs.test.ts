@@ -48,7 +48,7 @@ describe('HfFsTool config', () => {
 		expect(HF_FS_TOOL_CONFIG.description).toContain('Grammar; each token below is one args array element');
 		expect(HF_FS_TOOL_CONFIG.description).toContain('ls hf://models/trending');
 		expect(HF_FS_TOOL_CONFIG.description).toContain('ls hf://papers/trending');
-		expect(HF_FS_TOOL_CONFIG.description).toContain('ls hf://docs/PRODUCT');
+		expect(HF_FS_TOOL_CONFIG.description).toContain('ls hf://docs for products');
 		expect(HF_FS_TOOL_CONFIG.description).toContain('hf://README.md');
 	});
 });

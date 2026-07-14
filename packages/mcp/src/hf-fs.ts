@@ -102,6 +102,7 @@ function createHfFsOutputSchema() {
 		trending_score: z.number().optional(),
 		sdk: z.string().optional(),
 		title: z.string().optional(),
+		anchor: z.string().optional(),
 		description: z.string().optional(),
 		upvotes: z.number().optional(),
 		created_at: z.string().optional(),
@@ -122,6 +123,7 @@ function createHfFsOutputSchema() {
 		path: z.string().optional(),
 		content: z.string().optional(),
 		content_type: z.enum(['application/json', 'text/markdown']).optional(),
+		section: z.string().optional(),
 		bytes: z.number().optional(),
 		exists: z.boolean().optional(),
 		type: z.enum(HF_FS_STAT_TYPES).optional(),
@@ -303,6 +305,7 @@ export interface HfFsEntry {
 	trending_score?: number;
 	sdk?: string;
 	title?: string;
+	anchor?: string;
 	description?: string;
 	upvotes?: number;
 	created_at?: string;
@@ -326,6 +329,7 @@ export interface HfFsLsResult {
 	truncation_reason?: 'entry_limit' | 'limit' | 'provider_limit';
 	truncation_message?: string;
 	next_offset?: number;
+	warnings?: string[];
 }
 
 export interface HfFsCatResult {
@@ -334,6 +338,7 @@ export interface HfFsCatResult {
 	path: string;
 	content: string;
 	content_type?: HfFsContentType;
+	section?: string;
 	bytes: number;
 	truncated: boolean;
 	truncation_reason?: 'max_bytes';
@@ -1180,6 +1185,7 @@ function renderCatMarkdown(result: HfFsCatResult): string {
 		``,
 		`URI: ${inlineCode(result.uri)}`,
 		`Path: ${inlineCode(result.path)}`,
+		...(result.section ? [`Section: ${inlineCode(result.section)}`] : []),
 		...(result.content_type ? [`Content-Type: ${inlineCode(result.content_type)}`] : []),
 		`Bytes: ${result.bytes.toString()}`,
 		``,
@@ -1252,6 +1258,7 @@ function entryDetails(entry: HfFsEntry): string {
 		entry.trending_score === undefined ? undefined : `trending score=${entry.trending_score.toString()}`,
 		entry.sdk ? `sdk=${entry.sdk}` : undefined,
 		entry.title ? `title=${entry.title}` : undefined,
+		entry.anchor ? `anchor=${entry.anchor}` : undefined,
 		entry.description
 			? entry.type === 'paper'
 				? `summary=${boundedInlineText(entry.description)}`

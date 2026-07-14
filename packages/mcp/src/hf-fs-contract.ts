@@ -49,8 +49,8 @@ TYPE = file|dir|repo|bucket|collection|paper|link.
 Type aliases: f=file, d=dir, l=link, model|dataset|space=repo.
 SORT = createdAt|downloads|likes|lastModified|likes30d|trendingScore|mainSize|id|trending|upvotes.
 URI starts with hf://. QUERY and GLOB are each one string token.
-Search URI: hf://models|datasets|spaces[/OWNER], hf://collections[/OWNER], hf://docs[/PRODUCT], or exactly hf://papers; not hf://.
-Documentation: ls hf://docs, then ls hf://docs/PRODUCT to discover the current manifest version; cat or find versioned .md paths, or search hf://docs/PRODUCT QUERY.
+Search URI: hf://models|datasets|spaces[/OWNER], hf://collections[/OWNER], any hf://docs scope, or exactly hf://papers; not hf://.
+Documentation: ls hf://docs for products; search any docs scope; use returned hf:// URIs verbatim.
 Trending listings: ls hf://models/trending, hf://datasets/trending, or hf://spaces/trending. They return up to 20 entries.
 Trending paths imply trending order; --sort trending|trendingScore is redundant but valid.
 Trending papers: ls hf://papers/trending.
@@ -218,11 +218,11 @@ function validateParsedParams(params: HfFsParams): void {
 	}
 	if (params.op === 'search' && !validSearchUri(params.uri)) {
 		throw new Error(
-			'EINVAL: search requires hf://models|datasets|spaces[/OWNER], hf://collections[/OWNER], or exactly hf://papers'
+			'EINVAL: search requires hf://models|datasets|spaces[/OWNER], hf://collections[/OWNER], any hf://docs scope, or exactly hf://papers'
 		);
 	}
 	if (params.entry_type !== undefined && !HF_FS_ENTRY_TYPES.includes(params.entry_type)) {
-		throw new Error(`EINVAL: invalid entry type: ${params.entry_type}`);
+		throw new Error(`EINVAL: invalid entry type: ${params.entry_type}. Use --type file for files.`);
 	}
 	if (params.sort !== undefined && !HF_FS_SEARCH_SORTS.includes(params.sort)) {
 		throw new Error(`EINVAL: invalid sort: ${params.sort}`);
@@ -263,7 +263,7 @@ function validSearchUri(uri: string): boolean {
 	if (uri === 'hf://papers') {
 		return true;
 	}
-	if (uri === 'hf://docs' || /^hf:\/\/docs\/[^/]+$/.test(uri)) {
+	if (uri === 'hf://docs' || uri.startsWith('hf://docs/')) {
 		return true;
 	}
 	return /^hf:\/\/(?:models|datasets|spaces|collections)(?:\/[^/]+)?$/.test(uri) && !isRepoTrendingUri(uri);
