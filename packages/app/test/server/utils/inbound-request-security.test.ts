@@ -70,6 +70,48 @@ describe('validateInboundRequest', () => {
 		).toEqual({ allowed: true });
 	});
 
+	it('allows origins matching configured subdomain wildcards', () => {
+		process.env.MCP_ALLOWED_HOSTS = 'mcp.example.com';
+		process.env.CORS_ALLOWED_ORIGINS = 'https://*.example.com';
+
+		expect(
+			validateInboundRequest(
+				request({
+					host: 'mcp.example.com',
+					origin: 'https://app.example.com',
+				})
+			)
+		).toEqual({ allowed: true });
+	});
+
+	it('honors wildcard origin scheme and subdomain constraints', () => {
+		process.env.MCP_ALLOWED_HOSTS = 'mcp.example.com';
+		process.env.CORS_ALLOWED_ORIGINS = 'https://*.example.com';
+
+		expect(
+			validateInboundRequest(
+				request({
+					host: 'mcp.example.com',
+					origin: 'http://app.example.com',
+				})
+			)
+		).toEqual({
+			allowed: false,
+			reason: 'Origin http://app.example.com is not allowed',
+		});
+		expect(
+			validateInboundRequest(
+				request({
+					host: 'mcp.example.com',
+					origin: 'https://example.com',
+				})
+			)
+		).toEqual({
+			allowed: false,
+			reason: 'Origin https://example.com is not allowed',
+		});
+	});
+
 	it('allows origins whose host is in MCP_ALLOWED_HOSTS', () => {
 		process.env.MCP_ALLOWED_HOSTS = 'mcp.example.com';
 
