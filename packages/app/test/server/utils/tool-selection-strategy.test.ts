@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
+	ANONYMOUS_BUILTIN_TOOL_IDS,
 	ToolSelectionStrategy,
 	ToolSelectionMode,
 	type ToolSelectionContext,
@@ -20,8 +21,10 @@ import {
 	TOOL_ID_GROUPS,
 } from '@llmindset/hf-mcp';
 import { extractAuthBouquetAndMix } from '../../../src/server/utils/auth-utils.js';
-import { normalizeBuiltInTools } from '../../../src/shared/tool-normalizer.js';
+import { normalizeBuiltInTools, withoutLegacyDocTools } from '../../../src/shared/tool-normalizer.js';
 import { BOUQUETS } from '../../../src/shared/bouquet-presets.js';
+
+const withHfFs = (toolIds: readonly string[]): string[] => [...new Set([...toolIds, HF_FS_TOOL_ID])];
 
 describe('extractBouquetAndMix', () => {
 	const originalDefaultHfToken = process.env.DEFAULT_HF_TOKEN;
@@ -202,16 +205,27 @@ describe('ToolSelectionStrategy', () => {
 	});
 
 	describe('Bouquet Override (Highest Precedence)', () => {
-		it('should hide authenticated tools from anonymous bouquet users', async () => {
+		it('always enables hf_fs for every bouquet', async () => {
+			for (const bouquet of Object.keys(BOUQUETS)) {
+				const result = await strategy.selectTools({
+					headers: { 'x-mcp-bouquet': bouquet },
+					hfToken: 'test-token',
+				});
+
+				expect(result.enabledToolIds, bouquet).toContain(HF_FS_TOOL_ID);
+			}
+		});
+
+		it('should restrict anonymous bouquet users to the anonymous allowlist', async () => {
 			const context: ToolSelectionContext = {
-				headers: { 'x-mcp-bouquet': 'hf_api' },
+				headers: { 'x-mcp-bouquet': 'all' },
 			};
 
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.BOUQUET_OVERRIDE);
-			expect(TOOL_ID_GROUPS.hf_api).toContain(CREATE_REPO_TOOL_ID);
-			expect(result.enabledToolIds).not.toContain(CREATE_REPO_TOOL_ID);
+			expect(result.enabledToolIds).toEqual([...ANONYMOUS_BUILTIN_TOOL_IDS]);
+			expect(result.enabledToolIds).toContain(HF_FS_TOOL_ID);
 		});
 
 		it('should use bouquet override for search bouquet', async () => {
@@ -223,7 +237,7 @@ describe('ToolSelectionStrategy', () => {
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.BOUQUET_OVERRIDE);
-			expect(result.enabledToolIds).toEqual(TOOL_ID_GROUPS.search);
+			expect(result.enabledToolIds).toEqual(withHfFs(TOOL_ID_GROUPS.search));
 			expect(result.reason).toBe('Bouquet override: search');
 			expect(result.baseSettings).toBeUndefined();
 			expect(result.mixedBouquet).toBeUndefined();
@@ -238,7 +252,7 @@ describe('ToolSelectionStrategy', () => {
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.BOUQUET_OVERRIDE);
-			expect(result.enabledToolIds).toEqual(TOOL_ID_GROUPS.hf_api);
+			expect(result.enabledToolIds).toEqual(withHfFs(TOOL_ID_GROUPS.hf_api));
 			expect(result.reason).toBe('Bouquet override: hf_api');
 		});
 
@@ -251,7 +265,7 @@ describe('ToolSelectionStrategy', () => {
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.BOUQUET_OVERRIDE);
-			expect(result.enabledToolIds).toEqual(TOOL_ID_GROUPS.spaces);
+			expect(result.enabledToolIds).toEqual(withHfFs(TOOL_ID_GROUPS.spaces));
 			expect(result.reason).toBe('Bouquet override: spaces');
 		});
 
@@ -277,7 +291,12 @@ describe('ToolSelectionStrategy', () => {
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.BOUQUET_OVERRIDE);
-			expect(result.enabledToolIds).toEqual([...TOOL_ID_GROUPS.sandbox]);
+			expect(result.enabledToolIds).toEqual([
+				HF_SANDBOX_TOOL_ID,
+				HF_SANDBOX_EXEC_TOOL_ID,
+				HF_SANDBOX_FS_TOOL_ID,
+				HF_FS_TOOL_ID,
+			]);
 			expect(result.reason).toBe('Bouquet override: sandbox');
 		});
 
@@ -304,7 +323,7 @@ describe('ToolSelectionStrategy', () => {
 
 			// Should fall through to fallback since no valid bouquet or user settings
 			expect(result.mode).toBe(ToolSelectionMode.FALLBACK);
-			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(ALL_BUILTIN_TOOL_IDS));
+			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(withoutLegacyDocTools(ALL_BUILTIN_TOOL_IDS)));
 		});
 
 		it('should prefer bouquet over mix when both are present', async () => {
@@ -325,7 +344,7 @@ describe('ToolSelectionStrategy', () => {
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.BOUQUET_OVERRIDE);
-			expect(result.enabledToolIds).toEqual(TOOL_ID_GROUPS.search);
+			expect(result.enabledToolIds).toEqual(withHfFs(TOOL_ID_GROUPS.search));
 			expect(result.reason).toBe('Bouquet override: search');
 		});
 	});
@@ -354,7 +373,7 @@ describe('ToolSelectionStrategy', () => {
 			const expectedTools = normalizeBuiltInTools([
 				...new Set([...userSettings.builtInTools, ...TOOL_ID_GROUPS.hf_api]),
 			]);
-			expect(result.enabledToolIds).toEqual(expectedTools);
+			expect(result.enabledToolIds).toEqual(withHfFs(expectedTools));
 		});
 
 		it('should mix sandbox tool with user settings', async () => {
@@ -377,6 +396,7 @@ describe('ToolSelectionStrategy', () => {
 				HF_SANDBOX_TOOL_ID,
 				HF_SANDBOX_EXEC_TOOL_ID,
 				HF_SANDBOX_FS_TOOL_ID,
+				HF_FS_TOOL_ID,
 			]);
 		});
 
@@ -398,7 +418,7 @@ describe('ToolSelectionStrategy', () => {
 			expect(result.reason).toBe('User settings + mix(search)');
 
 			const expectedTools = [...new Set([...userSettings.builtInTools, ...TOOL_ID_GROUPS.search])];
-			expect(result.enabledToolIds).toEqual(expectedTools);
+			expect(result.enabledToolIds).toEqual(withHfFs(expectedTools));
 		});
 
 		it('should mix files tool with user settings', async () => {
@@ -464,7 +484,7 @@ describe('ToolSelectionStrategy', () => {
 			const expectedTools = normalizeBuiltInTools([
 				...new Set([...userSettings.builtInTools, ...TOOL_ID_GROUPS.hf_api, ...TOOL_ID_GROUPS.search]),
 			]);
-			expect(result.enabledToolIds).toEqual(expectedTools);
+			expect(result.enabledToolIds).toEqual(withHfFs(expectedTools));
 		});
 
 		it('should ignore mix when no user settings available', async () => {
@@ -477,7 +497,9 @@ describe('ToolSelectionStrategy', () => {
 
 			// Should fall through to fallback since no user settings to mix with
 			expect(result.mode).toBe(ToolSelectionMode.FALLBACK);
-			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(ALL_BUILTIN_TOOL_IDS));
+			expect(result.enabledToolIds).toEqual(
+				normalizeBuiltInTools([...withoutLegacyDocTools(ALL_BUILTIN_TOOL_IDS), ...TOOL_ID_GROUPS.hf_api])
+			);
 		});
 
 		it('should ignore invalid mix bouquet names', async () => {
@@ -496,14 +518,14 @@ describe('ToolSelectionStrategy', () => {
 
 			// Should use user settings without mixing
 			expect(result.mode).toBe(ToolSelectionMode.INTERNAL_API);
-			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(userSettings.builtInTools));
+			expect(result.enabledToolIds).toEqual(withHfFs(normalizeBuiltInTools(userSettings.builtInTools)));
 		});
 	});
 
 	describe('User Settings Mode (Third Precedence)', () => {
-		it('should hide authenticated tools from anonymous user settings', async () => {
+		it('should restrict anonymous user settings to the anonymous allowlist', async () => {
 			const userSettings: AppSettings = {
-				builtInTools: [CREATE_REPO_TOOL_ID, REPO_SEARCH_TOOL_ID],
+				builtInTools: [CREATE_REPO_TOOL_ID, REPO_SEARCH_TOOL_ID, HF_SANDBOX_TOOL_ID],
 				spaceTools: [],
 			};
 
@@ -515,7 +537,7 @@ describe('ToolSelectionStrategy', () => {
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.INTERNAL_API);
-			expect(result.enabledToolIds).toEqual([REPO_SEARCH_TOOL_ID]);
+			expect(result.enabledToolIds).toEqual([REPO_SEARCH_TOOL_ID, HF_FS_TOOL_ID]);
 		});
 
 		it('should auto-enable sandbox exec when sandbox is enabled in user settings', async () => {
@@ -533,7 +555,12 @@ describe('ToolSelectionStrategy', () => {
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.INTERNAL_API);
-			expect(result.enabledToolIds).toEqual([HF_SANDBOX_TOOL_ID, HF_SANDBOX_EXEC_TOOL_ID, HF_SANDBOX_FS_TOOL_ID]);
+			expect(result.enabledToolIds).toEqual([
+				HF_SANDBOX_TOOL_ID,
+				HF_FS_TOOL_ID,
+				HF_SANDBOX_EXEC_TOOL_ID,
+				HF_SANDBOX_FS_TOOL_ID,
+			]);
 		});
 
 		it('should use provided user settings in internal API mode', async () => {
@@ -551,7 +578,7 @@ describe('ToolSelectionStrategy', () => {
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.INTERNAL_API);
-			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(userSettings.builtInTools));
+			expect(result.enabledToolIds).toEqual(withHfFs(normalizeBuiltInTools(userSettings.builtInTools)));
 			expect(result.reason).toBe('Internal API user settings');
 			expect(result.baseSettings).toEqual(userSettings);
 		});
@@ -590,7 +617,7 @@ describe('ToolSelectionStrategy', () => {
 			const result = await externalStrategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.EXTERNAL_API);
-			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(userSettings.builtInTools));
+			expect(result.enabledToolIds).toEqual(withHfFs(normalizeBuiltInTools(userSettings.builtInTools)));
 			expect(result.reason).toBe('External API user settings');
 		});
 
@@ -664,7 +691,12 @@ describe('ToolSelectionStrategy', () => {
 			const result = await externalStrategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.EXTERNAL_API);
-			expect(result.enabledToolIds).toEqual([HF_SANDBOX_TOOL_ID, HF_SANDBOX_EXEC_TOOL_ID, HF_SANDBOX_FS_TOOL_ID]);
+			expect(result.enabledToolIds).toEqual([
+				HF_SANDBOX_TOOL_ID,
+				HF_FS_TOOL_ID,
+				HF_SANDBOX_EXEC_TOOL_ID,
+				HF_SANDBOX_FS_TOOL_ID,
+			]);
 			expect(result.reason).toBe('External API user settings');
 		});
 	});
@@ -679,7 +711,7 @@ describe('ToolSelectionStrategy', () => {
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.FALLBACK);
-			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(ALL_BUILTIN_TOOL_IDS));
+			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(withoutLegacyDocTools(ALL_BUILTIN_TOOL_IDS)));
 			expect(result.reason).toBe('Fallback - no settings available');
 			expect(result.baseSettings).toBeUndefined();
 		});
@@ -693,7 +725,15 @@ describe('ToolSelectionStrategy', () => {
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.FALLBACK);
-			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(ALL_BUILTIN_TOOL_IDS));
+			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(withoutLegacyDocTools(ALL_BUILTIN_TOOL_IDS)));
+		});
+
+		it('should restrict anonymous fallback to the anonymous allowlist', async () => {
+			const result = await strategy.selectTools({ headers: null });
+
+			expect(result.mode).toBe(ToolSelectionMode.FALLBACK);
+			expect(result.enabledToolIds).toEqual([...ANONYMOUS_BUILTIN_TOOL_IDS]);
+			expect(result.enabledToolIds).toContain(HF_FS_TOOL_ID);
 		});
 
 		it('should apply sandbox mix in fallback mode', async () => {
@@ -707,7 +747,7 @@ describe('ToolSelectionStrategy', () => {
 			expect(result.mode).toBe(ToolSelectionMode.FALLBACK);
 			expect(result.enabledToolIds).toEqual(
 				normalizeBuiltInTools([
-					...ALL_BUILTIN_TOOL_IDS,
+					...withoutLegacyDocTools(ALL_BUILTIN_TOOL_IDS),
 					HF_SANDBOX_TOOL_ID,
 					HF_SANDBOX_EXEC_TOOL_ID,
 					HF_SANDBOX_FS_TOOL_ID,
@@ -733,7 +773,7 @@ describe('ToolSelectionStrategy', () => {
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.INTERNAL_API);
-			expect(result.enabledToolIds).toEqual([]);
+			expect(result.enabledToolIds).toEqual([HF_FS_TOOL_ID]);
 			expect(result.baseSettings).toEqual(userSettings);
 		});
 
@@ -752,7 +792,7 @@ describe('ToolSelectionStrategy', () => {
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.MIX);
-			expect(result.enabledToolIds).toEqual(TOOL_ID_GROUPS.search);
+			expect(result.enabledToolIds).toEqual(withHfFs(TOOL_ID_GROUPS.search));
 			expect(result.mixedBouquet).toEqual(['search']);
 		});
 
@@ -776,7 +816,11 @@ describe('ToolSelectionStrategy', () => {
 				expect(result.mixedBouquet).toEqual([bouquetName]);
 
 				const expectedTools = [...new Set([...userSettings.builtInTools, ...bouquetConfig.builtInTools])];
-				expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(expectedTools));
+				const expectedWithDependencies =
+					bouquetName === 'sandbox'
+						? [...expectedTools, HF_FS_TOOL_ID, HF_SANDBOX_EXEC_TOOL_ID, HF_SANDBOX_FS_TOOL_ID]
+						: withHfFs(expectedTools);
+				expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(expectedWithDependencies));
 			}
 		});
 
@@ -847,7 +891,7 @@ describe('ToolSelectionStrategy', () => {
 			}
 		});
 
-		it('should not auto-enable hf_doc_fetch when SEARCH_ENABLES_FETCH is not set', async () => {
+		it('should remove legacy docs tools from API settings when SEARCH_ENABLES_FETCH is not set', async () => {
 			delete process.env.SEARCH_ENABLES_FETCH;
 
 			const userSettings: AppSettings = {
@@ -863,11 +907,12 @@ describe('ToolSelectionStrategy', () => {
 
 			const result = await strategy.selectTools(context);
 
-			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(['hf_doc_search', 'hf_model_search']));
+			expect(result.enabledToolIds).toEqual([REPO_SEARCH_TOOL_ID, HF_FS_TOOL_ID]);
+			expect(result.enabledToolIds).not.toContain('hf_doc_search');
 			expect(result.enabledToolIds).not.toContain('hf_doc_fetch');
 		});
 
-		it('should not auto-enable hf_doc_fetch when SEARCH_ENABLES_FETCH is false', async () => {
+		it('should remove legacy docs tools from API settings when SEARCH_ENABLES_FETCH is false', async () => {
 			process.env.SEARCH_ENABLES_FETCH = 'false';
 
 			const userSettings: AppSettings = {
@@ -883,11 +928,12 @@ describe('ToolSelectionStrategy', () => {
 
 			const result = await strategy.selectTools(context);
 
-			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(['hf_doc_search', 'hf_model_search']));
+			expect(result.enabledToolIds).toEqual([REPO_SEARCH_TOOL_ID, HF_FS_TOOL_ID]);
+			expect(result.enabledToolIds).not.toContain('hf_doc_search');
 			expect(result.enabledToolIds).not.toContain('hf_doc_fetch');
 		});
 
-		it('should auto-enable hf_doc_fetch when SEARCH_ENABLES_FETCH=true and hf_doc_search is enabled', async () => {
+		it('should remove legacy docs tools from API settings when SEARCH_ENABLES_FETCH=true', async () => {
 			process.env.SEARCH_ENABLES_FETCH = 'true';
 
 			const userSettings: AppSettings = {
@@ -903,10 +949,9 @@ describe('ToolSelectionStrategy', () => {
 
 			const result = await strategy.selectTools(context);
 
-			expect(result.enabledToolIds).toContain('hf_doc_search');
-			expect(result.enabledToolIds).toContain('hf_doc_fetch');
-			expect(result.enabledToolIds).toContain(REPO_SEARCH_TOOL_ID);
-			expect(result.enabledToolIds).toHaveLength(3);
+			expect(result.enabledToolIds).toEqual([REPO_SEARCH_TOOL_ID, HF_FS_TOOL_ID]);
+			expect(result.enabledToolIds).not.toContain('hf_doc_search');
+			expect(result.enabledToolIds).not.toContain('hf_doc_fetch');
 		});
 
 		it('should not add hf_doc_fetch when hf_doc_search is not enabled', async () => {
@@ -927,10 +972,10 @@ describe('ToolSelectionStrategy', () => {
 
 			expect(result.enabledToolIds).not.toContain('hf_doc_search');
 			expect(result.enabledToolIds).not.toContain('hf_doc_fetch');
-			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(['hf_model_search', 'hf_dataset_search']));
+			expect(result.enabledToolIds).toEqual(withHfFs(normalizeBuiltInTools(['hf_model_search', 'hf_dataset_search'])));
 		});
 
-		it('should not duplicate hf_doc_fetch if already enabled', async () => {
+		it('should remove both legacy docs tools when both are enabled by API settings', async () => {
 			process.env.SEARCH_ENABLES_FETCH = 'true';
 
 			const userSettings: AppSettings = {
@@ -946,10 +991,9 @@ describe('ToolSelectionStrategy', () => {
 
 			const result = await strategy.selectTools(context);
 
-			expect(result.enabledToolIds).toEqual(
-				normalizeBuiltInTools(['hf_doc_search', 'hf_doc_fetch', 'hf_model_search'])
-			);
-			expect(result.enabledToolIds.filter((id) => id === 'hf_doc_fetch')).toHaveLength(1);
+			expect(result.enabledToolIds).toEqual([REPO_SEARCH_TOOL_ID, HF_FS_TOOL_ID]);
+			expect(result.enabledToolIds).not.toContain('hf_doc_search');
+			expect(result.enabledToolIds).not.toContain('hf_doc_fetch');
 		});
 
 		it('should work with bouquet override', async () => {
@@ -989,7 +1033,7 @@ describe('ToolSelectionStrategy', () => {
 			expect(result.enabledToolIds).toContain(REPO_SEARCH_TOOL_ID);
 		});
 
-		it('should work with fallback mode when all tools are enabled', async () => {
+		it('should omit legacy docs tools from fallback mode without a bouquet', async () => {
 			process.env.SEARCH_ENABLES_FETCH = 'true';
 
 			const context: ToolSelectionContext = {
@@ -1000,9 +1044,8 @@ describe('ToolSelectionStrategy', () => {
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.FALLBACK);
-			// In fallback mode, all tools are enabled, so both should already be there
-			expect(result.enabledToolIds).toContain('hf_doc_search');
-			expect(result.enabledToolIds).toContain('hf_doc_fetch');
+			expect(result.enabledToolIds).not.toContain('hf_doc_search');
+			expect(result.enabledToolIds).not.toContain('hf_doc_fetch');
 		});
 	});
 
@@ -1019,7 +1062,7 @@ describe('ToolSelectionStrategy', () => {
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.BOUQUET_OVERRIDE);
-			expect(result.enabledToolIds).toEqual(TOOL_ID_GROUPS.search);
+			expect(result.enabledToolIds).toEqual(withHfFs(TOOL_ID_GROUPS.search));
 			expect(result.reason).toBe('Bouquet override: search + 2 gradio endpoints');
 			expect(result.gradioSpaceTools).toBeDefined();
 			expect(result.gradioSpaceTools).toHaveLength(2);

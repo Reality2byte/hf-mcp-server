@@ -57,6 +57,47 @@ describe('parseHfFsRequest', () => {
 			uri: 'hf://datasets/org',
 			query: 'speech',
 		});
+		expect(
+			parseHfFsRequest({
+				cmd: 'search',
+				args: ['hf://docs/transformers', 'pipeline loading'],
+			}).params
+		).toEqual({
+			op: 'search',
+			uri: 'hf://docs/transformers',
+			query: 'pipeline loading',
+		});
+		expect(
+			parseHfFsRequest({
+				cmd: 'search',
+				args: ['hf://docs/transformers/v5.13.1/internal/generation_utils.md', 'TextIteratorStreamer'],
+			}).params
+		).toEqual({
+			op: 'search',
+			uri: 'hf://docs/transformers/v5.13.1/internal/generation_utils.md',
+			query: 'TextIteratorStreamer',
+		});
+		expect(
+			parseHfFsRequest({
+				cmd: 'search',
+				args: ['hf://spaces', 'python execution', '--kind', 'mcp', '--tag', 'gradio', '--tag', 'region:us'],
+			}).params
+		).toEqual({
+			op: 'search',
+			uri: 'hf://spaces',
+			query: 'python execution',
+			space_kind: 'mcp',
+			tags: ['gradio', 'region:us'],
+		});
+	});
+
+	it('rejects Space semantic filters on unsupported scopes', () => {
+		expect(() =>
+			parseHfFsRequest({ cmd: 'search', args: ['hf://spaces/alice', 'demo', '--kind', 'mcp'] })
+		).toThrow('--tag and --kind are supported only with search hf://spaces');
+		expect(() => parseHfFsRequest({ cmd: 'search', args: ['hf://spaces', 'demo', '--kind', 'agent'] })).toThrow(
+			'Supported kinds: mcp'
+		);
 	});
 
 	it('softens redundant trending arguments with warnings', () => {

@@ -163,7 +163,7 @@ const PRESET_META: Array<Omit<BouquetPreset, 'builtInTools'>> = [
 	{
 		key: 'files',
 		label: 'Hub Files',
-		description: 'List, read, and inspect Hub repository and bucket files via hf:// URIs.',
+		description: 'Browse Hub repos, buckets and documentation.',
 		category: 'core',
 		supportsBouquet: true,
 		supportsMix: true,
@@ -316,7 +316,7 @@ const TOOL_DESCRIPTIONS: Record<string, Omit<ConfigEntryDescription, 'id' | 'kin
 	},
 	hf_fs: {
 		label: 'HF Filesystem',
-		description: 'List, read, or inspect Hub repository and bucket files via hf:// URIs.',
+		description: 'Browse, search, and read Hub resources and documentation.',
 	},
 	use_space: {
 		label: 'Use Space',

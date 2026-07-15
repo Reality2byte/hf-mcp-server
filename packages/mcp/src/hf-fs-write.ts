@@ -3,24 +3,21 @@ import { deleteFile, uploadFile } from '@huggingface/hub';
 import type { CommitOutput } from '@huggingface/hub';
 import { z } from 'zod';
 import { type ParsedRepoHfUri, parseHfFsUri } from './hf-fs.js';
+import {
+	HF_FS_WRITE_DESCRIPTION,
+	HF_FS_WRITE_OPERATIONS,
+	HF_FS_WRITE_SCHEMA,
+	type HfFsWriteOperation,
+	type HfFsWriteParams,
+	type HfFsWriteRequest,
+	parseHfFsWriteRequest,
+} from './hf-fs-write-contract.js';
 import { escapeMarkdown, formatBytes, NO_TOKEN_INSTRUCTIONS } from './utilities.js';
-
-const HF_FS_WRITE_OPERATIONS = ['put', 'rm'] as const;
 
 export const HF_FS_WRITE_TOOL_ID = 'hf_fs_write' as const;
 
 function createHfFsWriteSchema() {
-	return z.object({
-		op: z.enum(HF_FS_WRITE_OPERATIONS),
-		uri: z
-			.string()
-			.min(1)
-			.describe('Hugging Face file URI in the form hf://models|datasets|spaces|buckets/OWNER/NAME/PATH.'),
-		text: z.string().optional().describe('Text content to write. Use only with op=put.'),
-		base64: z.string().optional().describe('Base64-encoded file bytes to write. Use only with op=put.'),
-		message: z.string().min(1).optional().describe('Optional commit message/title.'),
-		branch: z.string().min(1).optional().describe('Optional target branch for repo writes. Not supported for buckets.'),
-	});
+	return HF_FS_WRITE_SCHEMA;
 }
 
 function createHfFsWriteOutputSchema() {
@@ -39,13 +36,14 @@ function createHfFsWriteOutputSchema() {
 				url: z.string(),
 			})
 			.optional(),
+		pull_request_url: z.string().optional(),
 	});
 }
 
 export const HF_FS_WRITE_TOOL_CONFIG = {
 	name: HF_FS_WRITE_TOOL_ID,
 	title: 'Hugging Face File Writes',
-	description: 'Write or remove files on Hugging Face',
+	description: HF_FS_WRITE_DESCRIPTION,
 	schema: createHfFsWriteSchema(),
 	outputSchema: createHfFsWriteOutputSchema(),
 	annotations: {
@@ -61,8 +59,7 @@ type HfFsWriteToolConfig = Omit<typeof HF_FS_WRITE_TOOL_CONFIG, 'description' | 
 	schema: HfFsWriteToolSchema;
 };
 
-export type HfFsWriteParams = z.input<typeof HF_FS_WRITE_TOOL_CONFIG.schema>;
-export type HfFsWriteOperation = (typeof HF_FS_WRITE_OPERATIONS)[number];
+export type { HfFsWriteOperation, HfFsWriteParams, HfFsWriteRequest } from './hf-fs-write-contract.js';
 
 export interface HfFsWriteResult {
 	uri: string;
@@ -77,6 +74,7 @@ export interface HfFsWriteResult {
 		oid: string;
 		url: string;
 	};
+	pull_request_url?: string;
 }
 
 export class HfFsWriteTool {
@@ -91,15 +89,16 @@ export class HfFsWriteTool {
 	static createToolConfig(): HfFsWriteToolConfig {
 		return {
 			...HF_FS_WRITE_TOOL_CONFIG,
-			description: 'Write or remove files in a Hugging Face repo or bucket.',
+			description: HF_FS_WRITE_DESCRIPTION,
 			schema: createHfFsWriteSchema(),
 		};
 	}
 
-	async run(params: HfFsWriteParams): Promise<HfFsWriteResult> {
+	async run(request: HfFsWriteRequest | HfFsWriteParams): Promise<HfFsWriteResult> {
 		if (!this.accessToken) {
 			throw new Error(NO_TOKEN_INSTRUCTIONS);
 		}
+		const params = 'cmd' in request ? parseHfFsWriteRequest(request) : request;
 
 		switch (params.op) {
 			case 'put':
@@ -115,6 +114,7 @@ export class HfFsWriteTool {
 		const branch = resolveBranch(params, parsed);
 		const content = contentFromParams(params);
 		const message = params.message ?? `Put ${parsed.path}`;
+		validateCommitOptions(params, parsed);
 		const output = await uploadFile({
 			accessToken,
 			repo: parsed.repo,
@@ -123,7 +123,10 @@ export class HfFsWriteTool {
 				content: blobFromBytes(content),
 			},
 			commitTitle: message,
+			...(params.description !== undefined ? { commitDescription: params.description } : {}),
 			...(branch ? { branch } : {}),
+			...(params.create_pr ? { isPullRequest: true } : {}),
+			...(params.parent_commit ? { parentCommit: params.parent_commit } : {}),
 			...(this.hubUrl ? { hubUrl: this.hubUrl } : {}),
 		});
 
@@ -139,12 +142,16 @@ export class HfFsWriteTool {
 		const parsed = parseWriteUri(params);
 		const branch = resolveBranch(params, parsed);
 		const message = params.message ?? `Remove ${parsed.path}`;
+		validateCommitOptions(params, parsed);
 		const output = await deleteFile({
 			accessToken,
 			repo: parsed.repo,
 			path: parsed.path,
 			commitTitle: message,
+			...(params.description !== undefined ? { commitDescription: params.description } : {}),
 			...(branch ? { branch } : {}),
+			...(params.create_pr ? { isPullRequest: true } : {}),
+			...(params.parent_commit ? { parentCommit: params.parent_commit } : {}),
 			...(this.hubUrl ? { hubUrl: this.hubUrl } : {}),
 		});
 
@@ -177,6 +184,9 @@ export function formatHfFsWriteMarkdown(result: HfFsWriteResult): string {
 	if (result.commit) {
 		lines.push(`Commit: [${escapeMarkdown(result.commit.oid)}](${escapeMarkdown(result.commit.url)})`);
 	}
+	if (result.pull_request_url) {
+		lines.push(`Pull request: ${escapeMarkdown(result.pull_request_url)}`);
+	}
 	return lines.join('\n');
 }
 
@@ -207,24 +217,26 @@ function resolveBranch(params: HfFsWriteParams, parsed: ParsedRepoHfUri): string
 
 function contentFromParams(params: HfFsWriteParams): Uint8Array {
 	if (params.op !== 'put') {
-		throw new Error('text and base64 are only valid with op=put.');
+		throw new Error('content is only valid with put.');
 	}
-
-	const hasText = params.text !== undefined;
-	const hasBase64 = params.base64 !== undefined;
-	if (hasText === hasBase64) {
-		throw new Error('put requires exactly one of text or base64.');
+	if (params.content === undefined) {
+		throw new Error('put requires content.');
 	}
-
-	if (hasText) {
-		return new TextEncoder().encode(params.text);
-	}
-	return decodeBase64(params.base64 ?? '');
+	return params.base64 ? decodeBase64(params.content) : new TextEncoder().encode(params.content);
 }
 
 function rejectPutContent(params: HfFsWriteParams): void {
-	if (params.text !== undefined || params.base64 !== undefined) {
-		throw new Error('text and base64 are only valid with op=put.');
+	if (params.content !== undefined || params.base64) {
+		throw new Error('content and --base64 are only valid with put.');
+	}
+}
+
+function validateCommitOptions(params: HfFsWriteParams, parsed: ParsedRepoHfUri): void {
+	if (parsed.repoType !== 'bucket') {
+		return;
+	}
+	if (params.create_pr || params.description !== undefined || params.parent_commit !== undefined) {
+		throw new Error('pull requests, descriptions, and parent commits are not supported for bucket writes.');
 	}
 }
 
@@ -266,6 +278,7 @@ function buildWriteResult(
 					},
 				}
 			: {}),
+		...(output?.pullRequestUrl ? { pull_request_url: output.pullRequestUrl } : {}),
 	};
 }
 

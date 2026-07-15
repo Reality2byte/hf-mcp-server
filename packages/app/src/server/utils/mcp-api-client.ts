@@ -10,7 +10,7 @@ import {
 	NETWORK_FETCH_PROFILES,
 	parseAndValidateUrl,
 } from '@llmindset/hf-mcp/network';
-import { normalizeBuiltInTools } from '../../shared/tool-normalizer.js';
+import { normalizeBuiltInTools, withoutLegacyDocTools } from '../../shared/tool-normalizer.js';
 import { apiMetrics } from '../utils/api-metrics.js';
 interface ToolStateChangeCallback {
 	(toolId: string, enabled: boolean): void;
@@ -35,7 +35,7 @@ export interface ApiClientConfig {
 }
 
 function withNormalizedFlags(settings: AppSettings): AppSettings {
-	const normalizedBuiltInTools = normalizeBuiltInTools(settings.builtInTools);
+	const normalizedBuiltInTools = withoutLegacyDocTools(normalizeBuiltInTools(settings.builtInTools));
 	const isIdentical =
 		normalizedBuiltInTools.length === settings.builtInTools.length &&
 		normalizedBuiltInTools.every((value, index) => value === settings.builtInTools[index]);
