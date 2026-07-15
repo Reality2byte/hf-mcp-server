@@ -36,7 +36,7 @@ export interface HfFsParams {
 	limit?: number;
 }
 
-export const HF_FS_DESCRIPTION = `Navigate Hugging Face resources with ls, cat, find, stat, and search over hf:// URIs. Roots: hf://models, hf://datasets, hf://spaces, hf://buckets, hf://collections, hf://papers, hf://docs. For papers, ls hf://papers/ARXIV_ID to discover related resources; cat hf://papers/ARXIV_ID/paper.md or metadata.json. Documentation paths include the current version from each product's llms.txt manifest.
+export const HF_FS_DESCRIPTION = `Use to access the Hugging Face Hub. Navigate resources with ls, cat, find, stat, and search over hf:// URIs. Roots: hf://models, hf://datasets, hf://spaces, hf://buckets, hf://collections, hf://papers, hf://docs. For papers, ls hf://papers/ARXIV_ID to discover related resources; cat hf://papers/ARXIV_ID/paper.md or metadata.json. Documentation paths include the current version from each product's llms.txt manifest.
 
 Grammar; each token below is one args array element:
   ls     URI [(-R|-r|--recursive)] [--glob GLOB]

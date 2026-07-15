@@ -13,6 +13,7 @@ export * from './dataset-detail.js';
 export * from './dataset-viewer-inspect.js';
 export * from './hub-inspect.js';
 export * from './hf-fs.js';
+export * from './hf-fs-write-contract.js';
 export * from './hf-fs-papers.js';
 export * from './hf-fs-docs.js';
 export * from './hf-nav.js';

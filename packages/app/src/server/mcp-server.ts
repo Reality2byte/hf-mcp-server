@@ -40,7 +40,7 @@ import {
 	type HfFsRequest,
 	HfFsWriteTool,
 	formatHfFsWriteMarkdown,
-	type HfFsWriteParams,
+	type HfFsWriteRequest,
 	DuplicateSpaceTool,
 	formatDuplicateResult,
 	type DuplicateSpaceParams,
@@ -916,25 +916,17 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					outputSchema: hfFsWriteToolConfig.outputSchema.shape,
 					annotations: hfFsWriteToolConfig.annotations,
 				},
-				async (params: HfFsWriteParams) => {
+				async (request: HfFsWriteRequest) => {
 					const result = await runWithQueryLogging(
 						logPromptQuery,
 						{
 							methodName: hfFsWriteToolConfig.name,
-							query: params.uri,
+							query: [request.cmd, ...request.args].join(' '),
 							parameters: {
-								op: params.op,
-								uri: params.uri,
-								branch: params.branch,
-								message: params.message,
+								cmd: request.cmd,
+								args: request.args,
 								content_type:
-									params.op === 'put'
-										? params.text !== undefined
-											? 'text'
-											: params.base64 !== undefined
-												? 'base64'
-												: undefined
-										: undefined,
+									request.cmd === 'put' ? (request.args.includes('--base64') ? 'base64' : 'text') : undefined,
 							},
 							baseOptions: getLoggingOptions(),
 							successOptions: (writeResult) => ({
@@ -945,7 +937,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 						},
 						async () => {
 							const tool = new HfFsWriteTool(hfToken, undefined);
-							return await tool.run(params);
+							return await tool.run(request);
 						}
 					);
 					return {

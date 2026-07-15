@@ -66,8 +66,8 @@ export const HF_FS_TOOL_CONFIG = {
 	name: 'hf_fs',
 	// human discovery
 	title:
-		'Hugging Face Hub: Access models, datasets, spaces, buckets, papers, documentation and collections. ' +
-		'Search and get details for items across the hub. Read daily papers reports, and browse trending content. ',
+		'Hugging Face Hub: Find, use and view models, datasets, spaces, buckets, papers, documentation and collections. ' +
+		'Get daily papers reports, and browse trending content. ',
 	// model discovery
 	description: HF_FS_DESCRIPTION,
 	schema: HF_FS_SCHEMA,
@@ -1751,9 +1751,7 @@ function semanticSpaceToEntry(space: SemanticSpaceSearchHit): HfFsEntry {
 		...(space.sdk ? { sdk: space.sdk } : {}),
 		...(space.title ? { title: space.title } : {}),
 		...(space.ai_category ? { category: space.ai_category } : {}),
-		...(space.semanticRelevancyScore === undefined
-			? {}
-			: { semantic_relevance: space.semanticRelevancyScore }),
+		...(space.semanticRelevancyScore === undefined ? {} : { semantic_relevance: space.semanticRelevancyScore }),
 		...(space.shortDescription || space.ai_short_description
 			? { description: space.shortDescription ?? space.ai_short_description }
 			: {}),

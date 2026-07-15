@@ -8,6 +8,7 @@ Use `hf://` URIs to browse Hugging Face resources:
 - `hf://buckets`
 - `hf://collections`
 - `hf://papers`
+- `hf://docs`
 
 The `hf_fs` tool supports five operations:
 
@@ -29,6 +30,7 @@ Public resources work anonymously. Private or gated resources require a Hugging 
 |---|---:|---:|
 | General `ls` and `find` | 1,000 | 10,000 |
 | `search` | 100 | 1,000 |
+| Documentation `search` | 5 | 25 |
 | `ls hf://models/trending` | 20 | 20 |
 | `ls hf://datasets/trending` | 20 | 20 |
 | `ls hf://spaces/trending` | 20 | 20 |
@@ -45,6 +47,8 @@ find hf://spaces/OWNER/NAME --name app.py --type file
 cat hf://models/OWNER/NAME/README.md --offset 20000 --max-bytes 20000
 search hf://datasets "speech recognition" --sort downloads --limit 20
 ls hf://spaces/trending
+ls hf://docs/diffusers
+search hf://docs/transformers "loading a pretrained model"
 ```
 
 The MCP input keeps each token separate. For example:
@@ -52,6 +56,20 @@ The MCP input keeps each token separate. For example:
 ```json
 {"cmd":"find","args":["hf://spaces/OWNER/NAME","--name","app.py","--type","file"]}
 ```
+
+## Writes
+
+Authenticated servers can expose `hf_fs_write` with the same command-and-arguments convention. `put` receives file
+data separately in `content`; use `--base64` for binary data.
+
+```json
+{"cmd":"put","args":["hf://models/OWNER/NAME/README.md","--message","Update README"],"content":"# Model"}
+{"cmd":"rm","args":["hf://datasets/OWNER/NAME/old.json","--create-pr","--message","Remove stale data"]}
+```
+
+Repository writes support `--branch`, `--create-pr`, `--description`, and `--parent-commit SHA`. Use `--create-pr`
+when proposing a change to a repository you cannot or should not modify directly. Buckets do not support commit or
+pull-request options.
 
 ## Trending repositories
 
@@ -67,6 +85,24 @@ The `models`, `datasets`, and `spaces` roots each expose a virtual `trending` di
 - Current global ranking: `hf://papers/trending`
 
 See [`hf://papers/README.md`](hf://papers/README.md) for details.
+
+## Documentation
+
+`hf://docs` exposes products with a current `llms.txt` manifest. Manifest paths are authoritative and include the
+current release version:
+
+```text
+ls hf://docs/diffusers
+cat hf://docs/diffusers/v0.39.0/quicktour.md
+find hf://docs/transformers --path "*/main_classes/*.md"
+search hf://docs/peft "adapter injection"
+search hf://docs/transformers/v5.13.1/internal "TextIteratorStreamer"
+cat hf://docs/transformers/v5.13.1/internal/generation_utils.md#transformers.TextIteratorStreamer
+```
+
+`ls hf://docs` lists products. Search any product, version, directory, or document scope, and use returned `hf://`
+URIs verbatim. Documentation manifests are cached for ten minutes. Reads are restricted to files in the current
+manifest; anchored reads return a best-effort bounded section.
 
 ## Sandboxes
 
