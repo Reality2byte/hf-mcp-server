@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DOC_FETCH_TOOL_ID, DOCS_SEMANTIC_SEARCH_TOOL_ID, HF_FS_TOOL_ID } from '@llmindset/hf-mcp';
 import { McpApiClient, type ApiClientConfig } from '../../../src/server/utils/mcp-api-client.js';
+import { ANONYMOUS_BUILTIN_TOOL_IDS } from '../../../src/server/utils/tool-selection-strategy.js';
 import type { TransportInfo } from '../../../src/shared/transport-info.js';
 
 const transportInfo: TransportInfo = {
@@ -26,6 +27,7 @@ describe('McpApiClient fallback settings', () => {
 
 		const settings = await client.getSettings();
 
+		expect(settings.builtInTools).toEqual([...ANONYMOUS_BUILTIN_TOOL_IDS]);
 		expect(settings.builtInTools).toContain(HF_FS_TOOL_ID);
 		expect(settings.builtInTools).not.toContain(DOCS_SEMANTIC_SEARCH_TOOL_ID);
 		expect(settings.builtInTools).not.toContain(DOC_FETCH_TOOL_ID);

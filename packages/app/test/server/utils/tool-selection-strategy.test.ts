@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
+	ANONYMOUS_BUILTIN_TOOL_IDS,
 	ToolSelectionStrategy,
 	ToolSelectionMode,
 	type ToolSelectionContext,
@@ -187,16 +188,16 @@ describe('ToolSelectionStrategy', () => {
 			}
 		});
 
-		it('should hide authenticated tools from anonymous bouquet users', async () => {
+		it('should restrict anonymous bouquet users to the anonymous allowlist', async () => {
 			const context: ToolSelectionContext = {
-				headers: { 'x-mcp-bouquet': 'hf_api' },
+				headers: { 'x-mcp-bouquet': 'all' },
 			};
 
 			const result = await strategy.selectTools(context);
 
 			expect(result.mode).toBe(ToolSelectionMode.BOUQUET_OVERRIDE);
-			expect(TOOL_ID_GROUPS.hf_api).toContain(CREATE_REPO_TOOL_ID);
-			expect(result.enabledToolIds).not.toContain(CREATE_REPO_TOOL_ID);
+			expect(result.enabledToolIds).toEqual([...ANONYMOUS_BUILTIN_TOOL_IDS]);
+			expect(result.enabledToolIds).toContain(HF_FS_TOOL_ID);
 		});
 
 		it('should use bouquet override for search bouquet', async () => {
@@ -494,9 +495,9 @@ describe('ToolSelectionStrategy', () => {
 	});
 
 	describe('User Settings Mode (Third Precedence)', () => {
-		it('should hide authenticated tools from anonymous user settings', async () => {
+		it('should restrict anonymous user settings to the anonymous allowlist', async () => {
 			const userSettings: AppSettings = {
-				builtInTools: [CREATE_REPO_TOOL_ID, REPO_SEARCH_TOOL_ID],
+				builtInTools: [CREATE_REPO_TOOL_ID, REPO_SEARCH_TOOL_ID, HF_SANDBOX_TOOL_ID],
 				spaceTools: [],
 			};
 
@@ -697,6 +698,14 @@ describe('ToolSelectionStrategy', () => {
 
 			expect(result.mode).toBe(ToolSelectionMode.FALLBACK);
 			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(withoutLegacyDocTools(ALL_BUILTIN_TOOL_IDS)));
+		});
+
+		it('should restrict anonymous fallback to the anonymous allowlist', async () => {
+			const result = await strategy.selectTools({ headers: null });
+
+			expect(result.mode).toBe(ToolSelectionMode.FALLBACK);
+			expect(result.enabledToolIds).toEqual([...ANONYMOUS_BUILTIN_TOOL_IDS]);
+			expect(result.enabledToolIds).toContain(HF_FS_TOOL_ID);
 		});
 
 		it('should apply sandbox mix in fallback mode', async () => {

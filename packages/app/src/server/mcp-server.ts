@@ -60,7 +60,6 @@ import {
 	PAPER_SUMMARY_PROMPT_CONFIG,
 	type PaperSummaryParams,
 	CONFIG_GUIDANCE,
-	TOOL_ID_GROUPS,
 	DOCS_SEMANTIC_SEARCH_CONFIG,
 	DocSearchTool,
 	type DocSearchParams,
@@ -95,7 +94,8 @@ import { logSearchQuery, logPromptQuery, logGradioEvent, type QueryLoggerOptions
 import type { AppSettings } from '../shared/settings.js';
 import { extractAuthBouquetAndMix } from './utils/auth-utils.js';
 import {
-	AUTHENTICATED_BUILTIN_TOOL_IDS,
+	ANONYMOUS_BUILTIN_TOOL_IDS,
+	isBuiltInToolVisibleAnonymously,
 	ToolSelectionStrategy,
 	type ToolSelectionContext,
 } from './utils/tool-selection-strategy.js';
@@ -111,10 +111,7 @@ import { disableConfiguredTool, parseDisabledTools } from './utils/disabled-tool
 
 // Fallback settings for anonymous users and unavailable API/user settings.
 export const BOUQUET_FALLBACK: AppSettings = {
-	builtInTools: [
-		...TOOL_ID_GROUPS.hf_api.filter((toolId) => toolId !== DOCS_SEMANTIC_SEARCH_CONFIG.name),
-		HF_FS_TOOL_ID,
-	],
+	builtInTools: [...ANONYMOUS_BUILTIN_TOOL_IDS],
 	spaceTools: [],
 };
 
@@ -1539,9 +1536,11 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					if (toolInstance) {
 						if (disabledTools.has(toolId)) {
 							toolInstance.disable();
+						} else if (toolId === HF_FS_TOOL_ID) {
+							toolInstance.enable();
 						} else if (
 							enabled &&
-							(!(AUTHENTICATED_BUILTIN_TOOL_IDS as readonly string[]).includes(toolId) || hfToken)
+							(hfToken || isBuiltInToolVisibleAnonymously(toolId))
 						) {
 							toolInstance.enable();
 						} else {

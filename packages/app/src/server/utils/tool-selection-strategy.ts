@@ -1,6 +1,6 @@
 import { logger } from './logger.js';
 import type { AppSettings, SpaceTool } from '../../shared/settings.js';
-import { ALL_BUILTIN_TOOL_IDS, CREATE_REPO_TOOL_ID, HF_FS_TOOL_ID } from '@llmindset/hf-mcp';
+import { ALL_BUILTIN_TOOL_IDS, HF_FS_TOOL_ID, HUB_REPO_DETAILS_TOOL_ID, REPO_SEARCH_TOOL_ID } from '@llmindset/hf-mcp';
 import type { McpApiClient } from './mcp-api-client.js';
 import { extractAuthBouquetAndMix } from '../utils/auth-utils.js';
 import { normalizeBuiltInTools, withoutLegacyDocTools } from '../../shared/tool-normalizer.js';
@@ -22,7 +22,13 @@ export interface ToolSelectionContext {
 	hfToken?: string;
 }
 
-export const AUTHENTICATED_BUILTIN_TOOL_IDS = [CREATE_REPO_TOOL_ID] as const;
+export const ANONYMOUS_BUILTIN_TOOL_IDS = [REPO_SEARCH_TOOL_ID, HUB_REPO_DETAILS_TOOL_ID, HF_FS_TOOL_ID] as const;
+
+const ANONYMOUS_BUILTIN_TOOLS = new Set<string>(ANONYMOUS_BUILTIN_TOOL_IDS);
+
+export function isBuiltInToolVisibleAnonymously(toolId: string): boolean {
+	return ANONYMOUS_BUILTIN_TOOLS.has(toolId);
+}
 
 interface ToolSelectionResult {
 	mode: ToolSelectionMode;
@@ -158,8 +164,7 @@ export class ToolSelectionStrategy {
 			return enabledToolIds;
 		}
 
-		const authenticatedTools = new Set<string>(AUTHENTICATED_BUILTIN_TOOL_IDS);
-		return enabledToolIds.filter((toolId) => !authenticatedTools.has(toolId));
+		return enabledToolIds.filter(isBuiltInToolVisibleAnonymously);
 	}
 
 	/**
