@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { CORS_ALLOWED_ORIGINS } from '../../shared/constants.js';
+import { matchesCorsOrigin, normalizeCorsOrigin } from './cors-origin.js';
 import { logger } from './logger.js';
 
 const DEFAULT_ALLOWED_HOSTS = ['localhost', '127.0.0.1', '::1'];
@@ -58,27 +59,7 @@ function getAllowedHosts(): string[] {
 
 function getAllowedOrigins(): string[] {
 	const configured = parseCsv(process.env.CORS_ALLOWED_ORIGINS);
-	return (configured.length > 0 ? configured : CORS_ALLOWED_ORIGINS).map((origin) => origin.replace(/\/+$/, ''));
-}
-
-function originMatches(origin: { origin: string; host: string }, allowlist: string[]): boolean {
-	return allowlist.some((entry) => {
-		if (entry === origin.origin) return true;
-
-		let scheme: string | undefined;
-		let hostPattern = entry;
-		if (entry.startsWith('http://') || entry.startsWith('https://')) {
-			const schemeSeparator = entry.indexOf('://');
-			scheme = entry.slice(0, schemeSeparator);
-			hostPattern = entry.slice(schemeSeparator + 3);
-		}
-
-		if (!hostPattern.startsWith('*.')) return false;
-		if (scheme && !origin.origin.startsWith(`${scheme}://`)) return false;
-
-		const suffix = normalizeHost(hostPattern.slice(2));
-		return origin.host.endsWith(`.${suffix}`) && origin.host !== suffix;
-	});
+	return (configured.length > 0 ? configured : CORS_ALLOWED_ORIGINS).map(normalizeCorsOrigin);
 }
 
 export function validateInboundRequest(req: Request): { allowed: true } | { allowed: false; reason: string } {
@@ -108,7 +89,10 @@ export function validateInboundRequest(req: Request): { allowed: true } | { allo
 		return { allowed: true };
 	}
 
-	if (originMatches(parsedOrigin, allowedOrigins) || hostMatches(parsedOrigin.host, allowedHosts)) {
+	if (
+		allowedOrigins.some((allowedOrigin) => matchesCorsOrigin(originHeader, allowedOrigin)) ||
+		hostMatches(parsedOrigin.host, allowedHosts)
+	) {
 		return { allowed: true };
 	}
 

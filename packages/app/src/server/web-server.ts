@@ -16,6 +16,7 @@ import { apiMetrics } from './utils/api-metrics.js';
 import { gradioMetrics } from './utils/gradio-metrics.js';
 import { formatCacheMetricsForAPI } from './utils/gradio-cache.js';
 import { inboundRequestSecurityMiddleware } from './utils/inbound-request-security.js';
+import { matchesCorsOrigin, normalizeCorsOrigin } from './utils/cors-origin.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -61,9 +62,8 @@ export class WebServer {
 			.split(',')
 			.map((s) => s.trim())
 			.filter(Boolean);
-		const normalize = (s: string) => s.replace(/\/+$/, '');
-		const envOriginsNorm = envOrigins.map(normalize);
-		const allowedOrigins = (envOriginsNorm.length > 0 ? envOriginsNorm : CORS_ALLOWED_ORIGINS).map(normalize);
+		const envOriginsNorm = envOrigins.map(normalizeCorsOrigin);
+		const allowedOrigins = (envOriginsNorm.length > 0 ? envOriginsNorm : CORS_ALLOWED_ORIGINS).map(normalizeCorsOrigin);
 
 		// Support wildcard "*" to allow all origins explicitly
 		let originSetting: CorsOptions['origin'];
@@ -76,30 +76,12 @@ export class WebServer {
 
 			originSetting = (requestOrigin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
 				if (!requestOrigin) return cb(null, true);
-				const reqOrigin = normalize(requestOrigin);
+				const reqOrigin = normalizeCorsOrigin(requestOrigin);
 				if (exact.has(reqOrigin)) return cb(null, true);
-				try {
-					const u = new URL(requestOrigin);
-					for (const p of patterns) {
-						let scheme: string | undefined;
-						let hostPattern = p;
-						if (p.startsWith('http://') || p.startsWith('https://')) {
-							scheme = p.split('://', 1)[0];
-							hostPattern = p.slice((scheme + '://').length);
-						}
-						// Only support leading wildcard: *.domain.tld
-						if (!hostPattern.startsWith('*.')) continue;
-						const suffix = hostPattern.slice(2); // domain.tld
-						const host = u.hostname;
-						if (scheme && u.protocol !== scheme + ':') continue;
-						if (host.endsWith('.' + suffix) && host !== suffix) {
-							return cb(null, true);
-						}
-					}
-					return cb(null, false);
-				} catch {
-					return cb(null, false);
-				}
+				return cb(
+					null,
+					patterns.some((pattern) => matchesCorsOrigin(requestOrigin, pattern))
+				);
 			};
 		} else {
 			originSetting = allowedOrigins;
