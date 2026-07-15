@@ -73,6 +73,7 @@ def main() -> None:
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--parallel", type=int, default=1)
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--variant", action="append", choices=("docs", "files"), default=[])
     parser.add_argument("--input", type=Path, default=BENCHMARK / "data/prompts.dual.jsonl")
     parser.add_argument("--output-dir", type=Path, default=BENCHMARK / "runs/live")
     args = parser.parse_args()
@@ -87,7 +88,7 @@ def main() -> None:
 
     for model_label, model in args.model:
         for repetition in range(1, args.runs + 1):
-            for variant in ("docs", "files"):
+            for variant in args.variant or ("docs", "files"):
                 name = f"{model_label}-{variant}-run-{repetition}"
                 output = args.output_dir / f"{name}.jsonl"
                 telemetry = args.output_dir / f"{name}.telemetry.jsonl"

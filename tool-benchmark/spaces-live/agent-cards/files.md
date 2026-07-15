@@ -8,7 +8,7 @@ mcp_connect:
   - name: hf_spaces_files
     target: http://localhost:3000/mcp?bouquet=files
 request_params:
-  max_iterations: 8
+  max_iterations: 12
   parallel_tool_calls: false
 ---
 
