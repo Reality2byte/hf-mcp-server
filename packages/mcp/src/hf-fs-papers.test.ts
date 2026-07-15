@@ -162,6 +162,7 @@ describe('papers guidance and Daily Papers', () => {
 				{ path: 'buckets' },
 				{ path: 'collections' },
 				{ path: 'papers' },
+				{ path: 'docs' },
 			],
 		});
 

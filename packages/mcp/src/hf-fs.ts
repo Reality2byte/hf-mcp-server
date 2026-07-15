@@ -29,6 +29,7 @@ import { escapeMarkdown, fitsWithinCharBudget, formatBytes, maxCharsForTokenBudg
 import { HF_NAV_MAX_LIMIT, HfNavTool, type HfNavEntry, type HfNavParams, type HfNavResult } from './hf-nav.js';
 import { catGuidance, isRootGuidanceUri, statGuidance } from './hf-fs-guidance.js';
 import { HfFsPaperProvider, isPaperUri, paperListingOrder } from './hf-fs-papers.js';
+import { HfFsDocsProvider, isDocsUri } from './hf-fs-docs.js';
 import {
 	HF_FS_DESCRIPTION,
 	HF_FS_ENTRY_TYPES,
@@ -65,8 +66,8 @@ export const HF_FS_TOOL_CONFIG = {
 	name: 'hf_fs',
 	// human discovery
 	title:
-		'Hugging Face Hub: Access models, datasets, spaces, buckets, papers and collections. ' +
-		'Search and get details for items across the hub. Read daily papers reports, and browse trending content. ',
+		'Hugging Face Hub: Find, use and view models, datasets, spaces, buckets, papers, documentation and collections. ' +
+		'Get daily papers reports, and browse trending content. ',
 	// model discovery
 	description: HF_FS_DESCRIPTION,
 	schema: HF_FS_SCHEMA,
@@ -101,6 +102,9 @@ function createHfFsOutputSchema() {
 		trending_score: z.number().optional(),
 		sdk: z.string().optional(),
 		title: z.string().optional(),
+		category: z.string().optional(),
+		semantic_relevance: z.number().optional(),
+		anchor: z.string().optional(),
 		description: z.string().optional(),
 		upvotes: z.number().optional(),
 		created_at: z.string().optional(),
@@ -121,6 +125,7 @@ function createHfFsOutputSchema() {
 		path: z.string().optional(),
 		content: z.string().optional(),
 		content_type: z.enum(['application/json', 'text/markdown']).optional(),
+		section: z.string().optional(),
 		bytes: z.number().optional(),
 		exists: z.boolean().optional(),
 		type: z.enum(HF_FS_STAT_TYPES).optional(),
@@ -302,6 +307,9 @@ export interface HfFsEntry {
 	trending_score?: number;
 	sdk?: string;
 	title?: string;
+	category?: string;
+	semantic_relevance?: number;
+	anchor?: string;
 	description?: string;
 	upvotes?: number;
 	created_at?: string;
@@ -325,6 +333,7 @@ export interface HfFsLsResult {
 	truncation_reason?: 'entry_limit' | 'limit' | 'provider_limit';
 	truncation_message?: string;
 	next_offset?: number;
+	warnings?: string[];
 }
 
 export interface HfFsCatResult {
@@ -333,6 +342,7 @@ export interface HfFsCatResult {
 	path: string;
 	content: string;
 	content_type?: HfFsContentType;
+	section?: string;
 	bytes: number;
 	truncated: boolean;
 	truncation_reason?: 'max_bytes';
@@ -395,15 +405,33 @@ interface ApiBucketEntry {
 	resourceGroup?: { id: string; name: string };
 }
 
+interface SemanticSpaceSearchHit {
+	id: string;
+	private?: boolean;
+	likes?: number;
+	sdk?: string;
+	title?: string;
+	shortDescription?: string;
+	ai_short_description?: string;
+	ai_category?: string;
+	trendingScore?: number;
+	semanticRelevancyScore?: number;
+	tags?: string[];
+	createdAt?: string;
+	lastModified?: string;
+}
+
 export class HfFsTool {
 	private readonly accessToken?: string;
 	private readonly hubUrl?: string;
 	private readonly paperProvider: HfFsPaperProvider;
+	private readonly docsProvider: HfFsDocsProvider;
 
 	constructor(hfToken?: string, hubUrl?: string) {
 		this.accessToken = hfToken;
 		this.hubUrl = hubUrl;
 		this.paperProvider = new HfFsPaperProvider(hfToken, hubUrl, async (params) => await this.runCanonical(params));
+		this.docsProvider = new HfFsDocsProvider(hubUrl);
 	}
 
 	async run(request: HfFsRequest | HfFsParams): Promise<HfFsResult> {
@@ -425,6 +453,9 @@ export class HfFsTool {
 		}
 		if (isPaperUri(params.uri)) {
 			return await this.paperProvider.run(params);
+		}
+		if (isDocsUri(params.uri)) {
+			return await this.docsProvider.run(params);
 		}
 		if (isNavigationUri(params.uri)) {
 			return await this.runNavigation(params);
@@ -549,7 +580,7 @@ export class HfFsTool {
 						uri: 'hf://README.md',
 						content_type: 'text/markdown',
 					},
-					...['models', 'datasets', 'spaces', 'buckets', 'collections', 'papers'].map((name) => ({
+					...['models', 'datasets', 'spaces', 'buckets', 'collections', 'papers', 'docs'].map((name) => ({
 						type: 'dir' as const,
 						path: name,
 						name,
@@ -721,6 +752,9 @@ export class HfFsTool {
 		}
 
 		const limit = normalizedSearchLimit(params.limit);
+		if (parsed.repoType === 'space' && !parsed.namespace) {
+			return await this.searchSemanticSpaces(params, limit);
+		}
 		const fetchLimit = limit + 1;
 		const entries: HfFsEntry[] = [];
 		for await (const entry of this.searchRepoEntries(parsed.repoType, {
@@ -745,6 +779,45 @@ export class HfFsTool {
 			uri: params.uri,
 			op: 'search',
 			entries,
+		};
+	}
+
+	private async searchSemanticSpaces(params: HfFsParams, limit: number): Promise<HfFsLsResult> {
+		if ((params.query?.length ?? 0) > 250) {
+			throw new Error('EINVAL: Space semantic search query must not exceed 250 characters');
+		}
+		const url = new URL('/api/spaces/semantic-search', this.hubUrl ?? HUB_URL);
+		url.searchParams.set('q', params.query ?? '');
+		const tags = new Set(params.tags ?? []);
+		if (params.space_kind === 'mcp') tags.add('mcp-server');
+		for (const tag of tags) url.searchParams.append('filter', tag);
+
+		const { response } = await safeFetch(url.toString(), {
+			urlPolicy: createHuggingFaceHubPolicy(),
+			requestInit: {
+				headers: {
+					accept: 'application/json',
+					...(this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : {}),
+				},
+			},
+		});
+		if (!response.ok) {
+			throw new Error(
+				`Space semantic search failed with status ${response.status.toString()}: ${await response.text()}`
+			);
+		}
+
+		const hits = sortSemanticSpaceHits(
+			((await response.json()) as SemanticSpaceSearchHit[]).filter((hit) =>
+				[...tags].every((tag) => hit.tags?.includes(tag))
+			),
+			params.sort
+		);
+		return {
+			uri: params.uri,
+			op: 'search',
+			entries: hits.slice(0, limit).map(semanticSpaceToEntry),
+			...(hits.length > limit ? { truncated: true, truncation_reason: 'limit' as const } : {}),
 		};
 	}
 
@@ -1174,6 +1247,7 @@ function renderCatMarkdown(result: HfFsCatResult): string {
 		``,
 		`URI: ${inlineCode(result.uri)}`,
 		`Path: ${inlineCode(result.path)}`,
+		...(result.section ? [`Section: ${inlineCode(result.section)}`] : []),
 		...(result.content_type ? [`Content-Type: ${inlineCode(result.content_type)}`] : []),
 		`Bytes: ${result.bytes.toString()}`,
 		``,
@@ -1246,6 +1320,11 @@ function entryDetails(entry: HfFsEntry): string {
 		entry.trending_score === undefined ? undefined : `trending score=${entry.trending_score.toString()}`,
 		entry.sdk ? `sdk=${entry.sdk}` : undefined,
 		entry.title ? `title=${entry.title}` : undefined,
+		entry.category ? `category=${entry.category}` : undefined,
+		entry.semantic_relevance === undefined
+			? undefined
+			: `semantic relevance=${(entry.semantic_relevance * 100).toFixed(1)}%`,
+		entry.anchor ? `anchor=${entry.anchor}` : undefined,
 		entry.description
 			? entry.type === 'paper'
 				? `summary=${boundedInlineText(entry.description)}`
@@ -1657,6 +1736,48 @@ function datasetToEntry(dataset: DatasetEntry): HfFsEntry {
 		downloads: dataset.downloads,
 		updated_at: dataset.updatedAt.toISOString(),
 	};
+}
+
+function semanticSpaceToEntry(space: SemanticSpaceSearchHit): HfFsEntry {
+	return {
+		type: 'repo',
+		path: space.id,
+		uri: `hf://spaces/${space.id}`,
+		repo_type: 'space',
+		...(space.private === undefined ? {} : { private: space.private }),
+		...(space.likes === undefined ? {} : { likes: space.likes }),
+		...(space.tags ? { tags: space.tags } : {}),
+		...(space.trendingScore === undefined ? {} : { trending_score: space.trendingScore }),
+		...(space.sdk ? { sdk: space.sdk } : {}),
+		...(space.title ? { title: space.title } : {}),
+		...(space.ai_category ? { category: space.ai_category } : {}),
+		...(space.semanticRelevancyScore === undefined ? {} : { semantic_relevance: space.semanticRelevancyScore }),
+		...(space.shortDescription || space.ai_short_description
+			? { description: space.shortDescription ?? space.ai_short_description }
+			: {}),
+		...(space.lastModified ? { updated_at: space.lastModified } : {}),
+		...(space.createdAt ? { created_at: space.createdAt } : {}),
+	};
+}
+
+function sortSemanticSpaceHits(hits: SemanticSpaceSearchHit[], sort: HfFsSort | undefined): SemanticSpaceSearchHit[] {
+	if (!sort) return hits;
+	const value = (hit: SemanticSpaceSearchHit): number => {
+		switch (sort) {
+			case 'likes':
+				return hit.likes ?? 0;
+			case 'trending':
+			case 'trendingScore':
+				return hit.trendingScore ?? 0;
+			case 'createdAt':
+				return Date.parse(hit.createdAt ?? '') || 0;
+			case 'lastModified':
+				return Date.parse(hit.lastModified ?? '') || 0;
+			default:
+				return hit.semanticRelevancyScore ?? 0;
+		}
+	};
+	return [...hits].sort((left, right) => value(right) - value(left));
 }
 
 function spaceToEntry(space: SpaceEntry): HfFsEntry {

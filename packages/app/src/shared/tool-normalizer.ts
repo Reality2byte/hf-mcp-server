@@ -5,10 +5,17 @@ import {
 	HUB_REPO_DETAILS_TOOL_ID,
 	MODEL_DETAIL_TOOL_ID,
 	DATASET_DETAIL_TOOL_ID,
+	DOC_FETCH_TOOL_ID,
+	DOCS_SEMANTIC_SEARCH_TOOL_ID,
 } from '@llmindset/hf-mcp';
 import { mapLegacySearchToolId } from './repo-search-migration.js';
 
 const HUB_QUERY_FLAGS = new Set(['hf_hub_query', 'hub_query']);
+const LEGACY_DOC_TOOL_IDS = new Set<string>([DOCS_SEMANTIC_SEARCH_TOOL_ID, DOC_FETCH_TOOL_ID]);
+
+export function withoutLegacyDocTools(ids: readonly string[]): string[] {
+	return ids.filter((id) => !LEGACY_DOC_TOOL_IDS.has(id));
+}
 
 /**
  * Normalizes built-in tool lists coming from UI/API clients.

@@ -10,9 +10,13 @@ import {
 	REPO_SEARCH_TOOL_ID,
 	HUB_REPO_DETAILS_TOOL_ID,
 } from '@llmindset/hf-mcp';
-import { normalizeBuiltInTools } from '../../src/shared/tool-normalizer.js';
+import { normalizeBuiltInTools, withoutLegacyDocTools } from '../../src/shared/tool-normalizer.js';
 
 describe('normalizeBuiltInTools', () => {
+	it('removes legacy docs tools from API-provided tool lists', () => {
+		expect(withoutLegacyDocTools(['hf_fs', 'hf_doc_search', 'hf_doc_fetch'])).toEqual(['hf_fs']);
+	});
+
 	it('maps legacy model/dataset search tools to hub_repo_search', () => {
 		const result = normalizeBuiltInTools([MODEL_SEARCH_TOOL_ID, REPO_SEARCH_TOOL_ID, DATASET_SEARCH_TOOL_ID]);
 

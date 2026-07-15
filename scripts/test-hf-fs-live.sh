@@ -47,6 +47,12 @@ if ! curl -fsS --max-time 2 "$BASE_URL/api/transport" >/dev/null 2>&1; then
 		cat "$TMP/server.log" >&2
 		exit 1
 	}
+	# dev:watch may restart the server once after its initial TypeScript/Vite build settles.
+	sleep 3
+	curl -fsS --max-time 2 "$BASE_URL/api/transport" >/dev/null || {
+		cat "$TMP/server.log" >&2
+		exit 1
+	}
 else
 	echo "Using existing server at $BASE_URL"
 fi
@@ -118,24 +124,24 @@ curl -fsS --max-time 60 \
 	--data-binary @"$TMP/request.json" \
 	"$MCP_URL" >"$TMP/tools.json"
 jq -e '
-	.result.tools[]
-	| select(.name == "hf_fs")
-	| (.inputSchema.required | sort) == ["args","cmd"]
-		and (.inputSchema.properties | has("op") | not)
-		and (.inputSchema.properties | has("uri") | not)
-		and (.description | contains("Grammar; each token below is one args array element"))
-		and (.description | contains("ls hf://papers/trending"))
+	(.result.tools[] | select(.name == "hf_fs")
+		| (.inputSchema.required | sort) == ["args","cmd"]
+			and (.inputSchema.properties | has("op") | not)
+			and (.inputSchema.properties | has("uri") | not)
+			and (.description | contains("Grammar; each token below is one args array element"))
+			and (.description | contains("ls hf://papers/trending")))
+	and (.result.tools | map(.name) | index("hf_doc_search") == null and index("hf_doc_fetch") == null)
 ' "$TMP/tools.json" >/dev/null || {
 	echo "hf_fs tools/list contract check failed:" >&2
 	jq '.result.tools[] | select(.name == "hf_fs")' "$TMP/tools.json" >&2
 	exit 1
 }
-pass 'tools/list exposes only the argv schema and full grammar'
+pass 'tools/list exposes hf_fs grammar without legacy docs tools'
 
 call_hf_fs root ls '["ls","hf://"]'
-jq -e '.result.structuredContent.entries | map(.path) | (index("README.md") != null and index("papers") != null)' \
+jq -e '.result.structuredContent.entries | map(.path) | (index("README.md") != null and index("papers") != null and index("docs") != null)' \
 	"$TMP/root.json" >/dev/null
-pass 'root lists README.md and papers while tolerating a duplicated command token'
+pass 'root lists README.md, papers, and docs while tolerating a duplicated command token'
 
 call_hf_fs readme cat '["hf://README.md","--max-bytes","4000"]'
 jq -e '.result.structuredContent.content | contains("## Limits") and contains("hf://models/trending")' \
@@ -221,5 +227,82 @@ call_hf_fs find_nested find "$(jq -nc --arg uri "$REPO/original" \
 jq -e '.result.structuredContent.entries | length > 0 and all(.[]; .path | startswith("original/"))' \
 	"$TMP/find_nested.json" >/dev/null
 pass 'nested find filters relative paths and emits repo-root paths'
+
+call_hf_fs docs_root ls '["hf://docs"]'
+jq -e '
+	.result.structuredContent.entries as $entries
+	| all(["hub","transformers","diffusers","peft","huggingface_hub","inference-providers","tgi","tei"][];
+		. as $product | any($entries[]; .path == $product and .type == "dir"))
+' "$TMP/docs_root.json" >/dev/null
+pass 'docs root lists manifest-backed production products, including catalog aliases'
+
+call_hf_fs docs_recursive_glob ls '["hf://docs","--recursive","--glob","transformers/**/*.md","--limit","5"]'
+jq -e '.result.structuredContent.entries | length > 0 and all(.[]; .type == "file" and (.path | startswith("transformers/")) and (.path | endswith(".md")))' \
+	"$TMP/docs_recursive_glob.json" >/dev/null
+pass 'recursive docs root preserves path-oriented globs'
+
+call_hf_fs tgi_root ls '["hf://docs/tgi"]'
+jq -e '.result.structuredContent.entries | any(.[]; .type == "file" and .path == "quicktour.md" and .uri == "hf://docs/tgi/quicktour.md" and (.url | contains("/docs/text-generation-inference/")))' \
+	"$TMP/tgi_root.json" >/dev/null
+pass 'canonical TGI product resolves its text-generation-inference manifest slug'
+
+call_hf_fs diffusers_root ls '["hf://docs/diffusers"]'
+DIFFUSERS_VERSION="$(jq -r '.result.structuredContent.entries[] | select(.type == "dir" and (.path | test("^v[0-9]"))) | .path' \
+	"$TMP/diffusers_root.json" | head -1)"
+[[ -n "$DIFFUSERS_VERSION" ]]
+pass 'versioned Diffusers manifest is exposed without a latest alias'
+
+DIFFUSERS_QUICKTOUR="hf://docs/diffusers/$DIFFUSERS_VERSION/quicktour.md"
+call_hf_fs diffusers_quicktour cat "$(jq -nc --arg uri "$DIFFUSERS_QUICKTOUR" '[$uri,"--max-bytes","4000"]')"
+jq -e '.result.structuredContent | .type? == null and .content_type == "text/markdown" and (.content | contains("Quickstart"))' \
+	"$TMP/diffusers_quicktour.json" >/dev/null
+pass 'manifest-backed Diffusers quickstart reads as Markdown'
+
+call_hf_fs transformers_find find \
+	'["hf://docs/transformers","--type","file","--path","*/main_classes/pipelines.md"]'
+jq -e '.result.structuredContent.entries | (length == 1 and (.[0].uri | startswith("hf://docs/transformers/v")))' \
+	"$TMP/transformers_find.json" >/dev/null
+pass 'Transformers nested API page is discoverable through the manifest'
+
+call_hf_fs diffusers_find_exact find \
+	"$(jq -nc --arg uri "$DIFFUSERS_QUICKTOUR" '[$uri,"--type","file","--name","quicktour.md","--path","quicktour.md"]')"
+jq -e --arg uri "$DIFFUSERS_QUICKTOUR" \
+	'.result.structuredContent.entries | length == 1 and .[0].uri == $uri' \
+	"$TMP/diffusers_find_exact.json" >/dev/null
+pass 'exact documentation file find uses file semantics'
+
+call_hf_fs hub_doc_stat stat '["hf://docs/hub/jobs-serving.md"]'
+jq -e '.result.structuredContent | .exists == true and .type == "file" and .content_type == "text/markdown"' \
+	"$TMP/hub_doc_stat.json" >/dev/null
+pass 'non-versioned Hub documentation remains directly addressable'
+
+call_hf_fs peft_search search '["hf://docs/peft","adapter injection","--limit","5"]'
+jq -e '.result.structuredContent.entries | length > 0 and all(.[]; .type == "file" and (.path | startswith("v")) and (.uri | startswith("hf://docs/peft/v")))' \
+	"$TMP/peft_search.json" >/dev/null
+pass 'product-scoped documentation search returns relative paths and canonical URIs'
+
+call_hf_fs chroma_search search '["hf://docs/diffusers","ChromaPipeline","--limit","5"]'
+jq -e '.result.structuredContent.entries | length > 0 and any(.[]; .uri | contains("/api/pipelines/chroma.md#"))' \
+	"$TMP/chroma_search.json" >/dev/null
+pass 'full-text search runs when semantic hits do not resolve to the manifest'
+
+CHROMA_URI="$(jq -r '.result.structuredContent.entries[] | select(.uri | contains("/api/pipelines/chroma.md#")) | .uri' \
+	"$TMP/chroma_search.json" | head -1)"
+CHROMA_DOCUMENT="${CHROMA_URI%%#*}"
+call_hf_fs chroma_document_search search "$(jq -nc --arg uri "$CHROMA_DOCUMENT" '[$uri,"ChromaPipeline"]')"
+jq -e '.result.structuredContent.entries | length > 0 and all(.[]; .path == "chroma.md")' \
+	"$TMP/chroma_document_search.json" >/dev/null
+call_hf_fs chroma_section cat "$(jq -nc --arg uri "$CHROMA_URI" '[$uri,"--max-bytes","6000"]')"
+jq -e '.result.structuredContent | .section == "ChromaPipeline" and (.content | contains("ChromaPipeline"))' \
+	"$TMP/chroma_section.json" >/dev/null
+pass 'document-scoped search and anchored cat return the matched section'
+
+call_hf_fs_error docs_versionless cat '["hf://docs/diffusers/quicktour.md"]'
+call_hf_fs_error docs_deep_search search '["hf://docs/diffusers/not-a-version","guide"]'
+call_hf_fs_error docs_traversal stat '["hf://docs/diffusers/%2e%2e/quicktour.md"]'
+call_hf_fs_error docs_empty_search search '["hf://docs/diffusers","--query",""]'
+LONG_DOCS_QUERY="$(printf 'x%.0s' $(seq 1 251))"
+call_hf_fs_error docs_long_search search "$(jq -nc --arg query "$LONG_DOCS_QUERY" '["hf://docs/diffusers",$query]')"
+pass 'docs rejects versionless reads, missing search scopes, traversal, and pathological queries'
 
 echo "hf_fs live smoke tests passed"

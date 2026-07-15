@@ -89,8 +89,8 @@ export const HF_FS_TOOL_CONFIG: BrowserToolConfig = {
 	name: 'hf_fs',
 	description:
 		'Navigate Hugging Face resources with ls, cat, find, stat, and search over hf:// URIs. ' +
-		'Roots: hf://models, hf://datasets, hf://spaces, hf://buckets, hf://collections, hf://papers. ' +
-		'For papers, ls hf://papers/ARXIV_ID to discover related resources; cat hf://papers/ARXIV_ID/paper.md or metadata.json.',
+		'Roots: hf://models, hf://datasets, hf://spaces, hf://buckets, hf://collections, hf://papers, hf://docs. ' +
+		'Documentation paths come from each product’s current llms.txt manifest.',
 	annotations: {
 		title: 'Hugging Face Filesystem',
 		destructiveHint: false,

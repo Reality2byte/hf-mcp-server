@@ -29,12 +29,14 @@ export interface HfFsParams {
 	path?: string;
 	query?: string;
 	sort?: HfFsSort;
+	tags?: string[];
+	space_kind?: 'mcp';
 	max_bytes?: number;
 	offset?: number;
 	limit?: number;
 }
 
-export const HF_FS_DESCRIPTION = `Navigate Hugging Face resources with ls, cat, find, stat, and search over hf:// URIs. Roots: hf://models, hf://datasets, hf://spaces, hf://buckets, hf://collections, hf://papers. For papers, ls hf://papers/ARXIV_ID to discover related resources; cat hf://papers/ARXIV_ID/paper.md or metadata.json.
+export const HF_FS_DESCRIPTION = `Use to access the Hugging Face Hub. Navigate resources with ls, cat, find, stat, and search over hf:// URIs. Roots: hf://models, hf://datasets, hf://spaces, hf://buckets, hf://collections, hf://papers, hf://docs. For papers, ls hf://papers/ARXIV_ID to discover related resources; cat hf://papers/ARXIV_ID/paper.md or metadata.json. Documentation paths include the current version from each product's llms.txt manifest.
 
 Grammar; each token below is one args array element:
   ls     URI [(-R|-r|--recursive)] [--glob GLOB]
@@ -43,13 +45,16 @@ Grammar; each token below is one args array element:
   stat   URI
   find   URI [(-name|--name) GLOB] [(-path|--path) GLOB]
              [(-type|--type|--entry-type) TYPE] [--limit N]
-  search URI QUERY [(-type|--type|--entry-type) TYPE] [--sort SORT] [--limit N]
+  search URI QUERY [(-type|--type|--entry-type) TYPE] [--sort SORT]
+                   [--tag TAG] [--kind mcp] [--limit N]
 
 TYPE = file|dir|repo|bucket|collection|paper|link.
 Type aliases: f=file, d=dir, l=link, model|dataset|space=repo.
 SORT = createdAt|downloads|likes|lastModified|likes30d|trendingScore|mainSize|id|trending|upvotes.
 URI starts with hf://. QUERY and GLOB are each one string token.
-Search URI: hf://models|datasets|spaces[/OWNER], hf://collections[/OWNER], or exactly hf://papers; not hf://.
+Search URI: hf://models|datasets|spaces[/OWNER], hf://collections[/OWNER], any hf://docs scope, or exactly hf://papers; not hf://.
+Space search: hf://spaces uses semantic search; repeat --tag to require tags, or use --kind mcp for --tag mcp-server. hf://spaces/OWNER uses owner-scoped keyword search.
+Documentation: ls hf://docs for products; search any docs scope; use returned hf:// URIs verbatim.
 Trending listings: ls hf://models/trending, hf://datasets/trending, or hf://spaces/trending. They return up to 20 entries.
 Trending paths imply trending order; --sort trending|trendingScore is redundant but valid.
 Trending papers: ls hf://papers/trending.
@@ -70,7 +75,7 @@ export interface ParsedHfFsRequest {
 	warnings: string[];
 }
 
-type FlagKind = 'bool' | 'int' | 'string' | 'type';
+type FlagKind = 'bool' | 'int' | 'string' | 'type' | 'tag';
 type ParamKey = Exclude<keyof HfFsParams, 'op' | 'uri'>;
 type Flag = readonly [ParamKey, FlagKind];
 
@@ -117,6 +122,8 @@ const SEARCH_FLAGS: Readonly<Record<string, Flag>> = {
 	'--type': ['entry_type', 'type'],
 	'--entry-type': ['entry_type', 'type'],
 	'--sort': ['sort', 'string'],
+	'--tag': ['tags', 'tag'],
+	'--kind': ['space_kind', 'string'],
 	'--limit': ['limit', 'int'],
 };
 
@@ -156,7 +163,7 @@ export function parseHfFsRequest(request: HfFsRequest): ParsedHfFsRequest {
 		}
 
 		const [key, kind] = flag;
-		if (params[key] !== undefined) {
+		if (kind !== 'tag' && params[key] !== undefined) {
 			throw new Error(`EINVAL: duplicate option for ${key}: ${token}`);
 		}
 
@@ -202,12 +209,16 @@ function setOption(
 		case 'type':
 			params.entry_type = TYPE_ALIASES[value] ?? (value as HfFsEntryType);
 			return;
+		case 'tag':
+			params.tags = [...(params.tags ?? []), value];
+			return;
 		case 'string':
 			if (key === 'glob') params.glob = value;
 			else if (key === 'name') params.name = value;
 			else if (key === 'path') params.path = value;
 			else if (key === 'query') params.query = value;
 			else if (key === 'sort') params.sort = value as HfFsSort;
+			else if (key === 'space_kind') params.space_kind = value as HfFsParams['space_kind'];
 	}
 }
 
@@ -217,14 +228,32 @@ function validateParsedParams(params: HfFsParams): void {
 	}
 	if (params.op === 'search' && !validSearchUri(params.uri)) {
 		throw new Error(
-			'EINVAL: search requires hf://models|datasets|spaces[/OWNER], hf://collections[/OWNER], or exactly hf://papers'
+			'EINVAL: search requires hf://models|datasets|spaces[/OWNER], hf://collections[/OWNER], any hf://docs scope, or exactly hf://papers'
 		);
 	}
 	if (params.entry_type !== undefined && !HF_FS_ENTRY_TYPES.includes(params.entry_type)) {
-		throw new Error(`EINVAL: invalid entry type: ${params.entry_type}`);
+		throw new Error(`EINVAL: invalid entry type: ${params.entry_type}. Use --type file for files.`);
 	}
 	if (params.sort !== undefined && !HF_FS_SEARCH_SORTS.includes(params.sort)) {
 		throw new Error(`EINVAL: invalid sort: ${params.sort}`);
+	}
+	const spaceKind: string | undefined = params.space_kind;
+	if (spaceKind !== undefined && spaceKind !== 'mcp') {
+		throw new Error(`EINVAL: invalid Space kind: ${spaceKind}. Supported kinds: mcp`);
+	}
+	if (params.tags !== undefined) {
+		if (params.tags.some((tag) => tag.length === 0 || tag.length > 100)) {
+			throw new Error('EINVAL: Space tags must contain between 1 and 100 characters');
+		}
+		if (params.tags.length > 20) {
+			throw new Error('EINVAL: at most 20 Space tags may be specified');
+		}
+	}
+	if (
+		(params.tags !== undefined || params.space_kind !== undefined) &&
+		(params.op !== 'search' || params.uri !== 'hf://spaces')
+	) {
+		throw new Error('EINVAL: --tag and --kind are supported only with search hf://spaces');
 	}
 	if (params.max_bytes !== undefined && (params.max_bytes < 0 || params.max_bytes > 80_000)) {
 		throw new Error('EINVAL: max_bytes must be between 0 and 80000');
@@ -260,6 +289,9 @@ function softenParsedParams(params: HfFsParams): ParsedHfFsRequest {
 
 function validSearchUri(uri: string): boolean {
 	if (uri === 'hf://papers') {
+		return true;
+	}
+	if (uri === 'hf://docs' || uri.startsWith('hf://docs/')) {
 		return true;
 	}
 	return /^hf:\/\/(?:models|datasets|spaces|collections)(?:\/[^/]+)?$/.test(uri) && !isRepoTrendingUri(uri);

@@ -40,7 +40,7 @@ import {
 	type HfFsRequest,
 	HfFsWriteTool,
 	formatHfFsWriteMarkdown,
-	type HfFsWriteParams,
+	type HfFsWriteRequest,
 	DuplicateSpaceTool,
 	formatDuplicateResult,
 	type DuplicateSpaceParams,
@@ -60,7 +60,6 @@ import {
 	PAPER_SUMMARY_PROMPT_CONFIG,
 	type PaperSummaryParams,
 	CONFIG_GUIDANCE,
-	TOOL_ID_GROUPS,
 	DOCS_SEMANTIC_SEARCH_CONFIG,
 	DocSearchTool,
 	type DocSearchParams,
@@ -95,7 +94,8 @@ import { logSearchQuery, logPromptQuery, logGradioEvent, type QueryLoggerOptions
 import type { AppSettings } from '../shared/settings.js';
 import { extractAuthBouquetAndMix } from './utils/auth-utils.js';
 import {
-	AUTHENTICATED_BUILTIN_TOOL_IDS,
+	ANONYMOUS_BUILTIN_TOOL_IDS,
+	isBuiltInToolVisibleAnonymously,
 	ToolSelectionStrategy,
 	type ToolSelectionContext,
 } from './utils/tool-selection-strategy.js';
@@ -109,9 +109,9 @@ import { getSkillCatalog } from './skills/skill-catalog-cache.js';
 import { SERVER_VERSION } from './server-build-info.js';
 import { disableConfiguredTool, parseDisabledTools } from './utils/disabled-tools.js';
 
-// Fallback settings when API/user settings are unavailable.
+// Fallback settings for anonymous users and unavailable API/user settings.
 export const BOUQUET_FALLBACK: AppSettings = {
-	builtInTools: [...TOOL_ID_GROUPS.hf_api, HF_FS_TOOL_ID],
+	builtInTools: [...ANONYMOUS_BUILTIN_TOOL_IDS],
 	spaceTools: [],
 };
 
@@ -913,25 +913,17 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					outputSchema: hfFsWriteToolConfig.outputSchema.shape,
 					annotations: hfFsWriteToolConfig.annotations,
 				},
-				async (params: HfFsWriteParams) => {
+				async (request: HfFsWriteRequest) => {
 					const result = await runWithQueryLogging(
 						logPromptQuery,
 						{
 							methodName: hfFsWriteToolConfig.name,
-							query: params.uri,
+							query: [request.cmd, ...request.args].join(' '),
 							parameters: {
-								op: params.op,
-								uri: params.uri,
-								branch: params.branch,
-								message: params.message,
+								cmd: request.cmd,
+								args: request.args,
 								content_type:
-									params.op === 'put'
-										? params.text !== undefined
-											? 'text'
-											: params.base64 !== undefined
-												? 'base64'
-												: undefined
-										: undefined,
+									request.cmd === 'put' ? (request.args.includes('--base64') ? 'base64' : 'text') : undefined,
 							},
 							baseOptions: getLoggingOptions(),
 							successOptions: (writeResult) => ({
@@ -942,7 +934,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 						},
 						async () => {
 							const tool = new HfFsWriteTool(hfToken, undefined);
-							return await tool.run(params);
+							return await tool.run(request);
 						}
 					);
 					return {
@@ -1544,9 +1536,11 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					if (toolInstance) {
 						if (disabledTools.has(toolId)) {
 							toolInstance.disable();
+						} else if (toolId === HF_FS_TOOL_ID) {
+							toolInstance.enable();
 						} else if (
 							enabled &&
-							(!(AUTHENTICATED_BUILTIN_TOOL_IDS as readonly string[]).includes(toolId) || hfToken)
+							(hfToken || isBuiltInToolVisibleAnonymously(toolId))
 						) {
 							toolInstance.enable();
 						} else {
