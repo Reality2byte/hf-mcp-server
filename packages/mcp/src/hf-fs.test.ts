@@ -817,7 +817,10 @@ describe('HfFsTool', () => {
 			limit: 1,
 		});
 
-		const requestUrl = new URL(String(vi.mocked(fetch).mock.calls[0]?.[0]));
+		const fetchInput = vi.mocked(fetch).mock.calls[0]?.[0];
+		expect(typeof fetchInput).toBe('string');
+		if (typeof fetchInput !== 'string') throw new Error('Expected fetch to receive a URL string');
+		const requestUrl = new URL(fetchInput);
 		expect(requestUrl.pathname).toBe('/api/spaces/semantic-search');
 		expect(requestUrl.searchParams.get('q')).toBe('python execution');
 		expect(requestUrl.searchParams.getAll('filter')).toEqual(['gradio', 'mcp-server']);

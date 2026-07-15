@@ -237,8 +237,9 @@ function validateParsedParams(params: HfFsParams): void {
 	if (params.sort !== undefined && !HF_FS_SEARCH_SORTS.includes(params.sort)) {
 		throw new Error(`EINVAL: invalid sort: ${params.sort}`);
 	}
-	if (params.space_kind !== undefined && params.space_kind !== 'mcp') {
-		throw new Error(`EINVAL: invalid Space kind: ${params.space_kind}. Supported kinds: mcp`);
+	const spaceKind: string | undefined = params.space_kind;
+	if (spaceKind !== undefined && spaceKind !== 'mcp') {
+		throw new Error(`EINVAL: invalid Space kind: ${spaceKind}. Supported kinds: mcp`);
 	}
 	if (params.tags !== undefined) {
 		if (params.tags.some((tag) => tag.length === 0 || tag.length > 100)) {
