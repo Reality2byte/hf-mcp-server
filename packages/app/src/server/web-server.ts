@@ -15,6 +15,7 @@ import { CORS_ALLOWED_ORIGINS, CORS_EXPOSED_HEADERS } from '../shared/constants.
 import { apiMetrics } from './utils/api-metrics.js';
 import { gradioMetrics } from './utils/gradio-metrics.js';
 import { formatCacheMetricsForAPI } from './utils/gradio-cache.js';
+import { inboundRequestSecurityMiddleware } from './utils/inbound-request-security.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -52,7 +53,7 @@ export class WebServer {
 			next();
 		});
 
-
+		this.app.use(['/mcp', '/api'], inboundRequestSecurityMiddleware);
 
 		// Global CORS for all routes (API + MCP endpoints)
 		// Simple exact-match allowlist with optional env override
@@ -221,7 +222,6 @@ export class WebServer {
 	}
 
 	public setupApiRoutes(): void {
-
 		// Transport info endpoint
 		this.app.get('/api/transport', (_req, res) => {
 			res.json(this.transportInfo);

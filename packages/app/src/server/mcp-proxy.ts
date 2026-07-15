@@ -318,7 +318,7 @@ export const createProxyServerFactory = (
 			: undefined;
 
 		// Extract auth, bouquet, and gradio using shared utility
-		const { hfToken, bouquet, gradio } = extractAuthBouquetAndMix(headers);
+		const { hfToken, bouquet, gradio } = extractAuthBouquetAndMix(headers, { allowDefaultHfToken: headers === null });
 		const rawNoImageHeader = headers ? headers['x-mcp-no-image-content'] : undefined;
 		const noImageFromHeader = typeof rawNoImageHeader === 'string' && rawNoImageHeader.toLowerCase() === 'true';
 

@@ -201,9 +201,10 @@ Build the image:
 docker build -t hf-mcp-server .
 ```
 
-Run with default settings (Streaming HTTP JSON Mode), Dashboard on Port 3000:
+Run with default settings (Streaming HTTP JSON Mode), Dashboard on Port 3000.
+HTTP clients must send a Hugging Face token in the `Authorization: Bearer` header:
 ```bash
-docker run --rm -p 3000:3000 -e DEFAULT_HF_TOKEN=hf_xxx hf-mcp-server
+docker run --rm -p 3000:3000 hf-mcp-server
 ```
 
 Run STDIO MCP Server:
@@ -236,8 +237,9 @@ The `streamableHttp` transport is _stateful_ - it maintains a connection with th
 
 The server respects the following environment variables:
 - `TRANSPORT`: The transport type to use (stdio, streamableHttp, or streamableHttpJson)
-- `DEFAULT_HF_TOKEN`: ⚠️ Requests are serviced with the HF_TOKEN received in the Authorization: Bearer header. The DEFAULT_HF_TOKEN is used if no header was sent. Only set this in Development / Test environments or for local STDIO Deployments. ⚠️
+- `DEFAULT_HF_TOKEN`: Default token for local STDIO deployments. HTTP transports do not use this as a fallback for requests without an `Authorization: Bearer` header.
 - If running with `stdio` transport, `HF_TOKEN` is used if `DEFAULT_HF_TOKEN` is not set.
+- `MCP_ALLOWED_HOSTS`: Comma-separated Host allowlist for MCP and API routes. Defaults to `localhost,127.0.0.1,::1`. Use exact hostnames or leading wildcard entries such as `*.example.com`.
 - `HF_API_TIMEOUT`: Timeout for Hugging Face API requests in milliseconds (default: 12500ms / 12.5 seconds)
 - `USER_CONFIG_API`: URL to use for User settings (defaults to Local front-end)
 - `ALLOW_INTERNAL_ADDRESS_HOSTS`: Optional comma-separated host allowlist to permit internal/reserved DNS resolutions for trusted domains during outbound checks (supports exact hosts and `*.` wildcards, for example: `huggingface.co,*.hf.space`).

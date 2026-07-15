@@ -12,7 +12,10 @@ function parseListParam(value: string | undefined): string[] | undefined {
 	return parts.length > 0 ? parts : undefined;
 }
 
-export function extractAuthBouquetAndMix(headers: Record<string, string> | null): {
+export function extractAuthBouquetAndMix(
+	headers: Record<string, string> | null,
+	options: { allowDefaultHfToken?: boolean } = {}
+): {
 	hfToken: string | undefined;
 	bouquet: string | undefined;
 	mix: string[] | undefined;
@@ -51,8 +54,7 @@ export function extractAuthBouquetAndMix(headers: Record<string, string> | null)
 		}
 	}
 
-	// Use token from header if available, otherwise fall back to environment
-	const hfToken = tokenFromHeader || process.env.DEFAULT_HF_TOKEN;
+	const hfToken = tokenFromHeader || (options.allowDefaultHfToken ? process.env.DEFAULT_HF_TOKEN : undefined);
 
 	return { hfToken, bouquet, mix, gradio };
 }
