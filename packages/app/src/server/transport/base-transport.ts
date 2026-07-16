@@ -353,12 +353,12 @@ export abstract class BaseTransport {
 
 	protected isSandboxCreateToolCall(requestBody: unknown): boolean {
 		const body = requestBody as
-			| { method?: string; params?: { name?: string; arguments?: { op?: string } } }
+			| { method?: string; params?: { name?: string; arguments?: { cmd?: string } } }
 			| undefined;
 		return (
 			body?.method === 'tools/call' &&
 			body.params?.name === HF_SANDBOX_TOOL_NAME &&
-			body.params.arguments?.op === 'create'
+			body.params.arguments?.cmd === 'create'
 		);
 	}
 

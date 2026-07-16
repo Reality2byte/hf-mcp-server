@@ -126,6 +126,10 @@ describe('parseHfFsRequest', () => {
 		[{ cmd: 'ls', args: ['hf://models/org', '--limit', 'many'] }, '--limit requires an integer'],
 		[{ cmd: 'ls', args: ['hf://models/org', '--limit', '1', '--limit', '2'] }, 'duplicate option for limit'],
 		[{ cmd: 'search', args: ['hf://models'] }, 'search requires a positional query or --query'],
+		[
+			{ cmd: 'search', args: ['hf://models', 'vision', '--query', 'speech'] },
+			'duplicate option for query: --query',
+		],
 		[{ cmd: 'search', args: ['hf://models/org/repo', 'query'] }, 'search requires hf://models'],
 		[{ cmd: 'search', args: ['hf://models', 'query', '--limit', '1001'] }, 'limit must be between 1 and 1000'],
 		[{ cmd: 'ls', args: ['hf://models/trending', '--limit', '21'] }, 'limit must be between 1 and 20'],
