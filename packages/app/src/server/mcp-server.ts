@@ -1136,7 +1136,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 			}
 		);
 
-		const SANDBOX_REDACTED_KEYS = ['handle', 'sandbox_token', 'text', 'base64', 'stdin', 'body', 'env'];
+		const SANDBOX_REDACTED_KEYS = ['args', 'handle', 'sandbox_token', 'text', 'base64', 'stdin', 'body', 'env'];
 		const redactSandboxParameters = (args: Record<string, unknown> | undefined): Record<string, unknown> => {
 			if (!args) {
 				return {};
@@ -1220,7 +1220,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					logSearchQuery,
 					{
 						methodName: sandboxToolConfig.name,
-						query: params.op,
+						query: params.cmd,
 						parameters: redactSandboxParameters(params),
 						baseOptions: getLoggingOptions(),
 						successOptions: (sandboxResult) => ({
@@ -1297,7 +1297,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 					logSearchQuery,
 					{
 						methodName: sandboxFsToolConfig.name,
-						query: params.op,
+						query: params.cmd,
 						parameters: redactSandboxParameters(params),
 						baseOptions: getLoggingOptions(),
 						successOptions: (fsResult) => ({

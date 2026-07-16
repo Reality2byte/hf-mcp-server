@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseCommandArgs, type CommandOptionMap } from './command-args.js';
 
 export const HF_FS_OPERATIONS = ['ls', 'cat', 'stat', 'find', 'search'] as const;
 export const HF_FS_ENTRY_TYPES = ['file', 'dir', 'repo', 'bucket', 'collection', 'paper', 'link'] as const;
@@ -75,10 +76,6 @@ export interface ParsedHfFsRequest {
 	warnings: string[];
 }
 
-type FlagKind = 'bool' | 'int' | 'string' | 'type' | 'tag';
-type ParamKey = Exclude<keyof HfFsParams, 'op' | 'uri'>;
-type Flag = readonly [ParamKey, FlagKind];
-
 const TYPE_ALIASES: Readonly<Record<string, HfFsEntryType>> = {
 	f: 'file',
 	d: 'dir',
@@ -88,46 +85,46 @@ const TYPE_ALIASES: Readonly<Record<string, HfFsEntryType>> = {
 	space: 'repo',
 };
 
-const LS_FLAGS: Readonly<Record<string, Flag>> = {
-	'-R': ['recursive', 'bool'],
-	'-r': ['recursive', 'bool'],
-	'--recursive': ['recursive', 'bool'],
-	'--glob': ['glob', 'string'],
-	'-type': ['entry_type', 'type'],
-	'--type': ['entry_type', 'type'],
-	'--entry-type': ['entry_type', 'type'],
-	'--sort': ['sort', 'string'],
-	'--limit': ['limit', 'int'],
+const LS_FLAGS: CommandOptionMap = {
+	'-R': { key: 'recursive', kind: 'boolean' },
+	'-r': { key: 'recursive', kind: 'boolean' },
+	'--recursive': { key: 'recursive', kind: 'boolean' },
+	'--glob': { key: 'glob', kind: 'string' },
+	'-type': { key: 'entry_type', kind: 'string' },
+	'--type': { key: 'entry_type', kind: 'string' },
+	'--entry-type': { key: 'entry_type', kind: 'string' },
+	'--sort': { key: 'sort', kind: 'string' },
+	'--limit': { key: 'limit', kind: 'integer' },
 };
 
-const CAT_FLAGS: Readonly<Record<string, Flag>> = {
-	'--max-bytes': ['max_bytes', 'int'],
-	'--offset': ['offset', 'int'],
+const CAT_FLAGS: CommandOptionMap = {
+	'--max-bytes': { key: 'max_bytes', kind: 'integer' },
+	'--offset': { key: 'offset', kind: 'integer' },
 };
 
-const FIND_FLAGS: Readonly<Record<string, Flag>> = {
-	'-name': ['name', 'string'],
-	'--name': ['name', 'string'],
-	'-path': ['path', 'string'],
-	'--path': ['path', 'string'],
-	'-type': ['entry_type', 'type'],
-	'--type': ['entry_type', 'type'],
-	'--entry-type': ['entry_type', 'type'],
-	'--limit': ['limit', 'int'],
+const FIND_FLAGS: CommandOptionMap = {
+	'-name': { key: 'name', kind: 'string' },
+	'--name': { key: 'name', kind: 'string' },
+	'-path': { key: 'path', kind: 'string' },
+	'--path': { key: 'path', kind: 'string' },
+	'-type': { key: 'entry_type', kind: 'string' },
+	'--type': { key: 'entry_type', kind: 'string' },
+	'--entry-type': { key: 'entry_type', kind: 'string' },
+	'--limit': { key: 'limit', kind: 'integer' },
 };
 
-const SEARCH_FLAGS: Readonly<Record<string, Flag>> = {
-	'--query': ['query', 'string'],
-	'-type': ['entry_type', 'type'],
-	'--type': ['entry_type', 'type'],
-	'--entry-type': ['entry_type', 'type'],
-	'--sort': ['sort', 'string'],
-	'--tag': ['tags', 'tag'],
-	'--kind': ['space_kind', 'string'],
-	'--limit': ['limit', 'int'],
+const SEARCH_FLAGS: CommandOptionMap = {
+	'--query': { key: 'query', kind: 'string' },
+	'-type': { key: 'entry_type', kind: 'string' },
+	'--type': { key: 'entry_type', kind: 'string' },
+	'--entry-type': { key: 'entry_type', kind: 'string' },
+	'--sort': { key: 'sort', kind: 'string' },
+	'--tag': { key: 'tags', kind: 'string', repeatable: true },
+	'--kind': { key: 'space_kind', kind: 'string' },
+	'--limit': { key: 'limit', kind: 'integer' },
 };
 
-const FLAGS: Readonly<Record<HfFsOperation, Readonly<Record<string, Flag>>>> = {
+const FLAGS: Readonly<Record<HfFsOperation, CommandOptionMap>> = {
 	ls: LS_FLAGS,
 	cat: CAT_FLAGS,
 	stat: {},
@@ -136,90 +133,46 @@ const FLAGS: Readonly<Record<HfFsOperation, Readonly<Record<string, Flag>>>> = {
 };
 
 export function parseHfFsRequest(request: HfFsRequest): ParsedHfFsRequest {
-	const values = request.args[0] === request.cmd ? request.args.slice(1) : [...request.args];
-	if (values.length === 0) {
+	const { positionals, options } = parseCommandArgs(request, FLAGS[request.cmd]);
+	if (positionals.length === 0) {
 		throw new Error(`EINVAL: ${request.cmd} requires an hf:// URI`);
 	}
 
-	const uri = values[0];
+	const uri = positionals[0];
 	if (!uri?.startsWith('hf://')) {
 		throw new Error('EINVAL: URI must start with hf://');
 	}
-
-	const params: HfFsParams = { op: request.cmd, uri };
-	const flags = FLAGS[request.cmd];
-	let index = 1;
-
-	if (request.cmd === 'search' && index < values.length && flags[values[index] ?? ''] === undefined) {
-		params.query = values[index];
-		index += 1;
+	const expectedPositionals = request.cmd === 'search' ? 2 : 1;
+	if (positionals.length > expectedPositionals) {
+		throw new Error(`EINVAL: unexpected argument for ${request.cmd}: ${positionals[expectedPositionals] ?? ''}`);
+	}
+	if (request.cmd === 'search' && positionals[1] !== undefined && options.query !== undefined) {
+		throw new Error('EINVAL: duplicate option for query: --query');
 	}
 
-	while (index < values.length) {
-		const token = values[index];
-		const flag = token === undefined ? undefined : flags[token];
-		if (!token || !flag) {
-			throw new Error(`EINVAL: unexpected argument for ${request.cmd}: ${token ?? ''}`);
-		}
-
-		const [key, kind] = flag;
-		if (kind !== 'tag' && params[key] !== undefined) {
-			throw new Error(`EINVAL: duplicate option for ${key}: ${token}`);
-		}
-
-		if (kind === 'bool') {
-			params.recursive = true;
-			index += 1;
-			continue;
-		}
-
-		const value = values[index + 1];
-		if (value === undefined) {
-			throw new Error(`EINVAL: ${token} requires a value`);
-		}
-		setOption(params, key, kind, token, value);
-		index += 2;
-	}
-
+	const entryType = options.entry_type as string | undefined;
+	const params: HfFsParams = {
+		op: request.cmd,
+		uri,
+		...(options.recursive === true ? { recursive: true } : {}),
+		...(typeof options.glob === 'string' ? { glob: options.glob } : {}),
+		...(entryType !== undefined ? { entry_type: TYPE_ALIASES[entryType] ?? (entryType as HfFsEntryType) } : {}),
+		...(typeof options.name === 'string' ? { name: options.name } : {}),
+		...(typeof options.path === 'string' ? { path: options.path } : {}),
+		...(typeof options.query === 'string'
+			? { query: options.query }
+			: request.cmd === 'search' && positionals[1] !== undefined
+				? { query: positionals[1] }
+				: {}),
+		...(typeof options.sort === 'string' ? { sort: options.sort as HfFsSort } : {}),
+		...(Array.isArray(options.tags) ? { tags: options.tags } : {}),
+		...(typeof options.space_kind === 'string' ? { space_kind: options.space_kind as HfFsParams['space_kind'] } : {}),
+		...(typeof options.max_bytes === 'number' ? { max_bytes: options.max_bytes } : {}),
+		...(typeof options.offset === 'number' ? { offset: options.offset } : {}),
+		...(typeof options.limit === 'number' ? { limit: options.limit } : {}),
+	};
 	validateParsedParams(params);
 	return softenParsedParams(params);
-}
-
-function setOption(
-	params: HfFsParams,
-	key: ParamKey,
-	kind: Exclude<FlagKind, 'bool'>,
-	token: string,
-	value: string
-): void {
-	switch (kind) {
-		case 'int': {
-			if (!/^-?\d+$/.test(value)) {
-				throw new Error(`EINVAL: ${token} requires an integer`);
-			}
-			const parsed = Number(value);
-			if (!Number.isSafeInteger(parsed)) {
-				throw new Error(`EINVAL: ${token} requires a safe integer`);
-			}
-			if (key === 'max_bytes') params.max_bytes = parsed;
-			else if (key === 'offset') params.offset = parsed;
-			else if (key === 'limit') params.limit = parsed;
-			return;
-		}
-		case 'type':
-			params.entry_type = TYPE_ALIASES[value] ?? (value as HfFsEntryType);
-			return;
-		case 'tag':
-			params.tags = [...(params.tags ?? []), value];
-			return;
-		case 'string':
-			if (key === 'glob') params.glob = value;
-			else if (key === 'name') params.name = value;
-			else if (key === 'path') params.path = value;
-			else if (key === 'query') params.query = value;
-			else if (key === 'sort') params.sort = value as HfFsSort;
-			else if (key === 'space_kind') params.space_kind = value as HfFsParams['space_kind'];
-	}
 }
 
 function validateParsedParams(params: HfFsParams): void {

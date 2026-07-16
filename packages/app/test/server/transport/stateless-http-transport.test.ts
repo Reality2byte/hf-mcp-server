@@ -156,7 +156,7 @@ describe('StatelessHttpTransport', () => {
 		it('identifies sandbox create calls as requiring streaming/progress handling', () => {
 			const result = (transport as any).requiresStreamingToolResponse({
 				method: 'tools/call',
-				params: { name: 'hf_sandbox', arguments: { op: 'create' } },
+				params: { name: 'hf_sandbox', arguments: { cmd: 'create', args: [] } },
 			});
 
 			expect(result).toBe(true);
@@ -165,7 +165,7 @@ describe('StatelessHttpTransport', () => {
 		it('does not stream non-create sandbox management calls', () => {
 			const result = (transport as any).requiresStreamingToolResponse({
 				method: 'tools/call',
-				params: { name: 'hf_sandbox', arguments: { op: 'status' } },
+				params: { name: 'hf_sandbox', arguments: { cmd: 'status', args: ['hfsb2:user:job'] } },
 			});
 
 			expect(result).toBe(false);
