@@ -27,6 +27,16 @@ import { BOUQUETS } from '../../../src/shared/bouquet-presets.js';
 const withHfFs = (toolIds: readonly string[]): string[] => [...new Set([...toolIds, HF_FS_TOOL_ID])];
 
 describe('extractBouquetAndMix', () => {
+	const originalDefaultHfToken = process.env.DEFAULT_HF_TOKEN;
+
+	afterEach(() => {
+		if (originalDefaultHfToken === undefined) {
+			delete process.env.DEFAULT_HF_TOKEN;
+		} else {
+			process.env.DEFAULT_HF_TOKEN = originalDefaultHfToken;
+		}
+	});
+
 	it('should extract bouquet from headers', () => {
 		const headers = { 'x-mcp-bouquet': 'search' };
 		const { bouquet, mix } = extractAuthBouquetAndMix(headers);
@@ -73,6 +83,24 @@ describe('extractBouquetAndMix', () => {
 		const result = extractAuthBouquetAndMix(headers);
 
 		expect(result.mix).toEqual(['hf_api', 'jobs', 'hub_repo_details_readme']);
+	});
+
+	it('should not use DEFAULT_HF_TOKEN unless explicitly allowed', () => {
+		process.env.DEFAULT_HF_TOKEN = 'hf_default_token';
+
+		expect(extractAuthBouquetAndMix({}).hfToken).toBeUndefined();
+		expect(extractAuthBouquetAndMix({}, { allowDefaultHfToken: true }).hfToken).toBe('hf_default_token');
+	});
+
+	it('should prefer Authorization bearer over DEFAULT_HF_TOKEN', () => {
+		process.env.DEFAULT_HF_TOKEN = 'hf_default_token';
+
+		const result = extractAuthBouquetAndMix(
+			{ authorization: 'Bearer hf_request_token' },
+			{ allowDefaultHfToken: true }
+		);
+
+		expect(result.hfToken).toBe('hf_request_token');
 	});
 });
 

@@ -134,7 +134,7 @@ export const createServerFactory = (_webServerInstance: WebServer, sharedApiClie
 	): Promise<ServerFactoryResult> => {
 		logger.debug({ skipGradio, sessionInfo }, '=== CREATING NEW MCP SERVER INSTANCE ===');
 		// Extract auth using shared utility
-		const { hfToken } = extractAuthBouquetAndMix(headers);
+		const { hfToken } = extractAuthBouquetAndMix(headers, { allowDefaultHfToken: headers === null });
 
 		// Create tool selection strategy
 		const toolSelectionStrategy = new ToolSelectionStrategy(sharedApiClient);
