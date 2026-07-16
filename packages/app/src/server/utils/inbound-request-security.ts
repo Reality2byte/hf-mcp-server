@@ -3,7 +3,7 @@ import { CORS_ALLOWED_ORIGINS } from '../../shared/constants.js';
 import { matchesCorsOrigin, normalizeCorsOrigin } from './cors-origin.js';
 import { logger } from './logger.js';
 
-const DEFAULT_ALLOWED_HOSTS = ['localhost', '127.0.0.1', '::1'];
+const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '::1'];
 
 function parseCsv(value: string | undefined): string[] {
 	return (value || '')
@@ -54,7 +54,7 @@ function hostMatches(host: string, allowlist: string[]): boolean {
 
 function getAllowedHosts(): string[] {
 	const configured = parseCsv(process.env.MCP_ALLOWED_HOSTS);
-	return configured.length > 0 ? configured : DEFAULT_ALLOWED_HOSTS;
+	return [...LOOPBACK_HOSTS, ...configured];
 }
 
 function getAllowedOrigins(): string[] {

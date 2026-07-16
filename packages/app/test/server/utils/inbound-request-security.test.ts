@@ -35,6 +35,18 @@ describe('validateInboundRequest', () => {
 		expect(validateInboundRequest(request({ host: '[::1]:3000' }))).toEqual({ allowed: true });
 	});
 
+	it('keeps loopback Host headers allowed when deployment hosts are configured', () => {
+		process.env.MCP_ALLOWED_HOSTS = 'mcp.example.com';
+
+		expect(validateInboundRequest(request({ host: 'localhost:3000' }))).toEqual({ allowed: true });
+		expect(validateInboundRequest(request({ host: '127.0.0.1:3000' }))).toEqual({ allowed: true });
+		expect(validateInboundRequest(request({ host: '[::1]:3000' }))).toEqual({ allowed: true });
+		expect(validateInboundRequest(request({ host: 'attacker.example:3000' }))).toEqual({
+			allowed: false,
+			reason: 'Host attacker.example is not allowed',
+		});
+	});
+
 	it('rejects attacker Host headers by default', () => {
 		expect(validateInboundRequest(request({ host: 'attacker.example:3000' }))).toEqual({
 			allowed: false,

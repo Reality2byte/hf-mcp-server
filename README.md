@@ -239,7 +239,7 @@ The server respects the following environment variables:
 - `TRANSPORT`: The transport type to use (stdio, streamableHttp, or streamableHttpJson)
 - `DEFAULT_HF_TOKEN`: Default token for local STDIO deployments. HTTP transports do not use this as a fallback for requests without an `Authorization: Bearer` header.
 - If running with `stdio` transport, `HF_TOKEN` is used if `DEFAULT_HF_TOKEN` is not set.
-- `MCP_ALLOWED_HOSTS`: Comma-separated Host allowlist for MCP and API routes. Defaults to `localhost,127.0.0.1,::1`. Use exact hostnames or leading wildcard entries such as `*.example.com`.
+- `MCP_ALLOWED_HOSTS`: Additional comma-separated Host allowlist for MCP and API routes. Loopback hosts `localhost,127.0.0.1,::1` are always allowed. Use exact hostnames or leading wildcard entries such as `*.example.com`.
 - `HF_API_TIMEOUT`: Timeout for Hugging Face API requests in milliseconds (default: 12500ms / 12.5 seconds)
 - `USER_CONFIG_API`: URL to use for User settings (defaults to Local front-end)
 - `ALLOW_INTERNAL_ADDRESS_HOSTS`: Optional comma-separated host allowlist to permit internal/reserved DNS resolutions for trusted domains during outbound checks (supports exact hosts and `*.` wildcards, for example: `huggingface.co,*.hf.space`).
