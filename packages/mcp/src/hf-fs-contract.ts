@@ -40,20 +40,23 @@ export interface HfFsParams {
 export const HF_FS_DESCRIPTION = `Use to access the Hugging Face Hub. Navigate resources with ls, cat, find, stat, and search over hf:// URIs. Roots: hf://models, hf://datasets, hf://spaces, hf://buckets, hf://collections, hf://papers, hf://docs. For papers, ls hf://papers/ARXIV_ID to discover related resources; cat hf://papers/ARXIV_ID/paper.md or metadata.json. Documentation paths include the current version from each product's llms.txt manifest.
 
 Grammar; each token below is one args array element:
-  ls     URI [(-R|-r|--recursive)] [--glob GLOB]
-             [(-type|--type|--entry-type) TYPE] [--sort SORT] [--limit N]
-  cat    URI [--offset N] [--max-bytes N]
+  ls     URI [(-R|-r|--recursive)] [(-l|-a|-la|-al|--long)] [--glob GLOB]
+             [(-type|--type|--entry-type) TYPE] [--sort SORT] [(-limit|--limit) N]
+  cat    URI [RELATIVE_PATH] [(-offset|--offset) N] [(-max-bytes|--max-bytes) N]
   stat   URI
-  find   URI [(-name|--name) GLOB] [(-path|--path) GLOB]
-             [(-type|--type|--entry-type) TYPE] [--limit N]
-  search URI QUERY [(-type|--type|--entry-type) TYPE] [--sort SORT]
-                   [--tag TAG] [--kind mcp] [--limit N]
+  find   URI [(-name|--name|--glob) GLOB] [(-path|--path) GLOB]
+             [(-type|--type|--entry-type) TYPE] [(-limit|--limit) N]
+  search URI [QUERY...] [(-type|--type|--entry-type) TYPE] [--sort SORT]
+                        [--tag TAG] [--kind mcp] [(-limit|--limit) N]
 
 TYPE = file|dir|repo|bucket|collection|paper|link.
 Type aliases: f=file, d=dir, l=link, model|dataset|space=repo.
 SORT = createdAt|downloads|likes|lastModified|likes30d|trendingScore|mainSize|id|trending|upvotes.
 URI starts with hf://. QUERY and GLOB are each one string token.
 Search URI: hf://models|datasets|spaces[/OWNER], hf://collections[/OWNER], any hf://docs scope, or exactly hf://papers; not hf://.
+Repository and collection searches may omit QUERY to browse or filter; documentation and paper searches require it.
+Search joins multiple positional QUERY tokens with spaces. Cat joins one RELATIVE_PATH token to URI.
+Long-list flags are accepted for compatibility; hf_fs listings are already structured, so they do not alter output.
 Space search: hf://spaces uses semantic search; repeat --tag to require tags, or use --kind mcp for --tag mcp-server. hf://spaces/OWNER uses owner-scoped keyword search.
 Documentation: ls hf://docs for products; search any docs scope; use returned hf:// URIs verbatim.
 Trending listings: ls hf://models/trending, hf://datasets/trending, or hf://spaces/trending. They return up to 20 entries.
@@ -89,27 +92,37 @@ const LS_FLAGS: CommandOptionMap = {
 	'-R': { key: 'recursive', kind: 'boolean' },
 	'-r': { key: 'recursive', kind: 'boolean' },
 	'--recursive': { key: 'recursive', kind: 'boolean' },
+	'-l': { key: 'long', kind: 'boolean' },
+	'-a': { key: 'all', kind: 'boolean' },
+	'-la': { key: 'long_all', kind: 'boolean' },
+	'-al': { key: 'long_all', kind: 'boolean' },
+	'--long': { key: 'long', kind: 'boolean' },
 	'--glob': { key: 'glob', kind: 'string' },
 	'-type': { key: 'entry_type', kind: 'string' },
 	'--type': { key: 'entry_type', kind: 'string' },
 	'--entry-type': { key: 'entry_type', kind: 'string' },
 	'--sort': { key: 'sort', kind: 'string' },
+	'-limit': { key: 'limit', kind: 'integer' },
 	'--limit': { key: 'limit', kind: 'integer' },
 };
 
 const CAT_FLAGS: CommandOptionMap = {
+	'-max-bytes': { key: 'max_bytes', kind: 'integer' },
 	'--max-bytes': { key: 'max_bytes', kind: 'integer' },
+	'-offset': { key: 'offset', kind: 'integer' },
 	'--offset': { key: 'offset', kind: 'integer' },
 };
 
 const FIND_FLAGS: CommandOptionMap = {
 	'-name': { key: 'name', kind: 'string' },
 	'--name': { key: 'name', kind: 'string' },
+	'--glob': { key: 'name', kind: 'string' },
 	'-path': { key: 'path', kind: 'string' },
 	'--path': { key: 'path', kind: 'string' },
 	'-type': { key: 'entry_type', kind: 'string' },
 	'--type': { key: 'entry_type', kind: 'string' },
 	'--entry-type': { key: 'entry_type', kind: 'string' },
+	'-limit': { key: 'limit', kind: 'integer' },
 	'--limit': { key: 'limit', kind: 'integer' },
 };
 
@@ -121,6 +134,7 @@ const SEARCH_FLAGS: CommandOptionMap = {
 	'--sort': { key: 'sort', kind: 'string' },
 	'--tag': { key: 'tags', kind: 'string', repeatable: true },
 	'--kind': { key: 'space_kind', kind: 'string' },
+	'-limit': { key: 'limit', kind: 'integer' },
 	'--limit': { key: 'limit', kind: 'integer' },
 };
 
@@ -138,15 +152,19 @@ export function parseHfFsRequest(request: HfFsRequest): ParsedHfFsRequest {
 		throw new Error(`EINVAL: ${request.cmd} requires an hf:// URI`);
 	}
 
-	const uri = positionals[0];
+	let uri = positionals[0];
 	if (!uri?.startsWith('hf://')) {
 		throw new Error('EINVAL: URI must start with hf://');
 	}
-	const expectedPositionals = request.cmd === 'search' ? 2 : 1;
+	if (request.cmd === 'cat' && positionals.length === 2) {
+		uri = joinUriPath(uri, positionals[1] ?? '');
+	}
+	const expectedPositionals = request.cmd === 'search' ? Number.POSITIVE_INFINITY : request.cmd === 'cat' ? 2 : 1;
 	if (positionals.length > expectedPositionals) {
 		throw new Error(`EINVAL: unexpected argument for ${request.cmd}: ${positionals[expectedPositionals] ?? ''}`);
 	}
-	if (request.cmd === 'search' && positionals[1] !== undefined && options.query !== undefined) {
+	const positionalQuery = request.cmd === 'search' ? positionals.slice(1).join(' ').trim() : undefined;
+	if (positionalQuery && options.query !== undefined) {
 		throw new Error('EINVAL: duplicate option for query: --query');
 	}
 
@@ -161,8 +179,8 @@ export function parseHfFsRequest(request: HfFsRequest): ParsedHfFsRequest {
 		...(typeof options.path === 'string' ? { path: options.path } : {}),
 		...(typeof options.query === 'string'
 			? { query: options.query }
-			: request.cmd === 'search' && positionals[1] !== undefined
-				? { query: positionals[1] }
+			: positionalQuery
+				? { query: positionalQuery }
 				: {}),
 		...(typeof options.sort === 'string' ? { sort: options.sort as HfFsSort } : {}),
 		...(Array.isArray(options.tags) ? { tags: options.tags } : {}),
@@ -176,7 +194,7 @@ export function parseHfFsRequest(request: HfFsRequest): ParsedHfFsRequest {
 }
 
 function validateParsedParams(params: HfFsParams): void {
-	if (params.op === 'search' && !params.query) {
+	if (params.op === 'search' && !params.query && !searchAllowsEmptyQuery(params.uri)) {
 		throw new Error('EINVAL: search requires a positional query or --query');
 	}
 	if (params.op === 'search' && !validSearchUri(params.uri)) {
@@ -220,6 +238,14 @@ function validateParsedParams(params: HfFsParams): void {
 			throw new Error(`EINVAL: limit must be between 1 and ${max.toString()} for this command`);
 		}
 	}
+}
+
+function joinUriPath(uri: string, path: string): string {
+	return `${uri.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`;
+}
+
+function searchAllowsEmptyQuery(uri: string): boolean {
+	return /^hf:\/\/(?:models|datasets|spaces|collections)(?:\/[^/]+)?$/.test(uri);
 }
 
 function softenParsedParams(params: HfFsParams): ParsedHfFsRequest {

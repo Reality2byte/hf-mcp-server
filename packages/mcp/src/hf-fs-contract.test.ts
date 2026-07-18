@@ -35,6 +35,96 @@ describe('parseHfFsRequest', () => {
 		});
 	});
 
+	it('accepts harmless CLI compatibility aliases', () => {
+		expect(
+			parseHfFsRequest({
+				cmd: 'ls',
+				args: ['hf://models/org/repo', '-la', '--long', '-limit', '5'],
+			}).params
+		).toEqual({
+			op: 'ls',
+			uri: 'hf://models/org/repo',
+			limit: 5,
+		});
+		expect(
+			parseHfFsRequest({
+				cmd: 'find',
+				args: ['hf://models/org/repo', '--glob', '*.json', '-limit', '5'],
+			}).params
+		).toEqual({
+			op: 'find',
+			uri: 'hf://models/org/repo',
+			name: '*.json',
+			limit: 5,
+		});
+		expect(
+			parseHfFsRequest({
+				cmd: 'cat',
+				args: ['hf://models/org/repo/README.md', '-offset', '10', '-max-bytes', '20'],
+			}).params
+		).toEqual({
+			op: 'cat',
+			uri: 'hf://models/org/repo/README.md',
+			offset: 10,
+			max_bytes: 20,
+		});
+	});
+
+	it('joins relative cat paths and multi-token search queries', () => {
+		expect(
+			parseHfFsRequest({
+				cmd: 'cat',
+				args: ['hf://models/org/repo', '/README.md', '--max-bytes', '100'],
+			}).params
+		).toEqual({
+			op: 'cat',
+			uri: 'hf://models/org/repo/README.md',
+			max_bytes: 100,
+		});
+		expect(
+			parseHfFsRequest({
+				cmd: 'search',
+				args: ['hf://models', 'vision', 'language', 'model', '--limit', '5'],
+			}).params
+		).toEqual({
+			op: 'search',
+			uri: 'hf://models',
+			query: 'vision language model',
+			limit: 5,
+		});
+	});
+
+	it('allows queryless repository discovery but still requires docs and paper queries', () => {
+		expect(
+			parseHfFsRequest({
+				cmd: 'search',
+				args: ['hf://spaces', '--kind', 'mcp', '-limit', '20'],
+			}).params
+		).toEqual({
+			op: 'search',
+			uri: 'hf://spaces',
+			space_kind: 'mcp',
+			limit: 20,
+		});
+		expect(
+			parseHfFsRequest({
+				cmd: 'search',
+				args: ['hf://models/unsloth', '--sort', 'createdAt', '--limit', '20'],
+			}).params
+		).toEqual({
+			op: 'search',
+			uri: 'hf://models/unsloth',
+			sort: 'createdAt',
+			limit: 20,
+		});
+		expect(() => parseHfFsRequest({ cmd: 'search', args: ['hf://docs'] })).toThrow(
+			'search requires a positional query or --query'
+		);
+		expect(() => parseHfFsRequest({ cmd: 'search', args: ['hf://papers'] })).toThrow(
+			'search requires a positional query or --query'
+		);
+	});
+
 	it('accepts positional and flagged search queries', () => {
 		expect(
 			parseHfFsRequest({
@@ -92,9 +182,9 @@ describe('parseHfFsRequest', () => {
 	});
 
 	it('rejects Space semantic filters on unsupported scopes', () => {
-		expect(() =>
-			parseHfFsRequest({ cmd: 'search', args: ['hf://spaces/alice', 'demo', '--kind', 'mcp'] })
-		).toThrow('--tag and --kind are supported only with search hf://spaces');
+		expect(() => parseHfFsRequest({ cmd: 'search', args: ['hf://spaces/alice', 'demo', '--kind', 'mcp'] })).toThrow(
+			'--tag and --kind are supported only with search hf://spaces'
+		);
 		expect(() => parseHfFsRequest({ cmd: 'search', args: ['hf://spaces', 'demo', '--kind', 'agent'] })).toThrow(
 			'Supported kinds: mcp'
 		);
@@ -125,11 +215,7 @@ describe('parseHfFsRequest', () => {
 		[{ cmd: 'ls', args: ['hf://models/org', '--limit'] }, '--limit requires a value'],
 		[{ cmd: 'ls', args: ['hf://models/org', '--limit', 'many'] }, '--limit requires an integer'],
 		[{ cmd: 'ls', args: ['hf://models/org', '--limit', '1', '--limit', '2'] }, 'duplicate option for limit'],
-		[{ cmd: 'search', args: ['hf://models'] }, 'search requires a positional query or --query'],
-		[
-			{ cmd: 'search', args: ['hf://models', 'vision', '--query', 'speech'] },
-			'duplicate option for query: --query',
-		],
+		[{ cmd: 'search', args: ['hf://models', 'vision', '--query', 'speech'] }, 'duplicate option for query: --query'],
 		[{ cmd: 'search', args: ['hf://models/org/repo', 'query'] }, 'search requires hf://models'],
 		[{ cmd: 'search', args: ['hf://models', 'query', '--limit', '1001'] }, 'limit must be between 1 and 1000'],
 		[{ cmd: 'ls', args: ['hf://models/trending', '--limit', '21'] }, 'limit must be between 1 and 20'],
