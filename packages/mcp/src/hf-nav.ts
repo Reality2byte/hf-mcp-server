@@ -465,9 +465,6 @@ export class HfNavTool {
 			);
 		}
 		const query = params.query?.trim();
-		if (!query) {
-			throw new Error('EINVAL: search requires query');
-		}
 		const limit = params.limit ?? DEFAULT_LIMIT;
 		const collectionLimit = parsed.kind === 'collection-owner' ? limit : Math.min(limit, GLOBAL_EXPANDED_LIMIT);
 		const page = await this.listCollections({
@@ -740,9 +737,6 @@ function validateParams(params: HfNavParams): void {
 	}
 	if (params.recursive === true && params.op !== 'ls') {
 		throw new Error('EINVAL: recursive applies only to ls');
-	}
-	if (params.op === 'search' && !params.query?.trim()) {
-		throw new Error('EINVAL: search requires query');
 	}
 }
 

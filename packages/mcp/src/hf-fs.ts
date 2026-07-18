@@ -177,13 +177,17 @@ function validateHfFsParams(params: HfFsParams): void {
 	if ((params.name !== undefined || params.path !== undefined) && params.op !== 'find') {
 		throw new Error(`EINVAL: name and path are not valid for ${params.op}; they apply only to find`);
 	}
-	if (params.op === 'search' && !params.query?.trim()) {
+	if (params.op === 'search' && !params.query?.trim() && !searchAllowsEmptyQuery(params.uri)) {
 		throw new Error('EINVAL: search requires query');
 	}
 }
 
 function isNavigationUri(uri: string): boolean {
 	return uri === 'hf://collections' || uri.startsWith('hf://collections/');
+}
+
+function searchAllowsEmptyQuery(uri: string): boolean {
+	return /^hf:\/\/(?:models|datasets|spaces|collections)(?:\/[^/]+)?$/.test(uri);
 }
 
 function isRootUri(uri: string): boolean {
@@ -747,12 +751,13 @@ export class HfFsTool {
 		}
 
 		const query = params.query?.trim();
-		if (!query) {
-			throw new Error('EINVAL: search requires query');
-		}
 
 		const limit = normalizedSearchLimit(params.limit);
-		if (parsed.repoType === 'space' && !parsed.namespace) {
+		if (
+			parsed.repoType === 'space' &&
+			!parsed.namespace &&
+			(Boolean(query) || params.tags !== undefined || params.space_kind !== undefined)
+		) {
 			return await this.searchSemanticSpaces(params, limit);
 		}
 		const fetchLimit = limit + 1;
@@ -1130,12 +1135,15 @@ export class HfFsTool {
 
 	private async *searchRepoEntries(
 		repoType: Exclude<RepoType, 'bucket'>,
-		options: { query: string; owner?: string; sort?: RepoSearchSort; limit: number }
+		options: { query?: string; owner?: string; sort?: RepoSearchSort; limit: number }
 	): AsyncGenerator<HfFsEntry> {
 		switch (repoType) {
 			case 'model':
 				for await (const model of listModels({
-					search: { query: options.query, ...(options.owner ? { owner: options.owner } : {}) },
+					search: {
+						...(options.query ? { query: options.query } : {}),
+						...(options.owner ? { owner: options.owner } : {}),
+					},
 					...(options.sort ? { sort: options.sort } : {}),
 					limit: options.limit,
 					...(this.hubUrl ? { hubUrl: this.hubUrl } : {}),
@@ -1146,7 +1154,10 @@ export class HfFsTool {
 				return;
 			case 'dataset':
 				for await (const dataset of listDatasets({
-					search: { query: options.query, ...(options.owner ? { owner: options.owner } : {}) },
+					search: {
+						...(options.query ? { query: options.query } : {}),
+						...(options.owner ? { owner: options.owner } : {}),
+					},
 					...(options.sort ? { sort: options.sort } : {}),
 					limit: options.limit,
 					...(this.hubUrl ? { hubUrl: this.hubUrl } : {}),
@@ -1157,7 +1168,10 @@ export class HfFsTool {
 				return;
 			case 'space':
 				for await (const space of listSpaces({
-					search: { query: options.query, ...(options.owner ? { owner: options.owner } : {}) },
+					search: {
+						...(options.query ? { query: options.query } : {}),
+						...(options.owner ? { owner: options.owner } : {}),
+					},
 					...(options.sort ? { sort: options.sort } : {}),
 					...(this.hubUrl ? { hubUrl: this.hubUrl } : {}),
 					...(this.accessToken ? { accessToken: this.accessToken } : {}),
