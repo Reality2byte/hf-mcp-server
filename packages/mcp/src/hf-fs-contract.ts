@@ -40,11 +40,11 @@ export interface HfFsParams {
 export const HF_FS_DESCRIPTION = `Use to access the Hugging Face Hub. Navigate resources with ls, cat, find, stat, and search over hf:// URIs. Roots: hf://models, hf://datasets, hf://spaces, hf://buckets, hf://collections, hf://papers, hf://docs. For papers, ls hf://papers/ARXIV_ID to discover related resources; cat hf://papers/ARXIV_ID/paper.md or metadata.json. Documentation paths include the current version from each product's llms.txt manifest.
 
 Grammar; each token below is one args array element:
-  ls     URI [(-R|-r|--recursive)] [(-l|-a|-la|-al|--long)] [--glob GLOB]
+  ls     URI [(-R|-r|-lR|-laR|--recursive)] [(-l|-a|-la|-al|--long)] [--glob GLOB]
              [(-type|--type|--entry-type) TYPE] [--sort SORT] [(-limit|--limit) N]
   cat    URI [RELATIVE_PATH] [(-offset|--offset) N] [(-max-bytes|--max-bytes) N]
-  stat   URI
-  find   URI [(-name|--name|--glob) GLOB] [(-path|--path) GLOB]
+  stat   URI [RELATIVE_PATH]
+  find   URI [(-R|-r|--recursive)] [(-name|--name|--glob) GLOB] [(-path|--path) GLOB]
              [(-type|--type|--entry-type) TYPE] [(-limit|--limit) N]
   search URI [QUERY...] [(-type|--type|--entry-type) TYPE] [--sort SORT]
                         [--tag TAG] [--kind mcp] [(-limit|--limit) N]
@@ -55,8 +55,9 @@ SORT = createdAt|downloads|likes|lastModified|likes30d|trendingScore|mainSize|id
 URI starts with hf://. QUERY and GLOB are each one string token.
 Search URI: hf://models|datasets|spaces[/OWNER], hf://collections[/OWNER], any hf://docs scope, or exactly hf://papers; not hf://.
 Repository and collection searches may omit QUERY to browse or filter; documentation and paper searches require it.
-Search joins multiple positional QUERY tokens with spaces. Cat joins one RELATIVE_PATH token to URI.
+Search joins multiple positional QUERY tokens with spaces. Cat and stat join one RELATIVE_PATH token to URI.
 Long-list flags are accepted for compatibility; hf_fs listings are already structured, so they do not alter output.
+Find is already recursive, so recursive flags are accepted without altering behavior.
 Space search: hf://spaces uses semantic search; repeat --tag to require tags, or use --kind mcp for --tag mcp-server. hf://spaces/OWNER uses owner-scoped keyword search.
 Documentation: ls hf://docs for products; search any docs scope; use returned hf:// URIs verbatim.
 Trending listings: ls hf://models/trending, hf://datasets/trending, or hf://spaces/trending. They return up to 20 entries.
@@ -91,6 +92,8 @@ const TYPE_ALIASES: Readonly<Record<string, HfFsEntryType>> = {
 const LS_FLAGS: CommandOptionMap = {
 	'-R': { key: 'recursive', kind: 'boolean' },
 	'-r': { key: 'recursive', kind: 'boolean' },
+	'-lR': { key: 'recursive', kind: 'boolean' },
+	'-laR': { key: 'recursive', kind: 'boolean' },
 	'--recursive': { key: 'recursive', kind: 'boolean' },
 	'-l': { key: 'long', kind: 'boolean' },
 	'-a': { key: 'all', kind: 'boolean' },
@@ -114,6 +117,9 @@ const CAT_FLAGS: CommandOptionMap = {
 };
 
 const FIND_FLAGS: CommandOptionMap = {
+	'-R': { key: 'recursive_compat', kind: 'boolean' },
+	'-r': { key: 'recursive_compat', kind: 'boolean' },
+	'--recursive': { key: 'recursive_compat', kind: 'boolean' },
 	'-name': { key: 'name', kind: 'string' },
 	'--name': { key: 'name', kind: 'string' },
 	'--glob': { key: 'name', kind: 'string' },
@@ -156,10 +162,11 @@ export function parseHfFsRequest(request: HfFsRequest): ParsedHfFsRequest {
 	if (!uri?.startsWith('hf://')) {
 		throw new Error('EINVAL: URI must start with hf://');
 	}
-	if (request.cmd === 'cat' && positionals.length === 2) {
+	if ((request.cmd === 'cat' || request.cmd === 'stat') && positionals.length === 2) {
 		uri = joinUriPath(uri, positionals[1] ?? '');
 	}
-	const expectedPositionals = request.cmd === 'search' ? Number.POSITIVE_INFINITY : request.cmd === 'cat' ? 2 : 1;
+	const expectedPositionals =
+		request.cmd === 'search' ? Number.POSITIVE_INFINITY : request.cmd === 'cat' || request.cmd === 'stat' ? 2 : 1;
 	if (positionals.length > expectedPositionals) {
 		throw new Error(`EINVAL: unexpected argument for ${request.cmd}: ${positionals[expectedPositionals] ?? ''}`);
 	}
