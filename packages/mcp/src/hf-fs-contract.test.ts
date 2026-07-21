@@ -46,17 +46,19 @@ describe('parseHfFsRequest', () => {
 			uri: 'hf://models/org/repo',
 			limit: 5,
 		});
-		expect(
-			parseHfFsRequest({
-				cmd: 'find',
-				args: ['hf://models/org/repo', '--glob', '*.json', '-limit', '5'],
-			}).params
-		).toEqual({
-			op: 'find',
-			uri: 'hf://models/org/repo',
-			name: '*.json',
-			limit: 5,
-		});
+		for (const recursive of ['-R', '-r', '--recursive']) {
+			expect(
+				parseHfFsRequest({
+					cmd: 'find',
+					args: ['hf://models/org/repo', recursive, '--glob', '*.json', '-limit', '5'],
+				}).params
+			).toEqual({
+				op: 'find',
+				uri: 'hf://models/org/repo',
+				name: '*.json',
+				limit: 5,
+			});
+		}
 		expect(
 			parseHfFsRequest({
 				cmd: 'cat',
@@ -70,7 +72,22 @@ describe('parseHfFsRequest', () => {
 		});
 	});
 
-	it('joins relative cat paths and multi-token search queries', () => {
+	it('accepts combined long-list recursion flags', () => {
+		for (const flag of ['-lR', '-laR']) {
+			expect(
+				parseHfFsRequest({
+					cmd: 'ls',
+					args: [flag, 'hf://models/org/repo'],
+				}).params
+			).toEqual({
+				op: 'ls',
+				uri: 'hf://models/org/repo',
+				recursive: true,
+			});
+		}
+	});
+
+	it('joins relative cat and stat paths and multi-token search queries', () => {
 		expect(
 			parseHfFsRequest({
 				cmd: 'cat',
@@ -80,6 +97,15 @@ describe('parseHfFsRequest', () => {
 			op: 'cat',
 			uri: 'hf://models/org/repo/README.md',
 			max_bytes: 100,
+		});
+		expect(
+			parseHfFsRequest({
+				cmd: 'stat',
+				args: ['hf://models/org/repo', 'model.safetensors.index.json'],
+			}).params
+		).toEqual({
+			op: 'stat',
+			uri: 'hf://models/org/repo/model.safetensors.index.json',
 		});
 		expect(
 			parseHfFsRequest({
