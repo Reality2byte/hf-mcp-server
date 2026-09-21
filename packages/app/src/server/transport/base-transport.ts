@@ -394,6 +394,12 @@ export abstract class BaseTransport {
 					this.metrics.trackUnauthorizedConnection();
 					return { shouldContinue: false, statusCode: 401, userIdentified: false };
 				}
+				if (isStrictTokenModeEnabled()) {
+					// Validation is unavailable, not necessarily invalid. Do not log error
+					// details that could contain credentials or count this as unauthorized.
+					logger.debug('HF token validation unavailable in strict token mode - returning 503');
+					return { shouldContinue: false, statusCode: 503, userIdentified: false };
+				}
 				// For other errors (network issues, 500s, etc.), continue processing
 				// but don't track as authenticated since we couldn't validate
 				logger.debug({ error }, 'Non-401 error from Hugging Face whoami, continuing without auth tracking');
@@ -401,6 +407,11 @@ export abstract class BaseTransport {
 				return { shouldContinue: true, userIdentified: false };
 			}
 		} else {
+			if (isStrictTokenModeEnabled()) {
+				logger.trace('NO TOKEN, STRICT TOKEN MODE enabled - returning 401');
+				this.metrics.trackUnauthorizedConnection();
+				return { shouldContinue: false, statusCode: 401, userIdentified: false };
+			}
 			// Track anonymous connection
 			this.metrics.trackAnonymousConnection();
 			const shouldContinue: boolean = !headers['x-mcp-force-auth'];
@@ -408,4 +419,14 @@ export abstract class BaseTransport {
 			return { shouldContinue, userIdentified: false };
 		}
 	}
+}
+
+/**
+ * Strict Token Mode (opt-in): when `MCP_STRICT_TOKEN=true`, token-less
+ * HTTP connections are rejected with 401 at the auth gate before any
+ * server instance is built. Supplied tokens must pass whoami validation;
+ * validation failures other than an explicit 401 are rejected with 503.
+ */
+function isStrictTokenModeEnabled(): boolean {
+	return process.env.MCP_STRICT_TOKEN === 'true';
 }

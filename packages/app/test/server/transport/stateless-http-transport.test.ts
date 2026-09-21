@@ -15,6 +15,7 @@ import { formatMetricsForAPI } from '../../../src/shared/transport-metrics.js';
 import express from 'express';
 import { createProgressRelay } from '../../../src/server/utils/progress-relay.js';
 import { z } from 'zod';
+import * as hfWhoamiClient from '../../../src/server/utils/hf-whoami-client.js';
 import * as skillCatalogCache from '../../../src/server/skills/skill-catalog-cache.js';
 import type { SkillCatalog, SkillEntry } from '../../../src/server/skills/skill-types.js';
 
@@ -157,6 +158,72 @@ describe('StatelessHttpTransport', () => {
 		} else {
 			process.env.DISABLE_TOOLS = originalDisableTools;
 		}
+	});
+
+	describe('strict token mode whoami failures', () => {
+		afterEach(() => {
+			vi.restoreAllMocks();
+			vi.unstubAllEnvs();
+		});
+
+		describe.each([
+			['modern', '2026-07-28'],
+			['legacy', '2025-03-26'],
+		])('%s HTTP path', (_era, protocolVersion) => {
+			it.each([
+				['upstream HTTP failure', new hfWhoamiClient.HfWhoamiRequestError('http', 500)],
+				['invalid response', new hfWhoamiClient.HfWhoamiRequestError('invalid_response')],
+				['network failure', new TypeError('fetch failed')],
+				['timeout', new DOMException('Request timed out', 'TimeoutError')],
+			])('returns 503 without an auth challenge or building a server on %s', async (_failure, error) => {
+				vi.stubEnv('MCP_STRICT_TOKEN', 'true');
+				const whoamiSpy = vi.spyOn(hfWhoamiClient, 'fetchHfWhoami').mockRejectedValue(error);
+				const serverFactory = vi.fn<ServerFactory>();
+				const app = express();
+				app.use(express.json());
+				transport = new StatelessHttpTransport(serverFactory, app);
+				await transport.initialize();
+
+				const httpServer = app.listen(0);
+				try {
+					await new Promise<void>((resolve, reject) => {
+						httpServer.once('listening', resolve);
+						httpServer.once('error', reject);
+					});
+					const address = httpServer.address();
+					if (!address || typeof address === 'string') {
+						throw new Error('Expected the test server to listen on a TCP port');
+					}
+
+					const response = await fetch(`http://127.0.0.1:${address.port}/mcp`, {
+						method: 'POST',
+						headers: {
+							accept: 'application/json, text/event-stream',
+							'content-type': 'application/json',
+							'mcp-protocol-version': protocolVersion,
+							authorization: 'Bearer hf_strict_whoami_failure',
+						},
+						body: JSON.stringify({
+							jsonrpc: '2.0',
+							id: 1,
+							method: 'tools/list',
+							params: { _meta: { 'io.modelcontextprotocol/protocolVersion': protocolVersion } },
+						}),
+					});
+					const body = await response.text();
+					expect(whoamiSpy).toHaveBeenCalledExactlyOnceWith('hf_strict_whoami_failure');
+					expect(serverFactory).not.toHaveBeenCalled();
+					expect(response.status).toBe(503);
+					expect(response.headers.get('www-authenticate')).toBeNull();
+					expect(body).toBe('Service Unavailable');
+				} finally {
+					await new Promise<void>((resolve, reject) => {
+						httpServer.close((error) => (error ? reject(error) : resolve()));
+					});
+					await transport.cleanup();
+				}
+			});
+		});
 	});
 
 	describe('requestsProgress', () => {
