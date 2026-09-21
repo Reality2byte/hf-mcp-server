@@ -763,8 +763,9 @@ export class StatelessHttpTransport extends BaseTransport {
 				isAuthenticated: false,
 				clientInfo,
 			});
-			res.set('WWW-Authenticate', buildOAuthResourceHeader(req));
-			res.status(authResult.statusCode || 401).send('Unauthorized');
+			const statusCode = authResult.statusCode || 401;
+			if (statusCode === 401) res.set('WWW-Authenticate', buildOAuthResourceHeader(req));
+			res.status(statusCode).send(statusCode === 503 ? 'Service Unavailable' : 'Unauthorized');
 			return;
 		}
 
@@ -975,8 +976,9 @@ export class StatelessHttpTransport extends BaseTransport {
 				isAuthenticated: false,
 				clientInfo: existingSession?.clientInfo,
 			});
-			res.set('WWW-Authenticate', buildOAuthResourceHeader(req));
-			res.status(authResult.statusCode || 401).send('Unauthorized');
+			const statusCode = authResult.statusCode || 401;
+			if (statusCode === 401) res.set('WWW-Authenticate', buildOAuthResourceHeader(req));
+			res.status(statusCode).send(statusCode === 503 ? 'Service Unavailable' : 'Unauthorized');
 			return;
 		}
 		const protocolClientInfo = this.extractClientInfoFromRequest(requestBody) ?? existingSession?.clientInfo;

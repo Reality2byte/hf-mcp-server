@@ -46,25 +46,27 @@ const authenticatedUser = {
 } satisfies HfWhoamiResponse;
 
 function assertNoTokenInLogs(token: string): void {
-	const logged = JSON.stringify(
-		[
-			...vi.mocked(logger.trace).mock.calls,
-			...vi.mocked(logger.debug).mock.calls,
-			...vi.mocked(logger.info).mock.calls,
-			...vi.mocked(logger.warn).mock.calls,
-			...vi.mocked(logger.error).mock.calls,
-			...vi.mocked(logger.fatal).mock.calls,
-		],
-	);
+	const logged = JSON.stringify([
+		...vi.mocked(logger.trace).mock.calls,
+		...vi.mocked(logger.debug).mock.calls,
+		...vi.mocked(logger.info).mock.calls,
+		...vi.mocked(logger.warn).mock.calls,
+		...vi.mocked(logger.error).mock.calls,
+		...vi.mocked(logger.fatal).mock.calls,
+	]);
 	expect(logged).not.toContain(token);
 }
+
+afterEach(() => {
+	vi.unstubAllEnvs();
+});
 
 describe('BaseTransport whoami authentication', () => {
 	let transport: AuthTestTransport;
 
 	beforeEach(() => {
 		vi.mocked(fetchHfWhoami).mockReset();
-		delete process.env.MCP_STRICT_TOKEN;
+		vi.stubEnv('MCP_STRICT_TOKEN', undefined);
 		transport = new AuthTestTransport(vi.fn() as unknown as ServerFactory, {} as Express);
 	});
 
@@ -122,12 +124,8 @@ describe('BaseTransport strict token mode', () => {
 
 	beforeEach(() => {
 		vi.mocked(fetchHfWhoami).mockReset();
-		delete process.env.MCP_STRICT_TOKEN;
+		vi.stubEnv('MCP_STRICT_TOKEN', undefined);
 		transport = new AuthTestTransport(vi.fn() as unknown as ServerFactory, {} as Express);
-	});
-
-	afterEach(() => {
-		delete process.env.MCP_STRICT_TOKEN;
 	});
 
 	it('keeps the default fail-open behavior when strict mode is disabled', async () => {
@@ -197,12 +195,45 @@ describe('BaseTransport strict token mode', () => {
 		expect(transport.getMetrics().connections.authenticated).toBe(1);
 	});
 
+	it.each([
+		['network', new TypeError('fetch failed')],
+		['timeout', new DOMException('Timed out', 'TimeoutError')],
+		['upstream 500', new HfWhoamiRequestError('http', 500)],
+		['upstream 503', new HfWhoamiRequestError('http', 503)],
+		['invalid response', new HfWhoamiRequestError('invalid_response')],
+	])('fails closed for %s errors only in strict mode', async (_name, error) => {
+		vi.mocked(fetchHfWhoami).mockRejectedValue(error);
+		const headers = { authorization: 'Bearer secret-token-unavailable' };
+
+		expect(await transport.validate(headers)).toEqual({ shouldContinue: true, userIdentified: false });
+
+		vi.stubEnv('MCP_STRICT_TOKEN', 'true');
+		expect(await transport.validate(headers)).toEqual({
+			shouldContinue: false,
+			statusCode: 503,
+			userIdentified: false,
+		});
+		expect(transport.getMetrics().connections.authenticated).toBe(0);
+		expect(transport.getMetrics().connections.anonymous).toBe(0);
+		expect(transport.getMetrics().connections.unauthorized).toBeUndefined();
+		assertNoTokenInLogs('secret-token-unavailable');
+	});
+
+	it('does not enable strict mode for MCP_STRICT_TOKEN=1', async () => {
+		vi.stubEnv('MCP_STRICT_TOKEN', '1');
+		expect(await transport.validate({})).toEqual({ shouldContinue: true, userIdentified: false });
+	});
+
 	it('does not include token values in logs when rejecting in strict mode', async () => {
 		process.env.MCP_STRICT_TOKEN = 'true';
 		vi.mocked(fetchHfWhoami).mockRejectedValue(new HfWhoamiRequestError('http', 401));
 
 		await transport.validate({});
-		await transport.validate({ authorization: 'Bearer secret-token-xyz' });
+		expect(await transport.validate({ authorization: 'Bearer secret-token-xyz' })).toEqual({
+			shouldContinue: false,
+			statusCode: 401,
+			userIdentified: false,
+		});
 
 		assertNoTokenInLogs('secret-token-xyz');
 	});
