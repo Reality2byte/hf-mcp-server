@@ -542,29 +542,3 @@ export async function getGradioSpaces(
 
 	return results;
 }
-
-/**
- * Convenience wrapper for getting a single Gradio space
- *
- * @param spaceName - Space name (e.g., "evalstate/flux1_schnell")
- * @param hfToken - Optional HuggingFace token
- * @param options - Optional configuration
- * @returns Single GradioSpaceInfo or null if not found
- *
- * @example
- * ```typescript
- * const space = await getGradioSpace('evalstate/flux1_schnell', hfToken);
- * if (space?.runtime?.stage === 'RUNNING') {
- *   // Space is running
- * }
- * ```
- */
-/** @lintignore retained for potential future single-space lookup API */
-export async function getGradioSpace(
-	spaceName: string,
-	hfToken?: string,
-	options?: GetGradioSpacesOptions
-): Promise<GradioSpaceInfo | null> {
-	const spaces = await getGradioSpaces([spaceName], hfToken, options);
-	return spaces[0] || null;
-}

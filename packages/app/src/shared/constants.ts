@@ -6,8 +6,6 @@
 export type TransportType = 'stdio' | 'streamableHttpJson' | 'unknown';
 
 export const OAUTH_RESOURCE_BASE_URL = 'https://huggingface.co/.well-known/oauth-protected-resource/mcp';
-/** @lintignore retained for HTTP auth challenge compatibility */
-export const OAUTH_RESOURCE = `Bearer resource_metadata="${OAUTH_RESOURCE_BASE_URL}"`;
 
 // Server port (now using single port for both web app and MCP API)
 export const DEFAULT_WEB_APP_PORT = 3000;

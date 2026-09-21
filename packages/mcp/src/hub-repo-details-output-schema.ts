@@ -91,5 +91,3 @@ export const HUB_REPO_DETAILS_PROPOSED_OUTPUT_SCHEMA = z.object({
 	total_results: z.number().int().nonnegative(),
 	results_shared: z.number().int().nonnegative(),
 });
-
-export type HubRepoDetailsOutput = z.infer<typeof HUB_REPO_DETAILS_PROPOSED_OUTPUT_SCHEMA>;
