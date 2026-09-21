@@ -28,6 +28,9 @@ jobs:
       - name: Type check
         run: pnpm typecheck
 
+      - name: Check for unused exports and dependencies
+        run: pnpm knip
+
   test:
     runs-on: ubuntu-latest
     steps:

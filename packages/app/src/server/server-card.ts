@@ -5,7 +5,7 @@ import { SERVER_VERSION } from './server-build-info.js';
 
 export const SERVER_CARD_PATH = '/mcp/server-card';
 export const SERVER_CARD_MEDIA_TYPE = 'application/mcp-server-card+json';
-export const SERVER_CARD_SCHEMA_URL = 'https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json';
+const SERVER_CARD_SCHEMA_URL = 'https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json';
 export const MCP_SERVER_NAME = 'huggingface.co/mcp';
 const DEFAULT_MCP_REMOTE_URL = 'https://huggingface.co/mcp';
 

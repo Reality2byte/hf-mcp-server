@@ -115,7 +115,7 @@ const organizationResponseSchema = z.looseObject({
  * authentication nor become public output accidentally. The hf_whoami mapper
  * separately allowlists every field exposed through MCP.
  */
-export const hfWhoamiResponseSchema = z.discriminatedUnion('type', [
+const hfWhoamiResponseSchema = z.discriminatedUnion('type', [
 	userResponseSchema,
 	appResponseSchema,
 	organizationResponseSchema,

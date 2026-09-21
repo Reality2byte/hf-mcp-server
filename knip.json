@@ -1,6 +1,5 @@
 {
 	"$schema": "https://unpkg.com/knip@6/schema.json",
-	"tags": ["-lintignore"],
 	"workspaces": {
 		".": {
 			"entry": ["package.json", "scripts/**/*.{js,mjs,cjs,ts,mts,cts}"],

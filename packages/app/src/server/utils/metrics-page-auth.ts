@@ -8,7 +8,7 @@ const TOKEN_NONCE_BYTES = 16;
 const TOKEN_SIGNATURE_BYTES = 32;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 
-export interface MetricsPageAuthRequest {
+interface MetricsPageAuthRequest {
 	cookieHeader: string | undefined;
 	headerPassword: string | undefined;
 	queryPassword: unknown;

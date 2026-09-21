@@ -77,5 +77,3 @@ export const HUB_REPO_SEARCH_PROPOSED_OUTPUT_SCHEMA = z.object({
 	truncated: z.boolean(),
 	truncation_message: z.string().optional(),
 });
-
-export type HubRepoSearchOutput = z.infer<typeof HUB_REPO_SEARCH_PROPOSED_OUTPUT_SCHEMA>;

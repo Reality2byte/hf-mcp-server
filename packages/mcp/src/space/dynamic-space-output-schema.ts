@@ -102,5 +102,3 @@ export const DYNAMIC_SPACE_PROPOSED_OUTPUT_SCHEMA = z.object({
 	total_results: z.number().int().nonnegative(),
 	results_shared: z.number().int().nonnegative(),
 });
-
-export type DynamicSpaceOutput = z.infer<typeof DYNAMIC_SPACE_PROPOSED_OUTPUT_SCHEMA>;

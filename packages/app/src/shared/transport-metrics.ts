@@ -11,7 +11,7 @@ export type ServerDiscoverOutcome =
 	| 'authRejected'
 	| 'internalServerError'
 	| 'otherError';
-export const SERVER_DISCOVER_OUTCOMES = [
+const SERVER_DISCOVER_OUTCOMES = [
 	'success',
 	'headerBodyMismatch',
 	'unsupportedVersion',

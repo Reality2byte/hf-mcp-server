@@ -1,10 +1,8 @@
 /**
  * Utility functions for handling Gradio endpoint detection and configuration
  */
-import type { SpaceTool } from '../../shared/settings.js';
 import { GRADIO_PREFIX, GRADIO_PRIVATE_PREFIX } from '../../shared/constants.js';
 import { logger } from './logger.js';
-import { getGradioSpaces } from './gradio-discovery.js';
 
 /**
  * Determines if a tool name represents a Gradio endpoint
@@ -138,72 +136,4 @@ export function parseGradioSpaceIds(gradioParam: string): ParsedGradioSpace[] {
 	}
 
 	return spaces;
-}
-
-/**
- * Fetches real subdomains from the HuggingFace API for the given space IDs.
- * Now uses the optimized discovery API with caching for better performance.
- *
- * @param spaceIds - Array of space IDs to fetch subdomains for
- * @param hfToken - Optional HuggingFace token for authentication
- * @param hubUrl - Optional hub URL for custom HuggingFace instances (not used with new API)
- * @returns Array of SpaceTool objects with real subdomains from the API
- *
- * @example
- * const spaces = [{ name: 'microsoft/Florence-2-large' }];
- * const tools = await fetchGradioSubdomains(spaces, 'hf_token');
- * // Returns: [{ _id: 'gradio_...', name: 'microsoft/Florence-2-large', subdomain: 'microsoft-florence-2-large', emoji: '🔧' }]
- */
-async function fetchGradioSubdomains(spaceIds: ParsedGradioSpace[], hfToken?: string): Promise<SpaceTool[]> {
-	if (spaceIds.length === 0) {
-		return [];
-	}
-
-	const spaceNames = spaceIds.map((s) => s.name);
-
-	// Use the new optimized discovery API with caching
-	// Skip schemas since we only need metadata here
-	const spaces = await getGradioSpaces(spaceNames, hfToken, { skipSchemas: true });
-
-	// Convert to SpaceTool format
-	const spaceTools: SpaceTool[] = spaces.map((space) => ({
-		_id: space._id,
-		name: space.name,
-		subdomain: space.subdomain,
-		emoji: space.emoji,
-	}));
-
-	logger.debug(
-		{
-			requested: spaceIds.length,
-			successful: spaceTools.length,
-		},
-		'Fetched Gradio subdomains'
-	);
-
-	return spaceTools;
-}
-
-/**
- * Parses gradio parameter and fetches real subdomains from HuggingFace API.
- * This is the main entry point that combines parsing and API fetching.
- *
- * @param gradioParam - Comma-separated list of space IDs
- * @param hfToken - Optional HuggingFace token for authentication
- * @param hubUrl - Optional hub URL for custom HuggingFace instances
- * @returns Array of SpaceTool objects with real subdomains
- *
- * @example
- * const tools = await parseAndFetchGradioEndpoints('microsoft/Florence-2-large', 'hf_token');
- * // Returns array of SpaceTool objects with real subdomains from HuggingFace API
- */
-/** @lintignore retained for potential future direct endpoint parsing API */
-export async function parseAndFetchGradioEndpoints(gradioParam: string, hfToken?: string): Promise<SpaceTool[]> {
-	const parsedSpaces = parseGradioSpaceIds(gradioParam);
-
-	if (parsedSpaces.length === 0) {
-		return [];
-	}
-
-	return fetchGradioSubdomains(parsedSpaces, hfToken);
 }
