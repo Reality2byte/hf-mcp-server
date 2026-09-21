@@ -126,6 +126,38 @@ describe('MetricsCounter', () => {
 		});
 	});
 
+	it('attributes completion errors only to the request protocol without incrementing request-time counts', () => {
+		const metrics = new MetricsCounter();
+		const client = { name: 'mixed-client', version: '1' };
+		metrics.associateSessionWithClient(client);
+		const protocols = [
+			{ era: 'legacy' as const, version: '2025-06-18' },
+			{ era: 'legacy' as const, version: '2025-11-25' },
+			{ era: 'modern' as const, version: '2025-11-25' },
+		];
+		for (const protocol of protocols) {
+			metrics.trackProtocolRequest(protocol.era, protocol.version);
+			metrics.trackClientProtocol(client, protocol.era, protocol.version);
+		}
+		for (let i = 0; i < 2; i++) metrics.trackProtocolToolCall('legacy', '2025-06-18', client);
+		metrics.trackProtocolToolCall('legacy', '2025-11-25', client);
+		// Complete an older request after the client has used newer protocols.
+		metrics.trackMethod('tools/call:hf_fs', 10, true, client, protocols[0]);
+		metrics.trackMethod('tools/call', 10, false, client, protocols[0]);
+		metrics.trackMethod('tools/call:hf_fs', 10, false, client, protocols[1]);
+		metrics.trackMethod('resources/read', 10, true, client, protocols[2]);
+		metrics.trackMethod('tools/list', 10, true, client, protocols[0]);
+		const result = formatMetricsForAPI(metrics.getMetrics(), 'streamableHttpJson', true).clients[0];
+		expect(result).toMatchObject({ toolCallCount: 3, toolCallErrorCount: 1, toolCallErrorRate: (1 / 3) * 100 });
+		expect(result?.protocols).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ ...protocols[0], toolCallCount: 2, toolCallErrorCount: 1, toolCallErrorRate: 50 }),
+				expect.objectContaining({ ...protocols[1], toolCallCount: 1, toolCallErrorCount: 0, toolCallErrorRate: 0 }),
+				expect.objectContaining({ ...protocols[2], toolCallCount: 0, toolCallErrorCount: 0, toolCallErrorRate: 0 }),
+			])
+		);
+	});
+
 	it('bounds unexpected protocol-version cardinality', () => {
 		const metrics = new MetricsCounter();
 		for (let index = 0; index < 40; index++) {

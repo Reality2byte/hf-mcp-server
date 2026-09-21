@@ -1,6 +1,7 @@
 //import "./App.css";
 
 import useSWR from 'swr';
+import { ThemeToggle } from './components/ThemeToggle';
 import { TransportMetricsCard } from './components/TransportMetricsCard';
 import { ProtocolMetricsCard } from './components/ProtocolMetricsCard';
 import { McpMethodsCard } from './components/McpMethodsCard';
@@ -75,11 +76,12 @@ function App() {
 							<p className="truncate text-xs text-muted-foreground">Hugging Face MCP server telemetry</p>
 						</div>
 					</div>
-					<div className="hidden items-center gap-3 text-xs text-muted-foreground sm:flex">
-						<span className="rounded-lg border bg-card px-3 py-1.5 font-mono">
+					<div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
+						<span className="hidden rounded-lg border bg-card px-3 py-1.5 font-mono sm:inline">
 							{transportInfo?.transport === 'stdio' ? 'stdin/stdout' : '/mcp'}
 						</span>
-						<span className="size-2 rounded-full bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.12)]" />
+						<span className="hidden size-2 rounded-full bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.12)] sm:inline" />
+						<ThemeToggle />
 					</div>
 				</div>
 			</header>

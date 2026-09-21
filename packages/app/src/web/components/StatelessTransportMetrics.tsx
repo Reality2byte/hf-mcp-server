@@ -17,7 +17,6 @@ type ClientProtocolData = Omit<
 > & {
 	protocol: ClientProtocolMetric;
 	sortKey: string;
-	clientWideToolCallCount: number;
 	requestCount: number;
 	toolCallCount: number;
 	firstSeen: string;
@@ -83,14 +82,15 @@ interface StatelessTransportMetricsProps {
 
 export function StatelessTransportMetrics({ metrics }: StatelessTransportMetricsProps) {
 	const clientData: ClientProtocolData[] = metrics.clients.flatMap((client) => {
-		const { protocols, toolCallCount: clientWideToolCallCount, ...clientTotals } = client;
+		const { protocols, ...clientTotals } = client;
 		return protocols.map((protocol) => ({
 			...clientTotals,
 			protocol,
 			sortKey: `${client.name}\u0000${client.version}\u0000${protocol.era}\u0000${protocol.version}`,
-			clientWideToolCallCount,
 			requestCount: protocol.requestCount,
 			toolCallCount: protocol.toolCallCount,
+			toolCallErrorCount: protocol.toolCallErrorCount,
+			toolCallErrorRate: protocol.toolCallErrorRate,
 			firstSeen: protocol.firstSeen,
 			lastSeen: protocol.lastSeen,
 		}));
@@ -161,13 +161,13 @@ export function StatelessTransportMetrics({ metrics }: StatelessTransportMetrics
 			header: createSortableHeader('Tool Error Rate', 'right'),
 			cell: ({ row }) => {
 				const client = row.original;
-				if (client.clientWideToolCallCount === 0) {
+				if (client.toolCallCount === 0) {
 					return <div className="text-right text-muted-foreground">—</div>;
 				}
 				return (
 					<div
 						className="text-right font-mono text-sm"
-						title={`${client.toolCallErrorCount.toLocaleString()} failed of ${client.clientWideToolCallCount.toLocaleString()} client tool calls across all protocol versions`}
+						title={`${client.toolCallErrorCount.toLocaleString()} failed of ${client.toolCallCount.toLocaleString()} tool calls for ${client.protocol.era} · ${client.protocol.version}`}
 					>
 						{client.toolCallErrorRate > 0 ? (
 							<span className="text-red-600 dark:text-red-400">{client.toolCallErrorRate.toFixed(1)}%</span>
@@ -340,7 +340,7 @@ export function StatelessTransportMetrics({ metrics }: StatelessTransportMetrics
 				<CardContent>
 					<SectionHeader
 						title="Client implementations"
-						description="One row per implementation and exact protocol version. Error rate is client-wide across protocol versions."
+						description="One row per implementation and exact protocol version. Tool calls and error rates are specific to each protocol version."
 					/>
 					<DataTable
 						columns={createClientColumns()}

@@ -52,6 +52,10 @@ interface ProtocolUsageMetrics {
 	lastSeen: Date;
 }
 
+interface ClientProtocolUsageMetrics extends ProtocolUsageMetrics {
+	toolCallErrorCount: number;
+}
+
 interface AggregateProtocolUsageMetrics extends ProtocolUsageMetrics {
 	uniqueClients: number;
 	uniqueUsers: number;
@@ -147,7 +151,7 @@ interface ClientMetrics {
 	anonCount: number;
 	uniqueAuthCount: number;
 	uniqueUserCount: number;
-	protocols: Map<string, ProtocolUsageMetrics>;
+	protocols: Map<string, ClientProtocolUsageMetrics>;
 }
 
 /**
@@ -328,6 +332,8 @@ export interface TransportMetricsResponse {
 			version: string;
 			requestCount: number;
 			toolCallCount: number;
+			toolCallErrorCount: number;
+			toolCallErrorRate: number;
 			firstSeen: string;
 			lastSeen: string;
 		}>;
@@ -445,6 +451,8 @@ export function formatMetricsForAPI(
 			protocols: Array.from(client.protocols.values())
 				.map((protocol) => ({
 					...protocol,
+					toolCallErrorRate:
+						protocol.toolCallCount > 0 ? (protocol.toolCallErrorCount / protocol.toolCallCount) * 100 : 0,
 					firstSeen: protocol.firstSeen.toISOString(),
 					lastSeen: protocol.lastSeen.toISOString(),
 				}))
@@ -714,6 +722,7 @@ export class MetricsCounter {
 				version: normalizedVersion,
 				requestCount: 1,
 				toolCallCount: 0,
+				toolCallErrorCount: 0,
 				firstSeen: new Date(),
 				lastSeen: new Date(),
 			});
@@ -984,7 +993,8 @@ export class MetricsCounter {
 		method: string | null,
 		responseTime?: number,
 		isError: boolean = false,
-		clientInfo?: { name: string; version: string }
+		clientInfo?: { name: string; version: string },
+		protocol?: { era: ProtocolEra; version: string }
 	): void {
 		if (!method) return;
 		method = this.normalizeMethodName(method);
@@ -1028,6 +1038,12 @@ export class MetricsCounter {
 					clientMetrics.toolCallCount++;
 					if (isError) {
 						clientMetrics.toolCallErrorCount++;
+						// Completion must use the request's protocol, never mutable client/session state.
+						if (protocol) {
+							const version = this.normalizeProtocolVersion(protocol.era, protocol.version);
+							const usage = clientMetrics.protocols.get(getProtocolKey(protocol.era, version));
+							if (usage) usage.toolCallErrorCount++;
+						}
 					}
 				}
 			}

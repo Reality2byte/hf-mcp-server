@@ -769,13 +769,6 @@ export class StatelessHttpTransport extends BaseTransport {
 			return;
 		}
 
-		const disabledTool = disabledToolCallName(requestBody);
-		if (disabledTool) {
-			this.trackMethodCall(trackingName, startTime, true, clientInfo);
-			res.status(200).json(JsonRpcErrors.invalidParams(disabledToolMessage(disabledTool), extractJsonRpcId(req.body)));
-			return;
-		}
-
 		this.trackNewConnection();
 		if (clientInfo) {
 			// Modern HTTP is request-scoped. Mark the identity connected only
@@ -793,6 +786,14 @@ export class StatelessHttpTransport extends BaseTransport {
 			clientInfo
 		);
 		this.trackProtocolToolCall(trackingName, 'modern', protocolVersion, clientInfo);
+
+		const disabledTool = disabledToolCallName(requestBody);
+		if (disabledTool) {
+			this.trackMethodCall(trackingName, startTime, true, clientInfo, { era: 'modern', version: protocolVersion });
+			res.status(200).json(JsonRpcErrors.invalidParams(disabledToolMessage(disabledTool), extractJsonRpcId(req.body)));
+			this.metrics.disconnectClient(clientInfo);
+			return;
+		}
 
 		if (isServerDiscover) {
 			logSystemEvent('server_discover', requestId, {
@@ -851,7 +852,10 @@ export class StatelessHttpTransport extends BaseTransport {
 
 			const responseSummary = responseCapture.summary();
 			const responseIsError = res.statusCode >= 400 || responseSummary.isError || responseSummary.truncated === true;
-			this.trackMethodCall(trackingName, startTime, responseIsError, clientInfo);
+			this.trackMethodCall(trackingName, startTime, responseIsError, clientInfo, {
+				era: 'modern',
+				version: protocolVersion,
+			});
 			this.recordSkillEvent(
 				requestBody,
 				startTime,
@@ -888,7 +892,7 @@ export class StatelessHttpTransport extends BaseTransport {
 			);
 		} catch (error) {
 			trackServerDiscoverOutcome('internalServerError');
-			this.trackMethodCall(trackingName, startTime, true, clientInfo);
+			this.trackMethodCall(trackingName, startTime, true, clientInfo, { era: 'modern', version: protocolVersion });
 			this.recordSkillEvent(requestBody, startTime, false, {
 				requestId,
 				protocolEra: 'modern',
@@ -962,7 +966,7 @@ export class StatelessHttpTransport extends BaseTransport {
 				requestBody?.params,
 				earlyClientInfo
 			);
-			this.trackMethodCall(trackingName, startTime, true, earlyClientInfo);
+			this.trackMethodCall(trackingName, startTime, true, earlyClientInfo, { era: 'legacy', version: protocolVersion });
 			res.status(200).json(JsonRpcErrors.methodNotFound(extractJsonRpcId(req.body), `${rpcMethod} is not supported`));
 			return;
 		}
@@ -999,7 +1003,10 @@ export class StatelessHttpTransport extends BaseTransport {
 			const clientInfo =
 				this.extractClientInfoFromRequest(requestBody) ??
 				(typeof promptSessionId === 'string' ? this.analyticsSessions.get(promptSessionId)?.clientInfo : undefined);
-			this.trackMethodCall(trackingName, startTime, true, clientInfo);
+			this.trackMethodCall(trackingName, startTime, true, protocolClientInfo ?? clientInfo, {
+				era: 'legacy',
+				version: protocolVersion,
+			});
 			res.status(200).json(JsonRpcErrors.methodNotFound(extractJsonRpcId(req.body), `${rpcMethod} is not supported`));
 			return;
 		}
@@ -1010,7 +1017,10 @@ export class StatelessHttpTransport extends BaseTransport {
 			const clientInfo =
 				this.extractClientInfoFromRequest(requestBody) ??
 				(typeof disabledSessionId === 'string' ? this.analyticsSessions.get(disabledSessionId)?.clientInfo : undefined);
-			this.trackMethodCall(trackingName, startTime, true, clientInfo);
+			this.trackMethodCall(trackingName, startTime, true, protocolClientInfo ?? clientInfo, {
+				era: 'legacy',
+				version: protocolVersion,
+			});
 			res.status(200).json(JsonRpcErrors.invalidParams(disabledToolMessage(disabledTool), extractJsonRpcId(req.body)));
 			return;
 		}
@@ -1133,7 +1143,7 @@ export class StatelessHttpTransport extends BaseTransport {
 			// For notifications, try to get client info from analytics session
 			const analyticsSession = sessionId ? this.analyticsSessions.get(sessionId) : undefined;
 			const clientInfo = analyticsSession?.clientInfo;
-			this.trackMethodCall(trackingName, startTime, false, clientInfo);
+			this.trackMethodCall(trackingName, startTime, false, clientInfo, { era: 'legacy', version: protocolVersion });
 			this.recordSkillEvent(requestBody, startTime, false, {
 				clientSessionId: sessionId,
 				protocolEra: 'legacy',
@@ -1281,7 +1291,10 @@ export class StatelessHttpTransport extends BaseTransport {
 
 			const responseSummary = responseCapture.summary();
 			const responseIsError = responseSummary.isError;
-			this.trackMethodCall(trackingName, startTime, responseIsError, clientInfo);
+			this.trackMethodCall(trackingName, startTime, responseIsError, protocolClientInfo ?? clientInfo, {
+				era: 'legacy',
+				version: protocolVersion,
+			});
 			this.recordSkillEvent(
 				requestBody,
 				startTime,
@@ -1327,7 +1340,10 @@ export class StatelessHttpTransport extends BaseTransport {
 			// Track failed method call - try to get client info from analytics session
 			const analyticsSession = sessionId ? this.analyticsSessions.get(sessionId) : undefined;
 			const clientInfo = analyticsSession?.clientInfo;
-			this.trackMethodCall(trackingName, startTime, true, clientInfo);
+			this.trackMethodCall(trackingName, startTime, true, protocolClientInfo ?? clientInfo, {
+				era: 'legacy',
+				version: protocolVersion,
+			});
 			this.recordSkillEvent(requestBody, startTime, false, {
 				clientSessionId: sessionId,
 				protocolEra: 'legacy',
