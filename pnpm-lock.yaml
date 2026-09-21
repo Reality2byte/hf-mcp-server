@@ -111,7 +111,7 @@ importers:
         specifier: 2.9.0
         version: 2.9.0
       zod:
-        specifier: ~4.5.4
+        specifier: 4.5.4
         version: 4.5.4
     devDependencies:
       '@eslint/js':
@@ -196,7 +196,7 @@ importers:
         specifier: ^1.10.0
         version: 1.10.0
       zod:
-        specifier: ~4.5.4
+        specifier: 4.5.4
         version: 4.5.4
     devDependencies:
       '@eslint/js':
