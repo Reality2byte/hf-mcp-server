@@ -42,7 +42,9 @@ pnpm oauth:diagnose
 ```
 
 The diagnostic deliberately narrows HF's advertised scope set to `read-mcp`; it does not request identity, job,
-repository-write, or inference scopes. Override this only when testing scope behavior:
+repository-write, or inference scopes. It prints the original advertised scopes and explicitly labels the local
+protected-resource metadata override: this is a scope-limited diagnostic, not an unmodified discovery test.
+Override the requested scopes only when testing scope behavior:
 
 ```bash
 pnpm oauth:diagnose -- --scope 'openid profile read-mcp'
@@ -136,3 +138,10 @@ and authorization-server documents can be inspected directly:
 curl -sS https://huggingface.co/.well-known/oauth-protected-resource/mcp | jq
 curl -sS https://huggingface.co/.well-known/oauth-authorization-server | jq
 ```
+
+## Regression tests
+
+Run `pnpm test:oauth` (also included in `pnpm test`) for offline diagnostics tests, including DNS pinning,
+redirect validation, body limits, discovery-state persistence, and anonymous versus authenticated results.
+An anonymous MCP connection exits with status 1: connectivity succeeded, but OAuth was not exercised.
+CIMD HTTPS connections pin a validated DNS address while retaining the original hostname for TLS verification.

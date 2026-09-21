@@ -4,8 +4,10 @@ import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { createServer } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
 import { parseArgs } from 'node:util';
+import { pathToFileURL } from 'node:url';
 import { Client, StreamableHTTPClientTransport, UnauthorizedError } from '@modelcontextprotocol/client';
 
 const DEFAULT_SERVER_URL = 'https://huggingface.co/mcp?login';
@@ -15,22 +17,24 @@ const METADATA_PATH = '/oauth/client-metadata.json';
 const MAX_METADATA_BYTES = 5 * 1024;
 const MAX_REDIRECTS = 5;
 
-const args = process.argv.slice(2);
-if (args[0] === '--') args.shift();
+function parseOptions(argv) {
+	const args = [...argv];
+	if (args[0] === '--') args.shift();
 
-const { values } = parseArgs({
-	args,
-	options: {
-		server: { type: 'string', short: 's', default: DEFAULT_SERVER_URL },
-		'redirect-uri': { type: 'string', default: DEFAULT_REDIRECT_URI },
-		scope: { type: 'string', default: DEFAULT_SCOPE },
-		cimd: { type: 'boolean', default: false },
-		'client-metadata-url': { type: 'string' },
-		'inspect-auth-url': { type: 'string' },
-		help: { type: 'boolean', short: 'h', default: false },
-	},
-	strict: true,
-});
+	return parseArgs({
+		args,
+		options: {
+			server: { type: 'string', short: 's', default: DEFAULT_SERVER_URL },
+			'redirect-uri': { type: 'string', default: DEFAULT_REDIRECT_URI },
+			scope: { type: 'string', default: DEFAULT_SCOPE },
+			cimd: { type: 'boolean', default: false },
+			'client-metadata-url': { type: 'string' },
+			'inspect-auth-url': { type: 'string' },
+			help: { type: 'boolean', short: 'h', default: false },
+		},
+		strict: true,
+	}).values;
+}
 
 function printHelp() {
 	console.log(`HF MCP OAuth diagnostics
@@ -116,7 +120,7 @@ function clientMetadata(clientId, redirectUri, scope) {
 	};
 }
 
-function isPublicIp(address) {
+export function isPublicIp(address) {
 	const version = isIP(address);
 	if (version === 4) {
 		const [a, b, c] = address.split('.').map(Number);
@@ -128,6 +132,7 @@ function isPublicIp(address) {
 			(a === 169 && b === 254) ||
 			(a === 172 && b >= 16 && b <= 31) ||
 			(a === 192 && b === 0 && [0, 2].includes(c)) ||
+			(a === 192 && b === 88 && c === 99) ||
 			(a === 192 && b === 168) ||
 			(a === 198 && [18, 19].includes(b)) ||
 			(a === 198 && b === 51 && c === 100) ||
@@ -136,41 +141,99 @@ function isPublicIp(address) {
 		);
 	}
 	if (version === 6) {
-		const normalized = address.toLowerCase();
-		if (normalized.startsWith('::ffff:')) return isPublicIp(normalized.slice(7));
-		return !(
-			normalized === '::' ||
-			normalized === '::1' ||
-			normalized.startsWith('fc') ||
-			normalized.startsWith('fd') ||
-			/^fe[89ab]/.test(normalized) ||
-			normalized.startsWith('ff') ||
-			normalized.startsWith('2001:db8:')
+		// Accept only ordinary global unicast (2000::/3). Reject transition,
+		// mapped/compatible, scoped and special-use ranges conservatively.
+		if (address.includes('%') || address.includes('.')) return false;
+		const [left, right] = address.toLowerCase().split('::');
+		const head = left ? left.split(':') : [];
+		const tail = right ? right.split(':') : [];
+		const words = right === undefined ? head : [...head, ...Array(8 - head.length - tail.length).fill('0'), ...tail];
+		const [a, b] = words.map((word) => parseInt(word, 16));
+		return (
+			a >= 0x2000 &&
+			a <= 0x3fff &&
+			!(
+				(a === 0x2001 && (b <= 0x1ff || b === 0xdb8)) ||
+				a === 0x2002 || // 6to4 can encode a private IPv4 destination.
+				(a === 0x3fff && b <= 0x0fff) // Documentation prefix 3fff::/20.
+			)
 		);
 	}
 	return false;
 }
 
-async function assertPublicCimdUrl(value) {
+export async function assertPublicCimdUrl(value, resolve = lookup) {
 	const url = parseCimdUrl(value);
 	if (!url) {
 		throw new Error(`CIMD client_id must be a canonical public HTTPS URL with a non-root path: ${value}`);
 	}
-	const addresses = await lookup(url.hostname, { all: true, verbatim: true });
-	if (!addresses.length || addresses.some(({ address }) => !isPublicIp(address))) {
+	const hostname = url.hostname.replace(/^\[|\]$/g, '');
+	const family = isIP(hostname);
+	const addresses = family ? [{ address: hostname, family }] : await resolve(hostname, { all: true, verbatim: true });
+	if (!addresses.length || addresses.some(({ address, family }) => !isPublicIp(address) || isIP(address) !== family)) {
 		throw new Error(`CIMD client_id resolves to a non-public address: ${value}`);
 	}
-	return url;
+	return { url, addresses };
 }
 
-async function fetchPublicUrl(value) {
+export async function fetchPublicUrl(value, { resolve = lookup, request = httpsRequest, timeoutMs = 15_000 } = {}) {
 	let current = value;
 	for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects++) {
-		await assertPublicCimdUrl(current);
-		const response = await fetch(current, {
-			headers: { Accept: 'application/json' },
-			redirect: 'manual',
-			signal: AbortSignal.timeout(15_000),
+		const { url, addresses } = await assertPublicCimdUrl(current, resolve);
+		const response = await new Promise((resolveResponse, reject) => {
+			// Keep the original hostname for Host, SNI and certificate validation;
+			// only socket address selection uses the already-validated DNS result.
+			const pinned = addresses[0];
+			const req = request(url, {
+				agent: false,
+				headers: { Accept: 'application/json' },
+				lookup: (_hostname, options, callback) => {
+					if (options.all) callback(null, [{ ...pinned }]);
+					else callback(null, pinned.address, pinned.family);
+				},
+			});
+			const timer = setTimeout(() => req.destroy(new Error('CIMD fetch timed out')), timeoutMs);
+			const fail = (error) => {
+				clearTimeout(timer);
+				reject(error);
+			};
+			req.on('error', fail);
+			req.on('response', (incoming) => {
+				incoming.on('error', fail);
+				const status = incoming.statusCode;
+				const headers = new Headers();
+				for (let i = 0; i < incoming.rawHeaders.length; i += 2) {
+					headers.append(incoming.rawHeaders[i], incoming.rawHeaders[i + 1]);
+				}
+				const finish = (body) => {
+					clearTimeout(timer);
+					try {
+						resolveResponse(new Response(body, { status, statusText: incoming.statusMessage, headers }));
+					} catch (error) {
+						fail(error);
+					}
+				};
+				if ([301, 302, 303, 307, 308].includes(status)) {
+					finish(null);
+					incoming.destroy();
+					return;
+				}
+				const chunks = [];
+				let size = 0;
+				incoming.on('data', (chunk) => {
+					size += chunk.length;
+					if (size > MAX_METADATA_BYTES) {
+						const error = new Error(`document exceeds ${MAX_METADATA_BYTES} bytes`);
+						fail(error);
+						incoming.destroy(error);
+						req.destroy(error);
+						return;
+					}
+					chunks.push(chunk);
+				});
+				incoming.on('end', () => finish([204, 205, 304].includes(status) ? null : Buffer.concat(chunks)));
+			});
+			req.end();
 		});
 		if (![301, 302, 303, 307, 308].includes(response.status)) {
 			return { response, finalUrl: current };
@@ -293,7 +356,7 @@ async function waitForPublicUrl(url, timeoutMs = 30_000) {
 	);
 }
 
-function createDiagnosticFetch(scope, serverUrl) {
+export function createDiagnosticFetch(scope, serverUrl, fetchImpl = fetch) {
 	const scopes = scope.split(' ');
 	const allowedOrigins = new Set([serverUrl.origin, 'https://huggingface.co']);
 	let reported = false;
@@ -302,7 +365,7 @@ function createDiagnosticFetch(scope, serverUrl) {
 		if (!allowedOrigins.has(requestUrl.origin)) {
 			throw new Error(`OAuth discovery refused unexpected origin: ${requestUrl.origin}`);
 		}
-		const response = await fetch(input, {
+		const response = await fetchImpl(input, {
 			...init,
 			redirect: 'manual',
 			signal: init?.signal ?? AbortSignal.timeout(30_000),
@@ -314,6 +377,7 @@ function createDiagnosticFetch(scope, serverUrl) {
 		if (!requestUrl.pathname.startsWith('/.well-known/oauth-protected-resource')) return response;
 
 		const metadata = JSON.parse(await readLimitedBody(response));
+		const advertisedScopes = metadata.scopes_supported;
 		metadata.scopes_supported = scopes;
 		const headers = new Headers(response.headers);
 		headers.delete('content-encoding');
@@ -321,7 +385,11 @@ function createDiagnosticFetch(scope, serverUrl) {
 		headers.delete('etag');
 		if (!reported) {
 			reported = true;
+			console.log(`Server-advertised scopes: ${JSON.stringify(advertisedScopes ?? null)}`);
 			console.log(`OAuth diagnostic scopes: ${scope}`);
+			console.log(
+				'Scope-limited diagnostic: protected-resource scopes are overridden locally; this is not an unmodified discovery test.'
+			);
 		}
 		return new Response(JSON.stringify(metadata), {
 			status: response.status,
@@ -427,9 +495,10 @@ function startCloudflared(target) {
 	});
 }
 
-function createMetadataServer(getMetadata) {
+export function createMetadataServer(getMetadata) {
 	const server = createServer((request, response) => {
-		const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
+		const requestUrl = parseRequestUrl(request, response, 'http://127.0.0.1');
+		if (!requestUrl) return;
 		if (requestUrl.pathname !== METADATA_PATH) {
 			response.writeHead(404);
 			response.end('Not found');
@@ -466,7 +535,7 @@ function createMetadataServer(getMetadata) {
 	};
 }
 
-function createCallbackServer(redirectUrl, expectedState) {
+export function createCallbackServer(redirectUrl, expectedState) {
 	let resolveCallback;
 	let rejectCallback;
 	const callback = new Promise((resolve, reject) => {
@@ -476,7 +545,8 @@ function createCallbackServer(redirectUrl, expectedState) {
 	void callback.catch(() => {});
 
 	const server = createServer((request, response) => {
-		const requestUrl = new URL(request.url ?? '/', redirectUrl.origin);
+		const requestUrl = parseRequestUrl(request, response, redirectUrl.origin);
+		if (!requestUrl) return;
 
 		if (requestUrl.pathname !== redirectUrl.pathname) {
 			response.writeHead(404);
@@ -485,7 +555,6 @@ function createCallbackServer(redirectUrl, expectedState) {
 		}
 
 		const error = requestUrl.searchParams.get('error');
-		const errorDescription = requestUrl.searchParams.get('error_description');
 		const state = requestUrl.searchParams.get('state');
 		if (state !== expectedState) {
 			response.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -494,10 +563,8 @@ function createCallbackServer(redirectUrl, expectedState) {
 		}
 		if (error) {
 			response.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
-			response.end(`OAuth failed: ${error}${errorDescription ? `: ${errorDescription}` : ''}`);
-			rejectCallback(
-				new Error(`OAuth authorization failed: ${error}${errorDescription ? `: ${errorDescription}` : ''}`)
-			);
+			response.end('OAuth authorization failed');
+			rejectCallback(new Error('OAuth authorization failed (remote error details omitted)'));
 			return;
 		}
 
@@ -525,7 +592,7 @@ function createCallbackServer(redirectUrl, expectedState) {
 	};
 }
 
-class DiagnosticOAuthProvider {
+export class DiagnosticOAuthProvider {
 	constructor(redirectUrl, metadataUrl, onAuthorizationUrl, state, scope) {
 		this.redirectUrl = redirectUrl;
 		this.clientMetadataUrl = metadataUrl;
@@ -536,6 +603,14 @@ class DiagnosticOAuthProvider {
 
 	get clientMetadata() {
 		return clientMetadata(this.clientMetadataUrl, String(this.redirectUrl), this.scope);
+	}
+
+	discoveryState() {
+		return this.oauthDiscoveryState;
+	}
+
+	saveDiscoveryState(state) {
+		this.oauthDiscoveryState = state;
 	}
 
 	state() {
@@ -580,7 +655,7 @@ class DiagnosticOAuthProvider {
 	}
 }
 
-async function main() {
+async function main(values) {
 	if (values.help) {
 		printHelp();
 		return;
@@ -662,7 +737,7 @@ async function main() {
 
 		if (!client) throw new Error('MCP client was not initialized');
 		const { tools } = await client.listTools();
-		console.log(`\nAuthenticated MCP connection succeeded; server returned ${tools.length} tools.`);
+		if (!reportConnectionResult(provider, tools.length)) process.exitCode = 1;
 		await client.close();
 	} finally {
 		if (transport) await transport.close().catch(() => {});
@@ -672,7 +747,28 @@ async function main() {
 	}
 }
 
-main().catch((error) => {
-	console.error(`\nOAuth diagnostic failed: ${error instanceof Error ? error.message : String(error)}`);
-	process.exitCode = 1;
-});
+export function reportConnectionResult(provider, toolCount, log = console.log) {
+	if (!provider.tokens()?.access_token) {
+		log(`Anonymous MCP connection succeeded; server returned ${toolCount} tools. OAuth was not exercised.`);
+		return false;
+	}
+	log(`Authenticated MCP connection succeeded; server returned ${toolCount} tools.`);
+	return true;
+}
+
+function parseRequestUrl(request, response, origin) {
+	try {
+		return new URL(request.url ?? '/', origin);
+	} catch {
+		response.writeHead(400);
+		response.end('Malformed request URL');
+		return undefined;
+	}
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+	main(parseOptions(process.argv.slice(2))).catch((error) => {
+		console.error(`\nOAuth diagnostic failed: ${error instanceof Error ? error.message : String(error)}`);
+		process.exitCode = 1;
+	});
+}
