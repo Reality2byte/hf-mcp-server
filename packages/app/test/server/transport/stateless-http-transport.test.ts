@@ -10,6 +10,7 @@ import {
 } from '../../../src/server/transport/stateless-http-transport.js';
 import type { ServerFactory } from '../../../src/server/transport/base-transport.js';
 import { McpServer } from '@modelcontextprotocol/server';
+import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { formatMetricsForAPI } from '../../../src/shared/transport-metrics.js';
 import express from 'express';
@@ -1307,6 +1308,143 @@ describe('StatelessHttpTransport', () => {
 		});
 	});
 
+	describe('exact protocol tool errors', () => {
+		it.each(['result', 'exception'] as const)(
+			'attributes legacy %s errors despite a session protocol change',
+			async (failure) => {
+				process.env.ANALYTICS_MODE = 'true';
+				const server = new McpServer({ name: 'test', version: '1' });
+				vi.spyOn(server, 'connect').mockResolvedValue(undefined);
+				const factory = vi.fn().mockResolvedValue({ server });
+				transport = new StatelessHttpTransport(factory, express());
+				const internal = transport as any;
+				const client = { name: 'legacy-client', version: '1' };
+				internal.createAnalyticsSession('session-1', false, '127.0.0.1', '2025-06-18');
+				internal.updateAnalyticsSessionClientInfo('session-1', client);
+				internal.associateSessionWithClient(client);
+				const handler = vi
+					.spyOn(NodeStreamableHTTPServerTransport.prototype, 'handleRequest')
+					.mockImplementation(async (_req, res) => {
+						// A concurrent request renegotiates this client's session before completion.
+						internal.analyticsSessions.get('session-1').protocolVersion = '2025-11-25';
+						internal.metrics.trackProtocolRequest('legacy', '2025-11-25');
+						internal.metrics.trackClientProtocol(client, 'legacy', '2025-11-25');
+						if (failure === 'exception') throw new Error('dispatch failed');
+						res.end(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { isError: true, content: [] } }));
+					});
+				try {
+					await internal.handleJsonRpcRequest(
+						{
+							headers: { 'mcp-session-id': 'session-1', 'mcp-protocol-version': '2025-06-18' },
+							query: {},
+							ip: '127.0.0.1',
+							body: {
+								jsonrpc: '2.0',
+								id: 1,
+								method: 'tools/call',
+								params: { name: 'hf_fs', arguments: { cmd: 'ls' } },
+							},
+						},
+						{
+							write: vi.fn(),
+							end: vi.fn(),
+							on: vi.fn(),
+							headersSent: false,
+							set: vi.fn().mockReturnThis(),
+							status: vi.fn().mockReturnThis(),
+							json: vi.fn().mockReturnThis(),
+						}
+					);
+					const result = formatMetricsForAPI(transport.getMetrics(), 'streamableHttpJson', true).clients[0];
+					expect(result).toMatchObject({ toolCallCount: 1, toolCallErrorCount: 1, toolCallErrorRate: 100 });
+					expect(result?.protocols).toEqual(
+						expect.arrayContaining([
+							expect.objectContaining({
+								version: '2025-06-18',
+								toolCallCount: 1,
+								toolCallErrorCount: 1,
+								toolCallErrorRate: 100,
+							}),
+							expect.objectContaining({
+								version: '2025-11-25',
+								toolCallCount: 0,
+								toolCallErrorCount: 0,
+								toolCallErrorRate: 0,
+							}),
+						])
+					);
+				} finally {
+					handler.mockRestore();
+					vi.mocked(server.connect).mockRestore();
+					await server.close();
+				}
+			}
+		);
+
+		it.each(['result', 'exception'] as const)(
+			'attributes modern %s errors to the in-flight request protocol',
+			async (failure) => {
+				const client = { name: 'mixed-client', version: '1' };
+				const internal = transport as any;
+				const request = (version: string) => ({
+					headers: {},
+					query: {},
+					ip: '127.0.0.1',
+					body: {
+						jsonrpc: '2.0',
+						id: 1,
+						method: 'tools/call',
+						params: {
+							name: 'hf_fs',
+							arguments: { cmd: 'ls' },
+							_meta: {
+								'io.modelcontextprotocol/clientInfo': client,
+								'io.modelcontextprotocol/protocolVersion': version,
+							},
+						},
+					},
+				});
+				const response = () => ({
+					statusCode: 200,
+					headersSent: false,
+					write: vi.fn(),
+					end: vi.fn(),
+					set: vi.fn().mockReturnThis(),
+					status: vi.fn().mockReturnThis(),
+					json: vi.fn().mockReturnThis(),
+				});
+				internal.modernNodeHandler = async (req: any, res: any) => {
+					if (req.body.params._meta['io.modelcontextprotocol/protocolVersion'] === '2026-07-28') {
+						await internal.handleModernRequest(request('newer-version'), response());
+						if (failure === 'exception') throw new Error('dispatch failed');
+						res.end(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { isError: true, content: [] } }));
+					} else {
+						res.end(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { content: [] } }));
+					}
+				};
+				await internal.handleModernRequest(request('2026-07-28'), response());
+				const result = formatMetricsForAPI(transport.getMetrics(), 'streamableHttpJson', true).clients[0];
+				expect(result).toMatchObject({ toolCallCount: 2, toolCallErrorCount: 1, toolCallErrorRate: 50 });
+				expect(result?.protocols).toEqual(
+					expect.arrayContaining([
+						expect.objectContaining({
+							version: '2026-07-28',
+							toolCallCount: 1,
+							toolCallErrorCount: 1,
+							toolCallErrorRate: 100,
+						}),
+						expect.objectContaining({
+							version: 'newer-version',
+							toolCallCount: 1,
+							toolCallErrorCount: 0,
+							toolCallErrorRate: 0,
+						}),
+					])
+				);
+			}
+		);
+	});
+
 	describe('disabled tools', () => {
 		it('rejects modern disabled calls before dispatch', async () => {
 			process.env.DISABLE_TOOLS = 'hub_repo_search';
@@ -1320,7 +1458,14 @@ describe('StatelessHttpTransport', () => {
 					jsonrpc: '2.0',
 					id: 1,
 					method: 'tools/call',
-					params: { name: 'hub_repo_search', arguments: { query: 'bert' } },
+					params: {
+						name: 'hub_repo_search',
+						arguments: { query: 'bert' },
+						_meta: {
+							'io.modelcontextprotocol/clientInfo': { name: 'disabled-client', version: '1' },
+							'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+						},
+					},
 				},
 				ip: '127.0.0.1',
 			};
@@ -1333,6 +1478,20 @@ describe('StatelessHttpTransport', () => {
 
 			await (transport as any).handleModernRequest(req, res);
 
+			expect(formatMetricsForAPI(transport.getMetrics(), 'streamableHttpJson', true).clients[0]).toMatchObject({
+				toolCallCount: 1,
+				toolCallErrorCount: 1,
+				toolCallErrorRate: 100,
+				activeConnections: 0,
+				protocols: [
+					expect.objectContaining({
+						version: '2026-07-28',
+						toolCallCount: 1,
+						toolCallErrorCount: 1,
+						toolCallErrorRate: 100,
+					}),
+				],
+			});
 			expect(mockServerFactory).not.toHaveBeenCalled();
 			expect(res.status).toHaveBeenCalledWith(200);
 			expect(res.json).toHaveBeenCalledWith(

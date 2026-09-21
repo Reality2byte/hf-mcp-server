@@ -344,10 +344,11 @@ export abstract class BaseTransport {
 		methodName: string | null,
 		startTime: number,
 		isError: boolean = false,
-		clientInfo?: { name: string; version: string }
+		clientInfo?: { name: string; version: string },
+		protocol?: { era: ProtocolEra; version: string }
 	): void {
 		const duration = Date.now() - startTime;
-		this.metrics.trackMethod(methodName, duration, isError, clientInfo);
+		this.metrics.trackMethod(methodName, duration, isError, clientInfo, protocol);
 	}
 
 	/**
