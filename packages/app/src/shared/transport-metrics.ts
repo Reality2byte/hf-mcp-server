@@ -3,6 +3,23 @@ import type { TransportType } from './constants.js';
 
 export type ProtocolEra = 'legacy' | 'modern';
 export type SubscriptionMethod = 'resources/subscribe' | 'resources/unsubscribe' | 'subscriptions/listen';
+export type ServerDiscoverOutcome =
+	| 'success'
+	| 'headerBodyMismatch'
+	| 'unsupportedVersion'
+	| 'invalidRequest'
+	| 'authRejected'
+	| 'internalServerError'
+	| 'otherError';
+const SERVER_DISCOVER_OUTCOMES = [
+	'success',
+	'headerBodyMismatch',
+	'unsupportedVersion',
+	'invalidRequest',
+	'authRejected',
+	'internalServerError',
+	'otherError',
+] as const satisfies readonly ServerDiscoverOutcome[];
 
 export interface SubscriptionAttempt {
 	method: SubscriptionMethod;
@@ -14,6 +31,13 @@ export interface SubscriptionAttempt {
 }
 
 interface SubscriptionAttemptMetrics extends SubscriptionAttempt {
+	count: number;
+	firstSeen: Date;
+	lastSeen: Date;
+}
+
+interface ServerDiscoverOutcomeMetrics {
+	outcome: ServerDiscoverOutcome;
 	count: number;
 	firstSeen: Date;
 	lastSeen: Date;
@@ -97,6 +121,9 @@ export interface TransportMetrics {
 	// Request shapes are sanitized before reaching this metrics layer.
 	subscriptionAttempts: Map<string, SubscriptionAttemptMetrics>;
 
+	// Low-cardinality outcomes for modern server/discover negotiation probes.
+	serverDiscoverOutcomes?: Map<ServerDiscoverOutcome, ServerDiscoverOutcomeMetrics>;
+
 	// Static page hits (for stateless transport)
 	staticPageHits200?: number;
 	staticPageHits405?: number;
@@ -115,6 +142,7 @@ interface ClientMetrics {
 	activeConnections: number;
 	totalConnections: number;
 	toolCallCount: number;
+	toolCallErrorCount: number;
 	newIpCount: number;
 	anonCount: number;
 	uniqueAuthCount: number;
@@ -277,6 +305,8 @@ export interface TransportMetricsResponse {
 		};
 	};
 
+	hfFsMetrics?: HfFsLiveMetricsResponse;
+
 	clients: Array<{
 		name: string;
 		version: string;
@@ -287,6 +317,8 @@ export interface TransportMetricsResponse {
 		activeConnections: number;
 		totalConnections: number;
 		toolCallCount: number;
+		toolCallErrorCount: number;
+		toolCallErrorRate: number;
 		newIpCount: number;
 		anonCount: number;
 		uniqueAuthCount: number;
@@ -329,6 +361,13 @@ export interface TransportMetricsResponse {
 		lastSeen: string;
 	}>;
 
+	serverDiscoverOutcomes?: Array<{
+		outcome: ServerDiscoverOutcome;
+		count: number;
+		firstSeen: string;
+		lastSeen: string;
+	}>;
+
 	// API call metrics (only shown in external API mode)
 	apiMetrics?: ApiCallMetrics;
 
@@ -337,6 +376,27 @@ export interface TransportMetricsResponse {
 
 	// Gradio cache metrics (discovery optimization)
 	gradioCacheMetrics?: GradioCacheMetrics;
+}
+
+export interface HfFsLiveMetricsResponse {
+	reportingSchema: 'hf_fs_batch_v1';
+	batches: {
+		total: number;
+		complete: number;
+		partial: number;
+		noneSucceeded: number;
+		failed: number;
+		cancelled: number;
+	};
+	operations: {
+		completed: number;
+		succeeded: number;
+		requestErrors: number;
+		targetErrors: number;
+		policyLimitErrors: number;
+		serviceErrors: number;
+	};
+	lastUpdated: string | null;
 }
 
 /**
@@ -379,6 +439,7 @@ export function formatMetricsForAPI(
 		},
 		clients: Array.from(metrics.clients.values()).map((client) => ({
 			...client,
+			toolCallErrorRate: client.toolCallCount > 0 ? (client.toolCallErrorCount / client.toolCallCount) * 100 : 0,
 			firstSeen: client.firstSeen.toISOString(),
 			lastSeen: client.lastSeen.toISOString(),
 			protocols: Array.from(client.protocols.values())
@@ -409,6 +470,16 @@ export function formatMetricsForAPI(
 				lastSeen: attempt.lastSeen.toISOString(),
 			}))
 			.sort((a, b) => b.count - a.count),
+		serverDiscoverOutcomes: Array.from(metrics.serverDiscoverOutcomes?.values() ?? [])
+			.map((outcome) => ({
+				...outcome,
+				firstSeen: outcome.firstSeen.toISOString(),
+				lastSeen: outcome.lastSeen.toISOString(),
+			}))
+			.sort(
+				(left, right) =>
+					SERVER_DISCOVER_OUTCOMES.indexOf(left.outcome) - SERVER_DISCOVER_OUTCOMES.indexOf(right.outcome)
+			),
 	};
 }
 
@@ -456,6 +527,7 @@ function createEmptyMetrics(): TransportMetrics {
 		clients: new Map(),
 		methods: new Map(),
 		subscriptionAttempts: new Map(),
+		serverDiscoverOutcomes: new Map(),
 		staticPageHits200: 0,
 		staticPageHits405: 0,
 	};
@@ -857,6 +929,7 @@ export class MetricsCounter {
 				activeConnections: 1,
 				totalConnections: 1,
 				toolCallCount: 0,
+				toolCallErrorCount: 0,
 				newIpCount: 0,
 				anonCount: 0,
 				uniqueAuthCount: 0,
@@ -948,11 +1021,14 @@ export class MetricsCounter {
 			clientMethodMetrics.count++;
 
 			// If this is a tool call, increment the client's tool call count
-			if (method.startsWith('tools/call:')) {
+			if (method === 'tools/call' || method.startsWith('tools/call:')) {
 				const clientKey = getClientKey(clientInfo.name, clientInfo.version);
 				const clientMetrics = this.metrics.clients.get(clientKey);
 				if (clientMetrics) {
 					clientMetrics.toolCallCount++;
+					if (isError) {
+						clientMetrics.toolCallErrorCount++;
+					}
 				}
 			}
 		}
@@ -972,6 +1048,28 @@ export class MetricsCounter {
 				methodMetrics.averageResponseTime = totalTime / successfulCalls;
 			}
 		}
+	}
+
+	/**
+	 * Track one modern server/discover negotiation outcome. The outcome is a
+	 * fixed enum so this aggregate cannot retain caller-controlled values.
+	 */
+	trackServerDiscoverOutcome(outcome: ServerDiscoverOutcome): void {
+		const outcomes = this.metrics.serverDiscoverOutcomes ?? new Map();
+		this.metrics.serverDiscoverOutcomes = outcomes;
+		const existing = outcomes.get(outcome);
+		if (existing) {
+			existing.count++;
+			existing.lastSeen = new Date();
+			return;
+		}
+
+		outcomes.set(outcome, {
+			outcome,
+			count: 1,
+			firstSeen: new Date(),
+			lastSeen: new Date(),
+		});
 	}
 
 	/**

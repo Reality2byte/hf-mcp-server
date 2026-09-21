@@ -28,15 +28,23 @@ interface RepoDesignation {
 	type: RepoType;
 }
 
-import { safeFetch } from './network/safe-fetch.js';
+import { createAbortAwareFetch, safeFetch } from './network/safe-fetch.js';
 import { createHuggingFaceHubPolicy } from './network/url-policy.js';
-import { assertTextFilePath, decodeTextFileContent } from './text-file-policy.js';
+import {
+	assertTextFilePath,
+	classifyTextFilePath,
+	decodeTextFileContent,
+	imageMimeTypeForPath,
+	type HfFsImageMimeType,
+} from './text-file-policy.js';
 import { escapeMarkdown, fitsWithinCharBudget, formatBytes, maxCharsForTokenBudget } from './utilities.js';
 import { HF_NAV_MAX_LIMIT, HfNavTool, type HfNavEntry, type HfNavParams, type HfNavResult } from './hf-nav.js';
 import { catGuidance, isRootGuidanceUri, statGuidance } from './hf-fs-guidance.js';
 import { HfFsPaperProvider, isPaperUri, paperListingOrder } from './hf-fs-papers.js';
 import { HfFsDocsProvider, isDocsUri } from './hf-fs-docs.js';
 import {
+	HF_FS_ATTACH_MAX_BYTES,
+	HF_FS_BATCH_MAX_OPERATIONS,
 	HF_FS_DESCRIPTION,
 	HF_FS_ENTRY_TYPES,
 	HF_FS_OPERATIONS,
@@ -44,10 +52,22 @@ import {
 	isRepoTrendingUri,
 	parseHfFsRequest,
 	type HfFsEntryType,
+	type HfFsOperationRequest,
 	type HfFsParams,
 	type HfFsRequest,
 	type HfFsSort,
 } from './hf-fs-contract.js';
+import {
+	HfFsAttachmentBudgetExceededError,
+	HfFsAttachmentIntegrityError,
+	HfFsImageContentDisabledError,
+	HfFsImageOnlyError,
+	HfFsImageTooLargeError,
+	HfFsUnsupportedMediaError,
+	classifyHfFsError,
+	formatHfFsRecoveryError,
+	type HfFsRecoveryError,
+} from './hf-fs-errors.js';
 
 const HF_FS_STAT_TYPES = ['namespace', 'repo', 'dir', 'file', 'collection', 'paper', 'link', 'missing'] as const;
 const HF_URI_TYPES = ['models', 'datasets', 'spaces', 'buckets', 'collections', 'papers'] as const;
@@ -64,30 +84,17 @@ const APPROX_CHARS_PER_TOKEN = 4;
 const MAX_UTF8_SEQUENCE_BYTES = 4;
 export const HF_FS_MAX_OUTPUT_TOKENS = 20_000;
 export const HF_FS_MAX_OUTPUT_CHARS = maxCharsForTokenBudget(HF_FS_MAX_OUTPUT_TOKENS, APPROX_CHARS_PER_TOKEN);
+export const HF_FS_BATCH_CONCURRENCY = 4;
 const MAX_CAT_BYTES = HF_FS_MAX_OUTPUT_CHARS;
 
 export const HF_FILES_FLAG = 'hf_files' as const;
 
-export const HF_FS_TOOL_CONFIG = {
-	name: 'hf_fs',
-	// human discovery
-	title:
-		'Hugging Face Hub: Find, use and view models, datasets, spaces, buckets, papers, documentation and collections. ' +
-		'Get daily papers reports, and browse trending content. ',
-	// model discovery
-	description: HF_FS_DESCRIPTION,
-	schema: HF_FS_SCHEMA,
-	outputSchema: createHfFsOutputSchema(),
-	annotations: {
-		destructiveHint: false,
-		readOnlyHint: true,
-		openWorldHint: true,
-	},
-} as const;
+export type { HfFsEntryType, HfFsOperation, HfFsOperationRequest, HfFsParams, HfFsRequest } from './hf-fs-contract.js';
+export { HF_FS_ATTACH_MAX_BYTES, HF_FS_BATCH_MAX_OPERATIONS } from './hf-fs-contract.js';
 
-export type { HfFsEntryType, HfFsOperation, HfFsParams, HfFsRequest } from './hf-fs-contract.js';
-
-function createHfFsOutputSchema() {
+function createHfFsResultOutputSchema() {
+	const imageMimeTypeSchema = z.enum(['image/jpeg', 'image/png', 'image/webp']);
+	const attachmentBytesSchema = z.number().int().min(0).max(HF_FS_ATTACH_MAX_BYTES);
 	const entrySchema = z.object({
 		type: z.enum(HF_FS_ENTRY_TYPES),
 		path: z.string(),
@@ -124,33 +131,145 @@ function createHfFsOutputSchema() {
 		content_type: z.enum(['application/json', 'text/markdown']).optional(),
 	});
 
-	return z.object({
-		uri: z.string(),
-		op: z.enum(HF_FS_OPERATIONS),
-		entries: z.array(entrySchema).optional(),
-		path: z.string().optional(),
-		content: z.string().optional(),
-		content_type: z.enum(['application/json', 'text/markdown']).optional(),
-		section: z.string().optional(),
-		bytes: z.number().optional(),
-		exists: z.boolean().optional(),
-		type: z.enum(HF_FS_STAT_TYPES).optional(),
-		namespace: z.string().optional(),
-		size: z.number().optional(),
-		lfs: z.boolean().optional(),
-		target_uri: z.string().optional(),
-		published_at: z.string().optional(),
-		daily_papers_date: z.string().optional(),
-		daily_papers_uri: z.string().optional(),
-		url: z.string().optional(),
-		arxiv_url: z.string().optional(),
-		truncated: z.boolean().optional(),
-		truncation_reason: z.enum(['entry_limit', 'max_bytes', 'limit', 'provider_limit']).optional(),
-		truncation_message: z.string().optional(),
-		next_offset: z.number().optional(),
-		warnings: z.array(z.string()).optional(),
-	});
+	return z
+		.object({
+			uri: z.string(),
+			op: z.enum(HF_FS_OPERATIONS),
+			entries: z.array(entrySchema).optional(),
+			path: z.string().optional(),
+			content: z.string().optional(),
+			content_type: z.enum(['application/json', 'text/markdown']).optional(),
+			mime_type: imageMimeTypeSchema.optional(),
+			section: z.string().optional(),
+			bytes: z.number().optional(),
+			exists: z.boolean().optional(),
+			type: z.enum(HF_FS_STAT_TYPES).optional(),
+			namespace: z.string().optional(),
+			size: z.number().optional(),
+			lfs: z.boolean().optional(),
+			target_uri: z.string().optional(),
+			published_at: z.string().optional(),
+			daily_papers_date: z.string().optional(),
+			daily_papers_uri: z.string().optional(),
+			url: z.string().optional(),
+			arxiv_url: z.string().optional(),
+			truncated: z.boolean().optional(),
+			truncation_reason: z.enum(['entry_limit', 'max_bytes', 'limit', 'provider_limit']).optional(),
+			truncation_message: z.string().optional(),
+			next_offset: z.number().optional(),
+			warnings: z.array(z.string()).optional(),
+		})
+		.strict()
+		.superRefine((result, context) => {
+			if (result.op !== 'attach') {
+				return;
+			}
+			for (const [field, schema] of [
+				['path', z.string()],
+				['mime_type', imageMimeTypeSchema],
+				['bytes', attachmentBytesSchema],
+			] as const) {
+				const validation = schema.safeParse(result[field]);
+				if (!validation.success) {
+					for (const issue of validation.error.issues) {
+						context.addIssue({ ...issue, path: [field, ...issue.path] });
+					}
+				}
+			}
+		})
+		.meta({
+			allOf: [
+				{
+					if: {
+						properties: { op: { const: 'attach' } },
+						required: ['op'],
+					},
+					then: {
+						properties: {
+							path: { type: 'string' },
+							mime_type: { type: 'string', enum: ['image/jpeg', 'image/png', 'image/webp'] },
+							bytes: { type: 'integer', minimum: 0, maximum: HF_FS_ATTACH_MAX_BYTES },
+						},
+						required: ['path', 'mime_type', 'bytes'],
+					},
+				},
+			],
+		});
 }
+
+const HF_FS_RESULT_OUTPUT_SCHEMA = createHfFsResultOutputSchema();
+const HF_FS_RECOVERY_ERROR_OUTPUT_SCHEMA = z
+	.object({
+		code: z.enum([
+			'HF_FS_INVALID_ARGUMENT',
+			'HF_FS_NOT_FOUND',
+			'HF_FS_NOT_A_DIRECTORY',
+			'HF_FS_NOT_A_FILE',
+			'HF_FS_UNSUPPORTED_OPERATION',
+			'HF_FS_ACCESS_DENIED',
+			'HF_FS_TEXT_ONLY',
+			'HF_FS_IMAGE_ONLY',
+			'HF_FS_UNSUPPORTED_MEDIA',
+			'HF_FS_IMAGE_TOO_LARGE',
+			'HF_FS_ATTACHMENT_BUDGET_EXCEEDED',
+			'HF_FS_IMAGE_CONTENT_DISABLED',
+			'HF_FS_ATTACHMENT_INTEGRITY',
+		]),
+		message: z.string(),
+		recovery: z.string(),
+		retryable: z.literal(false),
+		suggestedOperation: z.enum(['ls', 'cat', 'attach', 'stat', 'search']).optional(),
+	})
+	.strict();
+const HF_FS_BATCH_ITEM_OUTPUT_SCHEMA = z.discriminatedUnion('status', [
+	z
+		.object({
+			index: z.number().int().nonnegative(),
+			status: z.literal('success'),
+			result: HF_FS_RESULT_OUTPUT_SCHEMA,
+			output_truncated: z.boolean().optional(),
+		})
+		.strict(),
+	z
+		.object({
+			index: z.number().int().nonnegative(),
+			status: z.literal('error'),
+			error: HF_FS_RECOVERY_ERROR_OUTPUT_SCHEMA,
+		})
+		.strict(),
+]);
+const HF_FS_BATCH_OUTPUT_SCHEMA = z
+	.object({
+		results: z.array(HF_FS_BATCH_ITEM_OUTPUT_SCHEMA).min(1).max(HF_FS_BATCH_MAX_OPERATIONS),
+		truncated: z.boolean().optional(),
+		truncation_reason: z.literal('output_budget').optional(),
+	})
+	.strict();
+
+export const HF_FS_TOOL_CONFIG = {
+	name: 'hf_fs',
+	// human discovery
+	title:
+		'Hugging Face Hub: Find, use and view models, datasets, spaces, buckets, papers, documentation and collections. ' +
+		'Get daily papers reports, and browse trending content. ',
+	// model discovery
+	description: HF_FS_DESCRIPTION,
+	schema: HF_FS_SCHEMA,
+	outputSchema: HF_FS_BATCH_OUTPUT_SCHEMA,
+	annotations: {
+		title:
+			'Hugging Face Hub: Find, use and view models, datasets, spaces, buckets, papers, documentation and collections. ' +
+			'Get daily papers reports, and browse trending content. ',
+		destructiveHint: false,
+		idempotentHint: false,
+		readOnlyHint: true,
+		openWorldHint: true,
+	},
+} as const;
+
+export type HfFsOutputResult = z.infer<typeof HF_FS_RESULT_OUTPUT_SCHEMA>;
+export type HfFsBatchItemResult = z.infer<typeof HF_FS_BATCH_ITEM_OUTPUT_SCHEMA>;
+export type HfFsBatchResult = z.infer<typeof HF_FS_BATCH_OUTPUT_SCHEMA>;
 
 function normalizedLsLimit(limit: number | undefined): number {
 	return limit === undefined ? DEFAULT_LS_LIMIT : limit;
@@ -165,6 +284,31 @@ function normalizedCatMaxBytes(maxBytes: number | undefined): number {
 }
 
 function validateHfFsParams(params: HfFsParams): void {
+	if (params.op === 'attach') {
+		for (const [name, value] of [
+			['glob', params.glob],
+			['recursive', params.recursive],
+			['entry_type', params.entry_type],
+			['name', params.name],
+			['path', params.path],
+			['query', params.query],
+			['sort', params.sort],
+			['tags', params.tags],
+			['space_kind', params.space_kind],
+			['offset', params.offset],
+			['limit', params.limit],
+		] as const) {
+			if (value !== undefined) {
+				throw new Error(`EINVAL: ${name} is not valid for attach; attach accepts only uri and max_bytes`);
+			}
+		}
+		if (
+			params.max_bytes !== undefined &&
+			(!Number.isInteger(params.max_bytes) || params.max_bytes < 1 || params.max_bytes > HF_FS_ATTACH_MAX_BYTES)
+		) {
+			throw new Error(`EINVAL: attach max_bytes must be an integer between 1 and ${HF_FS_ATTACH_MAX_BYTES.toString()}`);
+		}
+	}
 	if (
 		params.limit !== undefined &&
 		(!Number.isInteger(params.limit) || params.limit < 1 || params.limit > MAX_LS_LIMIT)
@@ -201,6 +345,9 @@ function isRootUri(uri: string): boolean {
 }
 
 function toNavParams(params: HfFsParams): HfNavParams {
+	if (params.op === 'attach') {
+		throw new Error('attach requires a direct repository or bucket file URI.');
+	}
 	const navEntryType = navCompatibleEntryType(params.entry_type);
 	const navLimit = params.limit === undefined ? undefined : Math.min(normalizedLsLimit(params.limit), HF_NAV_MAX_LIMIT);
 	const navParams: HfNavParams = {
@@ -378,7 +525,42 @@ export interface HfFsStatResult {
 	arxiv_url?: string;
 }
 
-export type HfFsResult = (HfFsLsResult | HfFsCatResult | HfFsStatResult) & { warnings?: string[] };
+export interface HfFsAttachResult {
+	op: 'attach';
+	uri: string;
+	path: string;
+	mime_type: HfFsImageMimeType;
+	bytes: number;
+	warnings?: string[];
+}
+
+export interface HfFsAttachExecutionResult {
+	metadata: HfFsAttachResult;
+	data: Uint8Array;
+}
+
+export type HfFsResult = (HfFsLsResult | HfFsCatResult | HfFsStatResult | HfFsAttachResult) & {
+	warnings?: string[];
+};
+export type HfFsExecutionResult = HfFsResult | HfFsAttachExecutionResult;
+
+export function isHfFsAttachExecutionResult(result: HfFsExecutionResult): result is HfFsAttachExecutionResult {
+	return 'metadata' in result;
+}
+
+export interface HfFsBatchExecutionSuccess {
+	index: number;
+	status: 'success';
+	executionResult: HfFsExecutionResult;
+}
+
+export interface HfFsBatchExecutionError {
+	index: number;
+	status: 'error';
+	error: HfFsRecoveryError;
+}
+
+export type HfFsBatchExecutionItem = HfFsBatchExecutionSuccess | HfFsBatchExecutionError;
 
 export type ParsedHfUri = ParsedNamespaceHfUri | ParsedRepoHfUri;
 
@@ -431,30 +613,166 @@ interface SemanticSpaceSearchHit {
 	lastModified?: string;
 }
 
+interface HfFsAttachmentReservation {
+	bytes: number;
+	released: boolean;
+}
+
+class HfFsAttachmentBudget {
+	private usedBytes = 0;
+
+	constructor(private readonly maxBytes: number) {}
+
+	reserve(bytes: number): HfFsAttachmentReservation {
+		if (!Number.isSafeInteger(bytes) || bytes < 0) {
+			throw new HfFsAttachmentIntegrityError('Batch attachment reservation size is invalid.');
+		}
+		if (this.usedBytes + bytes > this.maxBytes) {
+			throw new HfFsAttachmentBudgetExceededError(
+				`Attachment omitted because the batch exceeds the cumulative response limit of ${this.maxBytes.toString()} bytes.`
+			);
+		}
+		this.usedBytes += bytes;
+		return { bytes, released: false };
+	}
+
+	resize(reservation: HfFsAttachmentReservation, bytes: number): void {
+		if (reservation.released) {
+			throw new HfFsAttachmentIntegrityError('Batch attachment reservation was already released.');
+		}
+		if (!Number.isSafeInteger(bytes) || bytes < 0) {
+			throw new HfFsAttachmentIntegrityError('Batch attachment size is invalid.');
+		}
+		const nextUsedBytes = this.usedBytes - reservation.bytes + bytes;
+		if (nextUsedBytes > this.maxBytes) {
+			throw new HfFsAttachmentBudgetExceededError(
+				`Attachment omitted because the batch exceeds the cumulative response limit of ${this.maxBytes.toString()} bytes.`
+			);
+		}
+		this.usedBytes = nextUsedBytes;
+		reservation.bytes = bytes;
+	}
+
+	release(reservation: HfFsAttachmentReservation): void {
+		if (reservation.released) {
+			return;
+		}
+		this.usedBytes -= reservation.bytes;
+		reservation.released = true;
+	}
+}
+
 export class HfFsTool {
 	private readonly accessToken?: string;
 	private readonly hubUrl?: string;
+	private readonly abortSignal?: AbortSignal;
+	private readonly attachmentFetch?: typeof fetch;
+	private attachmentBudget?: HfFsAttachmentBudget;
 	private readonly paperProvider: HfFsPaperProvider;
 	private readonly docsProvider: HfFsDocsProvider;
 
-	constructor(hfToken?: string, hubUrl?: string) {
+	constructor(hfToken?: string, hubUrl?: string, abortSignal?: AbortSignal) {
 		this.accessToken = hfToken;
 		this.hubUrl = hubUrl;
-		this.paperProvider = new HfFsPaperProvider(hfToken, hubUrl, async (params) => await this.runCanonical(params));
+		this.abortSignal = abortSignal;
+		this.attachmentFetch = abortSignal ? createAbortAwareFetch(abortSignal) : undefined;
+		this.paperProvider = new HfFsPaperProvider(hfToken, hubUrl, async (params) => {
+			const result = await this.runCanonical(params);
+			if (isHfFsAttachExecutionResult(result)) {
+				throw new Error('ENOTSUP: paper links cannot resolve attach operations');
+			}
+			return result;
+		});
 		this.docsProvider = new HfFsDocsProvider(hubUrl);
 	}
 
-	async run(request: HfFsRequest | HfFsParams): Promise<HfFsResult> {
+	async run(request: HfFsOperationRequest & { cmd: 'attach' }): Promise<HfFsAttachExecutionResult>;
+	async run(
+		request: HfFsOperationRequest & { cmd: Exclude<HfFsOperationRequest['cmd'], 'attach'> }
+	): Promise<HfFsResult>;
+	async run(request: HfFsOperationRequest): Promise<HfFsExecutionResult>;
+	async run(request: HfFsParams & { op: 'attach' }): Promise<HfFsAttachExecutionResult>;
+	async run(request: HfFsParams & { op: Exclude<HfFsParams['op'], 'attach'> }): Promise<HfFsResult>;
+	async run(request: HfFsParams): Promise<HfFsExecutionResult>;
+	async run(request: HfFsOperationRequest | HfFsParams): Promise<HfFsExecutionResult> {
 		if ('op' in request) {
 			return await this.runCanonical(request);
 		}
 		const parsed = parseHfFsRequest(request);
 		const result = await this.runCanonical(parsed.params);
-		return parsed.warnings.length === 0 ? result : { ...result, warnings: parsed.warnings };
+		if (parsed.warnings.length === 0) {
+			return result;
+		}
+		if (isHfFsAttachExecutionResult(result)) {
+			return {
+				...result,
+				metadata: { ...result.metadata, warnings: parsed.warnings },
+			};
+		}
+		return { ...result, warnings: parsed.warnings };
 	}
 
-	async runCanonical(params: HfFsParams): Promise<HfFsResult> {
+	async runBatch(
+		request: HfFsRequest,
+		options: { imageContentDisabled?: boolean } = {}
+	): Promise<HfFsBatchExecutionItem[]> {
+		const validatedRequest = HF_FS_SCHEMA.parse(request);
+		if (this.attachmentBudget) {
+			throw new Error('ENOTSUP: concurrent hf_fs batches on one tool instance are not supported');
+		}
+		this.attachmentBudget = new HfFsAttachmentBudget(HF_FS_ATTACH_MAX_BYTES);
+		const results: HfFsBatchExecutionItem[] = [];
+
+		try {
+			for (let start = 0; start < validatedRequest.operations.length; start += HF_FS_BATCH_CONCURRENCY) {
+				this.abortSignal?.throwIfAborted();
+				const chunk = validatedRequest.operations.slice(start, start + HF_FS_BATCH_CONCURRENCY);
+				const chunkResults = await Promise.all(
+					chunk.map(async (operation, offset): Promise<HfFsBatchExecutionItem | { fatalError: unknown }> => {
+						const index = start + offset;
+						try {
+							if (operation.cmd === 'attach' && options.imageContentDisabled) {
+								throw new HfFsImageContentDisabledError();
+							}
+							return {
+								index,
+								status: 'success',
+								executionResult: await this.run(operation),
+							};
+						} catch (error) {
+							if (this.abortSignal?.aborted) {
+								return { fatalError: error };
+							}
+							const recoveryError = classifyHfFsError(error);
+							if (!recoveryError) {
+								return { fatalError: error };
+							}
+							return { index, status: 'error', error: recoveryError };
+						}
+					})
+				);
+				const fatal = chunkResults.find((result): result is { fatalError: unknown } => 'fatalError' in result);
+				if (fatal) {
+					throw fatal.fatalError;
+				}
+				for (const result of chunkResults) {
+					if ('fatalError' in result) {
+						throw result.fatalError;
+					}
+					results.push(result);
+				}
+			}
+			return results;
+		} finally {
+			this.attachmentBudget = undefined;
+		}
+	}
+
+	async runCanonical(params: HfFsParams): Promise<HfFsExecutionResult> {
 		validateHfFsParams(params);
+		if (params.op === 'attach') {
+			return await this.attach(params);
+		}
 		if (isRootGuidanceUri(params.uri)) {
 			return await this.runRootGuidance(params);
 		}
@@ -495,6 +813,8 @@ export class HfFsTool {
 					params.offset ?? 0,
 					normalizedCatMaxBytes(params.max_bytes)
 				);
+			case 'attach':
+				throw new Error('attach requires a direct repository or bucket file URI.');
 			case 'stat':
 				return await statGuidance('root', 'hf://README.md', 'README.md');
 			case 'ls':
@@ -518,6 +838,8 @@ export class HfFsTool {
 				};
 			case 'cat':
 				throw new Error(`EISDIR: ${params.uri} is a directory`);
+			case 'attach':
+				throw new Error('attach requires a direct repository or bucket file URI.');
 			case 'find':
 				throw new Error(`ENOTSUP: find is not supported on ${params.uri}; use ls`);
 			case 'search':
@@ -742,7 +1064,7 @@ export class HfFsTool {
 		const parsed = parseHfFsUri(params.uri);
 		if (parsed.kind === 'repo') {
 			throw new Error(
-				'ENOTSUP: search is supported on discovery roots or owner namespaces, not repository file paths.'
+				'ENOTSUP: search is supported on discovery roots or owner namespaces, not repository or repository-file scopes. Search a resource root or owner scope to discover resources; use find for file discovery by name/path (not file contents) or cat for a known text file.'
 			);
 		}
 		if (parsed.repoType === 'bucket') {
@@ -878,8 +1200,108 @@ export class HfFsTool {
 		};
 	}
 
-	private async stat(params: HfFsParams): Promise<HfFsStatResult> {
+	private async attach(params: HfFsParams): Promise<HfFsAttachExecutionResult> {
+		this.abortSignal?.throwIfAborted();
+		if (!/^hf:\/\/(?:models|datasets|spaces|buckets)\//.test(params.uri)) {
+			throw new Error('attach requires a direct repository or bucket file URI.');
+		}
+
+		let parsed: ParsedHfUri;
+		try {
+			parsed = parseHfFsUri(params.uri);
+		} catch {
+			throw new Error('attach requires a direct repository or bucket file URI.');
+		}
+		if (parsed.kind === 'namespace' || !parsed.path) {
+			throw new Error('attach requires a direct repository or bucket file URI.');
+		}
+
+		const mimeType = imageMimeTypeForPath(parsed.path);
+		if (!mimeType) {
+			if (classifyTextFilePath(parsed.path) === 'text') {
+				throw new HfFsImageOnlyError(
+					`Refusing to attach known text file: ${parsed.path}. Attach returns supported image files only.`
+				);
+			}
+			throw new HfFsUnsupportedMediaError(
+				`Unsupported attachment media: ${parsed.path}. The file extension is not .jpg, .jpeg, .png, or .webp.`
+			);
+		}
+
+		const maxBytes = params.max_bytes ?? HF_FS_ATTACH_MAX_BYTES;
+		let reservation: HfFsAttachmentReservation | undefined;
+		try {
+			const stat = await this.stat(params, {
+				attachmentPreflight: true,
+				...(this.attachmentFetch ? { fetch: this.attachmentFetch } : {}),
+			});
+			this.abortSignal?.throwIfAborted();
+			if (!stat.exists) {
+				throw new Error(`File does not exist: ${parsed.path}`);
+			}
+			if (stat.type !== 'file') {
+				throw new Error(`attach requires a file path, got ${stat.type}: ${parsed.path}`);
+			}
+			if (stat.size !== undefined) {
+				assertValidAttachmentSize(stat.size, 'File size metadata');
+				assertAttachmentWithinLimit(stat.size, maxBytes, parsed.path);
+			}
+			if (this.attachmentBudget) {
+				reservation = this.attachmentBudget.reserve(stat.size ?? maxBytes);
+			}
+
+			const blob = await downloadFile({
+				repo: parsed.repo,
+				path: parsed.path,
+				...(parsed.revision ? { revision: parsed.revision } : {}),
+				...(this.hubUrl ? { hubUrl: this.hubUrl } : {}),
+				...(this.accessToken ? { accessToken: this.accessToken } : {}),
+				...(this.attachmentFetch ? { fetch: this.attachmentFetch } : {}),
+			});
+			this.abortSignal?.throwIfAborted();
+			if (!blob) {
+				throw new Error(`File does not exist: ${parsed.path}`);
+			}
+
+			const blobSize = blob.size;
+			assertValidAttachmentSize(blobSize, 'Downloaded Blob size');
+			assertAttachmentWithinLimit(blobSize, maxBytes, parsed.path);
+			if (reservation) {
+				this.attachmentBudget?.resize(reservation, blobSize);
+			}
+			const data = await readBlobExactly(blob, blobSize, maxBytes, this.abortSignal);
+			return {
+				metadata: {
+					op: 'attach',
+					uri: params.uri,
+					path: parsed.path,
+					mime_type: mimeType,
+					bytes: data.byteLength,
+				},
+				data,
+			};
+		} catch (error) {
+			if (reservation) {
+				this.attachmentBudget?.release(reservation);
+			}
+			throw error;
+		}
+	}
+
+	private async stat(
+		params: HfFsParams,
+		options: { attachmentPreflight?: boolean; fetch?: typeof fetch } = {}
+	): Promise<HfFsStatResult> {
 		if (isRootUri(params.uri)) {
+			return {
+				uri: params.uri,
+				op: 'stat',
+				exists: true,
+				type: 'dir',
+				path: '',
+			};
+		}
+		if (isRepoDiscoveryRoot(params.uri)) {
 			return {
 				uri: params.uri,
 				op: 'stat',
@@ -912,6 +1334,7 @@ export class HfFsTool {
 			...(parsed.revision ? { revision: parsed.revision } : {}),
 			...(this.hubUrl ? { hubUrl: this.hubUrl } : {}),
 			...(this.accessToken ? { accessToken: this.accessToken } : {}),
+			...(options.fetch ? { fetch: options.fetch } : {}),
 		});
 		if (!path) {
 			return {
@@ -924,6 +1347,9 @@ export class HfFsTool {
 		}
 
 		const type = toStatType(path);
+		if (options.attachmentPreflight && type === 'file' && path.size !== undefined) {
+			assertValidAttachmentSize(path.size, 'File size metadata');
+		}
 		return {
 			uri: params.uri,
 			op: 'stat',
@@ -1222,6 +1648,155 @@ export function formatHfFsMarkdown(result: HfFsResult, maxChars = HF_FS_MAX_OUTP
 	return trimMarkdownToBudget(withWarnings, maxChars);
 }
 
+export function formatHfFsBatchMarkdown(
+	items: readonly HfFsBatchExecutionItem[],
+	maxChars = HF_FS_MAX_OUTPUT_CHARS
+): string {
+	const sections = items.map((item) => {
+		const heading = `## Operation ${(item.index + 1).toString()}`;
+		if (item.status === 'error') {
+			return `${heading}\n\n${formatHfFsRecoveryError(item.error)}`;
+		}
+		return `${heading}\n\n${formatHfFsMarkdown(hfFsExecutionMetadata(item.executionResult), Number.MAX_SAFE_INTEGER)}`;
+	});
+	const markdown = sections.join('\n\n---\n\n');
+	if (fitsWithinCharBudget(markdown, maxChars)) {
+		return markdown;
+	}
+	const suffix =
+		'\n\n_Batch output truncated to fit the hf_fs cumulative output budget. Re-run omitted operations or use narrower limits._';
+	if (suffix.length >= maxChars) {
+		return suffix.slice(0, maxChars);
+	}
+	return `${markdown.slice(0, maxChars - suffix.length).trimEnd()}${suffix}`;
+}
+
+export function toHfFsBatchResult(
+	items: readonly HfFsBatchExecutionItem[],
+	maxChars = HF_FS_MAX_OUTPUT_CHARS
+): HfFsBatchResult {
+	const results: HfFsBatchItemResult[] = [];
+	let truncated = false;
+
+	for (const item of items) {
+		if (item.status === 'error') {
+			results.push({
+				index: item.index,
+				status: 'error',
+				error: item.error,
+			});
+			continue;
+		}
+
+		const result = hfFsExecutionMetadata(item.executionResult);
+		const full: HfFsBatchItemResult = {
+			index: item.index,
+			status: 'success',
+			result,
+		};
+		if (batchStructuredChars([...results, full], truncated) <= maxChars) {
+			results.push(full);
+			continue;
+		}
+
+		truncated = true;
+		results.push({
+			index: item.index,
+			status: 'success',
+			result: compactHfFsOutputResult(result),
+			output_truncated: true,
+		});
+	}
+
+	if (batchStructuredChars(results, truncated) > maxChars) {
+		let stringLimit = Math.min(512, Math.max(0, maxChars));
+		let boundedResults = results.map((result) => boundHfFsBatchItem(result, stringLimit));
+		while (batchStructuredChars(boundedResults, true) > maxChars && stringLimit > 0) {
+			stringLimit = Math.floor(stringLimit / 2);
+			boundedResults = results.map((result) => boundHfFsBatchItem(result, stringLimit));
+		}
+		return {
+			results: boundedResults,
+			truncated: true,
+			truncation_reason: 'output_budget',
+		};
+	}
+
+	return {
+		results,
+		...(truncated ? { truncated: true, truncation_reason: 'output_budget' as const } : {}),
+	};
+}
+
+function hfFsExecutionMetadata(result: HfFsExecutionResult): HfFsResult {
+	return isHfFsAttachExecutionResult(result) ? result.metadata : result;
+}
+
+function compactHfFsOutputResult(result: HfFsResult): HfFsOutputResult {
+	const compact: HfFsOutputResult = { ...result };
+	if ('entries' in compact) {
+		delete compact.entries;
+	}
+	if ('content' in compact) {
+		delete compact.content;
+	}
+	return compact;
+}
+
+function boundHfFsBatchItem(item: HfFsBatchItemResult, stringLimit: number): HfFsBatchItemResult {
+	if (item.status === 'error') {
+		return {
+			index: item.index,
+			status: 'error',
+			error: {
+				...item.error,
+				message: truncateHfFsBatchString(item.error.message, stringLimit),
+				recovery: truncateHfFsBatchString(item.error.recovery, stringLimit),
+			},
+		};
+	}
+
+	const result = item.result;
+	const uri = truncateHfFsBatchString(result.uri, stringLimit);
+	if (result.op === 'attach') {
+		return {
+			index: item.index,
+			status: 'success',
+			result: {
+				op: result.op,
+				uri,
+				path: truncateHfFsBatchString(result.path ?? '', stringLimit),
+				mime_type: result.mime_type ?? 'image/png',
+				bytes: result.bytes ?? 0,
+			},
+			output_truncated: true,
+		};
+	}
+	return {
+		index: item.index,
+		status: 'success',
+		result: { op: result.op, uri },
+		output_truncated: true,
+	};
+}
+
+function truncateHfFsBatchString(value: string, maxChars: number): string {
+	if (value.length <= maxChars) {
+		return value;
+	}
+	if (maxChars <= 1) {
+		return value.slice(0, maxChars);
+	}
+	return `${value.slice(0, maxChars - 1)}…`;
+}
+
+function batchStructuredChars(results: readonly HfFsBatchItemResult[], truncated: boolean): number {
+	return JSON.stringify({
+		results,
+		...(truncated ? { truncated: true, truncation_reason: 'output_budget' } : {}),
+	}).length;
+}
+
 function renderHfFsMarkdown(result: HfFsResult): string {
 	switch (result.op) {
 		case 'ls':
@@ -1230,9 +1805,22 @@ function renderHfFsMarkdown(result: HfFsResult): string {
 			return renderLsMarkdown(result);
 		case 'cat':
 			return renderCatMarkdown(result);
+		case 'attach':
+			return renderAttachMarkdown(result);
 		case 'stat':
 			return renderStatMarkdown(result);
 	}
+}
+
+function renderAttachMarkdown(result: HfFsAttachResult): string {
+	return [
+		'# hf_fs attach',
+		'',
+		`- URI: ${inlineCode(result.uri)}`,
+		`- Path: ${inlineCode(result.path)}`,
+		`- MIME type: ${inlineCode(result.mime_type)}`,
+		`- Bytes: ${result.bytes.toString()}`,
+	].join('\n');
 }
 
 function renderLsMarkdown(result: HfFsLsResult): string {
@@ -1430,6 +2018,82 @@ function isNotFoundError(error: unknown): boolean {
 	return error instanceof HubApiError && error.statusCode === 404;
 }
 
+function assertValidAttachmentSize(size: number, source: string): void {
+	if (!Number.isSafeInteger(size) || size < 0) {
+		throw new HfFsAttachmentIntegrityError(`${source} is invalid.`);
+	}
+}
+
+function assertAttachmentWithinLimit(size: number, maxBytes: number, filePath: string): void {
+	if (size > maxBytes) {
+		throw new HfFsImageTooLargeError(
+			`Image is too large to attach: ${filePath} is ${size.toString()} bytes; complete-file limit is ${maxBytes.toString()} bytes.`
+		);
+	}
+}
+
+async function readBlobExactly(
+	blob: Blob,
+	expectedBytes: number,
+	maxBytes: number,
+	abortSignal?: AbortSignal
+): Promise<Uint8Array> {
+	abortSignal?.throwIfAborted();
+	const data = new Uint8Array(expectedBytes);
+	const reader = blob.stream().getReader();
+	let observedBytes = 0;
+	const cancelOnAbort = (): void => {
+		void reader.cancel(abortSignal?.reason).catch(() => {
+			// Cancellation is best effort; the abort reason remains the primary failure.
+		});
+	};
+	abortSignal?.addEventListener('abort', cancelOnAbort, { once: true });
+
+	try {
+		// Close the race where the signal aborts after the initial check but before
+		// the listener is registered. If it was already aborted, this throws; if it
+		// aborts concurrently, the listener also cancels the pending stream read.
+		abortSignal?.throwIfAborted();
+		while (true) {
+			const read = await reader.read();
+			abortSignal?.throwIfAborted();
+			if (read.done) {
+				break;
+			}
+			const nextObservedBytes = observedBytes + read.value.byteLength;
+			if (nextObservedBytes > maxBytes) {
+				throw new HfFsImageTooLargeError(
+					`Downloaded image stream exceeded the complete-file limit of ${maxBytes.toString()} bytes.`
+				);
+			}
+			if (nextObservedBytes > expectedBytes) {
+				throw new HfFsAttachmentIntegrityError('Downloaded image stream exceeded its declared Blob size.');
+			}
+			data.set(read.value, observedBytes);
+			observedBytes = nextObservedBytes;
+		}
+	} catch (error) {
+		if (!abortSignal?.aborted) {
+			try {
+				await reader.cancel();
+			} catch {
+				// Preserve the deterministic size/read error instead of a secondary cancellation failure.
+			}
+		}
+		throw error;
+	} finally {
+		abortSignal?.removeEventListener('abort', cancelOnAbort);
+		reader.releaseLock();
+	}
+
+	if (observedBytes !== expectedBytes) {
+		throw new HfFsAttachmentIntegrityError(
+			`Downloaded image stream ended after ${observedBytes.toString()} bytes; expected ${expectedBytes.toString()} bytes.`
+		);
+	}
+	return data;
+}
+
 function buildLsResult(
 	uri: string,
 	entries: HfFsEntry[],
@@ -1509,6 +2173,17 @@ function basename(path: string): string {
 }
 
 export function parseHfFsUri(uri: string): ParsedHfUri {
+	try {
+		return parseHfFsUriUnchecked(uri);
+	} catch (error) {
+		if (error instanceof Error && !error.message.startsWith('EINVAL:')) {
+			throw new Error(`EINVAL: ${error.message}`, { cause: error });
+		}
+		throw error;
+	}
+}
+
+function parseHfFsUriUnchecked(uri: string): ParsedHfUri {
 	if (!uri.startsWith('hf://')) {
 		throw new Error('URI must start with hf://.');
 	}

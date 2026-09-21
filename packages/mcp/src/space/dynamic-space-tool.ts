@@ -153,13 +153,21 @@ function formatUnknownOperationLine(requestedOperation?: string): string {
  */
 export function getDynamicSpaceToolConfig(): {
 	name: string;
+	title: string;
 	description: string;
 	schema: z.ZodObject<z.ZodRawShape>;
-	annotations: { title: string; readOnlyHint: boolean; openWorldHint: boolean };
+	annotations: {
+		title: string;
+		destructiveHint: boolean;
+		idempotentHint: boolean;
+		readOnlyHint: boolean;
+		openWorldHint: boolean;
+	};
 } {
 	const dynamicMode = isDynamicSpaceMode();
 	return {
 		name: 'dynamic_space',
+		title: 'Dynamically use Hugging Face Spaces',
 		description: dynamicMode
 			? 'Perform Tasks with Hugging Face Spaces. Use "discover" to view available Tasks. Examples are Image Generation/Editing, Background Removal, Text to Speech, OCR and many more. ' +
 				'Call with no arguments for full usage instructions.'
@@ -168,6 +176,8 @@ export function getDynamicSpaceToolConfig(): {
 		schema: getSpaceArgsSchema(),
 		annotations: {
 			title: 'Dynamically use Hugging Face Spaces',
+			destructiveHint: true,
+			idempotentHint: false,
 			readOnlyHint: false,
 			openWorldHint: true,
 		},
@@ -179,12 +189,15 @@ export function getDynamicSpaceToolConfig(): {
  */
 export const DYNAMIC_SPACE_TOOL_CONFIG = {
 	name: 'dynamic_space',
+	title: 'Dynamically use Hugging Face Spaces',
 	description:
 		'Find (semantic/task search), inspect (view parameter schema) and dynamically invoke Hugging Face Spaces. ' +
 		'Call with no operation for full usage instructions.',
 	schema: spaceArgsSchema,
 	annotations: {
 		title: 'Dynamically use Hugging Face Spaces',
+		destructiveHint: true,
+		idempotentHint: false,
 		readOnlyHint: false,
 		openWorldHint: true,
 	},

@@ -1,5 +1,6 @@
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { createServerFactory } from '../../src/server/mcp-server.js';
 import { WebServer } from '../../src/server/web-server.js';
 import { McpApiClient } from '../../src/server/utils/mcp-api-client.js';
@@ -14,6 +15,21 @@ vi.mock('@llmindset/hf-mcp', async (importOriginal) => {
 
 	return {
 		...actual,
+		HF_JOBS_TOOL_CONFIG: {
+			...actual.HF_JOBS_TOOL_CONFIG,
+			outputSchema: z.object({
+				operation: z.literal('logs').optional(),
+				outcome: z.object({
+					kind: z.literal('logs'),
+					job_id: z.string(),
+					lines: z.array(z.string()),
+					finished: z.boolean(),
+					truncated: z.boolean(),
+				}),
+				total_results: z.number().int().nonnegative(),
+				results_shared: z.number().int().nonnegative(),
+			}),
+		},
 		HfJobsTool: class {
 			execute = mocks.executeJobs;
 		},
@@ -41,6 +57,18 @@ describe('Jobs progress wiring', () => {
 					formatted: 'Job completed.',
 					totalResults: 1,
 					resultsShared: 1,
+					structuredContent: {
+						operation: 'logs',
+						outcome: {
+							kind: 'logs',
+							job_id: 'job-123',
+							lines: ['Job completed.'],
+							finished: true,
+							truncated: false,
+						},
+						total_results: 1,
+						results_shared: 1,
+					},
 				};
 			}
 		);
@@ -63,7 +91,16 @@ describe('Jobs progress wiring', () => {
 		const progress: Array<{ progress: number; message?: string }> = [];
 
 		try {
-			expect((await client.listTools()).tools.map((tool) => tool.name)).toContain('hf_jobs');
+			const advertisedTool = (await client.listTools()).tools.find((tool) => tool.name === 'hf_jobs');
+			expect(advertisedTool?.outputSchema).toMatchObject({
+				type: 'object',
+				properties: {
+					outcome: expect.any(Object),
+					total_results: { type: 'integer', minimum: 0 },
+					results_shared: { type: 'integer', minimum: 0 },
+				},
+				required: ['outcome', 'total_results', 'results_shared'],
+			});
 			const result = await client.callTool(
 				{
 					name: 'hf_jobs',
@@ -77,6 +114,18 @@ describe('Jobs progress wiring', () => {
 			);
 
 			expect(result.content).toEqual([{ type: 'text', text: 'Job completed.' }]);
+			expect(result.structuredContent).toEqual({
+				operation: 'logs',
+				outcome: {
+					kind: 'logs',
+					job_id: 'job-123',
+					lines: ['Job completed.'],
+					finished: true,
+					truncated: false,
+				},
+				total_results: 1,
+				results_shared: 1,
+			});
 			expect(progress).toEqual([
 				expect.objectContaining({ progress: 0, message: 'Submitting job.' }),
 				expect.objectContaining({ progress: 1, message: 'job: running' }),

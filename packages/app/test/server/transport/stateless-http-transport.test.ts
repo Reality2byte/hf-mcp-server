@@ -4,6 +4,8 @@ import {
 	MAX_METRICS_RESPONSE_CAPTURE_BYTES,
 	MetricsResponseCapture,
 	StatelessHttpTransport,
+	classifyServerDiscoverOutcome,
+	classifySkillRequest,
 	summarizeSubscriptionRequest,
 } from '../../../src/server/transport/stateless-http-transport.js';
 import type { ServerFactory } from '../../../src/server/transport/base-transport.js';
@@ -13,6 +15,9 @@ import { formatMetricsForAPI } from '../../../src/shared/transport-metrics.js';
 import express from 'express';
 import { createProgressRelay } from '../../../src/server/utils/progress-relay.js';
 import { z } from 'zod';
+import * as hfWhoamiClient from '../../../src/server/utils/hf-whoami-client.js';
+import * as skillCatalogCache from '../../../src/server/skills/skill-catalog-cache.js';
+import type { SkillCatalog, SkillEntry } from '../../../src/server/skills/skill-types.js';
 
 describe('MetricsResponseCapture', () => {
 	it('detects JSON-RPC and tool errors in bounded responses', () => {
@@ -20,6 +25,7 @@ describe('MetricsResponseCapture', () => {
 		rpcError.add('{"jsonrpc":"2.0","id":1,');
 		rpcError.add('"error":{"code":-32603,"message":"failed"}}');
 		expect(rpcError.isError()).toBe(true);
+		expect(rpcError.summary()).toEqual({ isError: true, jsonRpcErrorCode: -32603 });
 
 		const toolError = new MetricsResponseCapture();
 		toolError.add(
@@ -45,9 +51,77 @@ describe('MetricsResponseCapture', () => {
 		const concatSpy = vi.spyOn(Buffer, 'concat');
 
 		expect(capture.isError()).toBe(false);
+		expect(capture.summary()).toEqual({ isError: false, truncated: true });
 		expect(concatSpy).not.toHaveBeenCalled();
 
 		concatSpy.mockRestore();
+	});
+
+	it('extracts negotiation error codes from JSON, SSE, and batch responses', () => {
+		const json = new MetricsResponseCapture();
+		json.add('{"jsonrpc":"2.0","id":1,"error":{"code":-32020,"message":"mismatch"}}');
+		expect(json.summary()).toEqual({ isError: true, jsonRpcErrorCode: -32020 });
+
+		const sse = new MetricsResponseCapture();
+		sse.add('event: message\ndata: {"jsonrpc":"2.0","id":1,"error":{"code":-32022}}\n\n');
+		expect(sse.summary()).toEqual({ isError: true, jsonRpcErrorCode: -32022 });
+
+		const multilineSse = new MetricsResponseCapture();
+		multilineSse.add(
+			'event: message\n' + 'data: {"jsonrpc":"2.0","id":1,\n' + 'data: "error":{"code":-32603,"message":"failed"}}\n\n'
+		);
+		expect(multilineSse.summary()).toEqual({ isError: true, jsonRpcErrorCode: -32603 });
+
+		const batch = new MetricsResponseCapture();
+		batch.add('[{"jsonrpc":"2.0","id":1,"result":{}},{"jsonrpc":"2.0","id":2,"error":{"code":-32600}}]');
+		expect(batch.summary()).toEqual({ isError: true, jsonRpcErrorCode: -32600 });
+	});
+
+	it('counts only aggregate Skills response items', () => {
+		const list = new MetricsResponseCapture();
+		list.add(
+			JSON.stringify({
+				jsonrpc: '2.0',
+				id: 1,
+				result: {
+					skills: [
+						{ uri: 'skill://private/one/SKILL.md', frontmatter: { description: 'private' } },
+						{ uri: 'skill://private/two/SKILL.md', frontmatter: { description: 'private' } },
+					],
+				},
+			})
+		);
+		expect(list.summary()).toEqual({ isError: false, responseItemCount: 2 });
+
+		const get = new MetricsResponseCapture();
+		get.add(
+			JSON.stringify({
+				jsonrpc: '2.0',
+				id: 1,
+				result: { skill: { uri: 'skill://private/one/SKILL.md', content: 'private' } },
+			})
+		);
+		expect(get.summary()).toEqual({ isError: false, responseItemCount: 1 });
+	});
+});
+
+describe('classifyServerDiscoverOutcome', () => {
+	it.each([
+		[200, { isError: false }, 'success'],
+		[400, { isError: true, jsonRpcErrorCode: -32020 }, 'headerBodyMismatch'],
+		[400, { isError: true, jsonRpcErrorCode: -32022 }, 'unsupportedVersion'],
+		[400, { isError: true, jsonRpcErrorCode: -32600 }, 'invalidRequest'],
+		[400, { isError: false }, 'invalidRequest'],
+		[401, { isError: false }, 'authRejected'],
+		[403, { isError: true, jsonRpcErrorCode: -32603 }, 'authRejected'],
+		[500, { isError: false }, 'internalServerError'],
+		[500, { isError: true, jsonRpcErrorCode: -32020 }, 'internalServerError'],
+		[200, { isError: true, jsonRpcErrorCode: -32603 }, 'internalServerError'],
+		[200, { isError: false, truncated: true }, 'otherError'],
+		[200, { isError: true, jsonRpcErrorCode: -32099 }, 'otherError'],
+		[429, { isError: false }, 'otherError'],
+	] as const)('classifies HTTP %i with %o as %s', (httpStatus, response, expected) => {
+		expect(classifyServerDiscoverOutcome({ httpStatus, response })).toBe(expected);
 	});
 });
 
@@ -84,6 +158,72 @@ describe('StatelessHttpTransport', () => {
 		} else {
 			process.env.DISABLE_TOOLS = originalDisableTools;
 		}
+	});
+
+	describe('strict token mode whoami failures', () => {
+		afterEach(() => {
+			vi.restoreAllMocks();
+			vi.unstubAllEnvs();
+		});
+
+		describe.each([
+			['modern', '2026-07-28'],
+			['legacy', '2025-03-26'],
+		])('%s HTTP path', (_era, protocolVersion) => {
+			it.each([
+				['upstream HTTP failure', new hfWhoamiClient.HfWhoamiRequestError('http', 500)],
+				['invalid response', new hfWhoamiClient.HfWhoamiRequestError('invalid_response')],
+				['network failure', new TypeError('fetch failed')],
+				['timeout', new DOMException('Request timed out', 'TimeoutError')],
+			])('returns 503 without an auth challenge or building a server on %s', async (_failure, error) => {
+				vi.stubEnv('MCP_STRICT_TOKEN', 'true');
+				const whoamiSpy = vi.spyOn(hfWhoamiClient, 'fetchHfWhoami').mockRejectedValue(error);
+				const serverFactory = vi.fn<ServerFactory>();
+				const app = express();
+				app.use(express.json());
+				transport = new StatelessHttpTransport(serverFactory, app);
+				await transport.initialize();
+
+				const httpServer = app.listen(0);
+				try {
+					await new Promise<void>((resolve, reject) => {
+						httpServer.once('listening', resolve);
+						httpServer.once('error', reject);
+					});
+					const address = httpServer.address();
+					if (!address || typeof address === 'string') {
+						throw new Error('Expected the test server to listen on a TCP port');
+					}
+
+					const response = await fetch(`http://127.0.0.1:${address.port}/mcp`, {
+						method: 'POST',
+						headers: {
+							accept: 'application/json, text/event-stream',
+							'content-type': 'application/json',
+							'mcp-protocol-version': protocolVersion,
+							authorization: 'Bearer hf_strict_whoami_failure',
+						},
+						body: JSON.stringify({
+							jsonrpc: '2.0',
+							id: 1,
+							method: 'tools/list',
+							params: { _meta: { 'io.modelcontextprotocol/protocolVersion': protocolVersion } },
+						}),
+					});
+					const body = await response.text();
+					expect(whoamiSpy).toHaveBeenCalledExactlyOnceWith('hf_strict_whoami_failure');
+					expect(serverFactory).not.toHaveBeenCalled();
+					expect(response.status).toBe(503);
+					expect(response.headers.get('www-authenticate')).toBeNull();
+					expect(body).toBe('Service Unavailable');
+				} finally {
+					await new Promise<void>((resolve, reject) => {
+						httpServer.close((error) => (error ? reject(error) : resolve()));
+					});
+					await transport.cleanup();
+				}
+			});
+		});
 	});
 
 	describe('requestsProgress', () => {
@@ -210,6 +350,220 @@ describe('StatelessHttpTransport', () => {
 		it('should handle null body gracefully', () => {
 			const result = (transport as any).shouldHandle(null);
 			expect(result).toBe(false);
+		});
+	});
+
+	describe('Skills event logging', () => {
+		it.each([
+			[
+				{ method: 'skills/list', params: {} },
+				{ methodName: 'skills/list', cursorSupplied: false },
+			],
+			[
+				{ method: 'skills/list', params: { cursor: '' } },
+				{ methodName: 'skills/list', cursorSupplied: true },
+			],
+			[
+				{ method: 'skills/get', params: { uri: 'skill://private/SKILL.md' } },
+				{ methodName: 'skills/get', cursorSupplied: false, targetUri: 'skill://private/SKILL.md' },
+			],
+			[
+				{ method: 'resources/read', params: { uri: 'skill://private/SKILL.md' } },
+				{
+					methodName: 'skills/resource-read',
+					cursorSupplied: false,
+					targetUri: 'skill://private/SKILL.md',
+				},
+			],
+			[
+				{ method: 'resources/directory/read', params: { uri: 'skill://private', cursor: '1' } },
+				{ methodName: 'skills/directory-read', cursorSupplied: true, targetUri: 'skill://private' },
+			],
+		])('classifies privacy-sensitive request %j', (request, expected) => {
+			expect(classifySkillRequest(request)).toEqual(expected);
+		});
+
+		it.each([
+			{ method: 'resources/read', params: { uri: 'hf://models/private/repo' } },
+			{ method: 'resources/directory/read', params: { uri: 'hf://models/private' } },
+			{ method: 'resources/read', params: { uri: 42 } },
+			{ method: 'tools/list' },
+			null,
+		])('does not classify non-Skills request %j', (request) => {
+			expect(classifySkillRequest(request)).toBeNull();
+		});
+
+		it('records an allowlisted event and isolates logger failures', () => {
+			const eventLogger = vi.fn();
+			transport = new StatelessHttpTransport(vi.fn() as unknown as ServerFactory, express(), eventLogger);
+			const request = {
+				method: 'skills/get',
+				params: { uri: 'skill://private-org/private-skill/SKILL.md' },
+			};
+
+			(transport as any).recordSkillEvent(
+				request,
+				Date.now() - 10,
+				true,
+				{
+					requestId: 'request-1',
+					protocolEra: 'modern',
+					protocolVersion: '2026-07-28',
+					isAuthenticated: true,
+					clientInfo: { name: 'test-client', version: '1.0.0' },
+				},
+				1
+			);
+
+			expect(eventLogger).toHaveBeenCalledWith(
+				'skills/get',
+				expect.objectContaining({
+					requestId: 'request-1',
+					protocolEra: 'modern',
+					protocolVersion: '2026-07-28',
+					isAuthenticated: true,
+					clientName: 'test-client',
+					clientVersion: '1.0.0',
+					success: true,
+					cursorSupplied: false,
+					targetUri: 'skill://private-org/private-skill/SKILL.md',
+					responseItemCount: 1,
+				})
+			);
+			expect(JSON.stringify(eventLogger.mock.calls[0])).toContain('skill://private-org/private-skill/SKILL.md');
+
+			const failingLogger = vi.fn(() => {
+				throw new Error('logger unavailable');
+			});
+			transport = new StatelessHttpTransport(vi.fn() as unknown as ServerFactory, express(), failingLogger);
+			expect(() =>
+				(transport as any).recordSkillEvent(request, Date.now(), false, {
+					protocolEra: 'legacy',
+					isAuthenticated: false,
+				})
+			).not.toThrow();
+		});
+
+		it('logs successful and failed legacy static resource reads exactly once', async () => {
+			const privateUri = 'skill://private-org/private-skill/SKILL.md';
+			const entry: SkillEntry = {
+				uri: privateUri,
+				skillPath: 'private-org/private-skill',
+				frontmatter: { name: 'private-skill', description: 'PRIVATE_DESCRIPTION' },
+				resources: [{ uri: privateUri, digest: 'digest' }],
+			};
+			const catalog: SkillCatalog = {
+				manifestPath: '/private/skills.json',
+				loadedAt: Date.now(),
+				entries: [entry],
+				entriesByUri: new Map([[privateUri, entry]]),
+				resourcesByUri: new Map([
+					[
+						privateUri,
+						{
+							uri: privateUri,
+							bytes: Buffer.from('PRIVATE_SKILL_CONTENT'),
+							mimeType: 'text/markdown',
+							isText: true,
+							name: 'private-skill',
+							digest: 'digest',
+						},
+					],
+				]),
+				directories: new Map([
+					[
+						'skill://private-org/private-skill',
+						[{ uri: privateUri, name: 'private-skill', mimeType: 'text/markdown' }],
+					],
+				]),
+			};
+			const catalogSpy = vi.spyOn(skillCatalogCache, 'getSkillCatalog').mockResolvedValue(catalog);
+			const eventLogger = vi.fn();
+			transport = new StatelessHttpTransport(vi.fn() as unknown as ServerFactory, express(), eventLogger);
+			const makeResponse = () => ({
+				status: vi.fn().mockReturnThis(),
+				json: vi.fn().mockReturnThis(),
+			});
+			const context = {
+				clientSessionId: 'session-1',
+				protocolEra: 'legacy' as const,
+				protocolVersion: '2026-07-28',
+				isAuthenticated: true,
+				clientInfo: { name: 'skills-client', version: '1.0.0' },
+			};
+
+			try {
+				const successRequest = { method: 'resources/read', params: { uri: privateUri } };
+				const successResponse = makeResponse();
+				await expect(
+					(transport as any).tryHandleStaticResourceRequest(
+						{ headers: {}, body: successRequest },
+						successResponse,
+						successRequest,
+						context.clientInfo,
+						Date.now(),
+						context
+					)
+				).resolves.toBe(true);
+
+				const failedRequest = {
+					method: 'resources/read',
+					params: { uri: 'skill://private-org/missing/SKILL.md' },
+				};
+				const failedResponse = makeResponse();
+				await expect(
+					(transport as any).tryHandleStaticResourceRequest(
+						{ headers: {}, body: failedRequest },
+						failedResponse,
+						failedRequest,
+						context.clientInfo,
+						Date.now(),
+						context
+					)
+				).resolves.toBe(true);
+
+				const directoryRequest = {
+					method: 'resources/directory/read',
+					params: { uri: 'skill://private-org/private-skill', cursor: '0' },
+				};
+				const directoryResponse = makeResponse();
+				await expect(
+					(transport as any).tryHandleStaticResourceRequest(
+						{ headers: {}, body: directoryRequest },
+						directoryResponse,
+						directoryRequest,
+						context.clientInfo,
+						Date.now(),
+						context
+					)
+				).resolves.toBe(true);
+
+				expect(eventLogger).toHaveBeenCalledTimes(3);
+				expect(eventLogger.mock.calls[0]).toEqual([
+					'skills/resource-read',
+					expect.objectContaining({ success: true, targetUri: privateUri, responseItemCount: 1 }),
+				]);
+				expect(eventLogger.mock.calls[1]).toEqual([
+					'skills/resource-read',
+					expect.objectContaining({
+						success: false,
+						targetUri: 'skill://private-org/missing/SKILL.md',
+						responseItemCount: undefined,
+					}),
+				]);
+				expect(eventLogger.mock.calls[2]).toEqual([
+					'skills/directory-read',
+					expect.objectContaining({
+						success: true,
+						cursorSupplied: true,
+						targetUri: 'skill://private-org/private-skill',
+						responseItemCount: 1,
+					}),
+				]);
+				expect(JSON.stringify(eventLogger.mock.calls)).not.toContain('PRIVATE_');
+			} finally {
+				catalogSpy.mockRestore();
+			}
 		});
 	});
 
@@ -348,6 +702,143 @@ describe('StatelessHttpTransport', () => {
 	});
 
 	describe('production request path', () => {
+		it('logs a modern skills/list probe exactly once without retaining its response', async () => {
+			const app = express();
+			app.use(express.json());
+			const eventLogger = vi.fn();
+			const serverFactory: ServerFactory = vi.fn(async () => {
+				const server = new McpServer({ name: 'skills-logging-test', version: '1.0.0' });
+				server.server.setRequestHandler(
+					'skills/list',
+					{ params: z.looseObject({ cursor: z.string().optional() }) },
+					() => ({
+						skills: [
+							{ uri: 'skill://private/one/SKILL.md', frontmatter: { description: 'PRIVATE_ONE' } },
+							{ uri: 'skill://private/two/SKILL.md', frontmatter: { description: 'PRIVATE_TWO' } },
+						],
+					})
+				);
+				return { server, enabledToolIds: [] };
+			});
+			transport = new StatelessHttpTransport(serverFactory, app, eventLogger);
+			await transport.initialize();
+
+			const httpServer = app.listen(0);
+			try {
+				await new Promise<void>((resolve, reject) => {
+					httpServer.once('listening', resolve);
+					httpServer.once('error', reject);
+				});
+				const address = httpServer.address();
+				if (!address || typeof address === 'string') {
+					throw new Error('Expected the test server to listen on a TCP port');
+				}
+
+				const client = new Client(
+					{ name: 'skills-client', version: '1.0.0' },
+					{ versionNegotiation: { mode: { pin: '2026-07-28' } } }
+				);
+				const clientTransport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`));
+				await client.connect(clientTransport);
+				await client.request({ method: 'skills/list', params: {} }, z.looseObject({ skills: z.array(z.unknown()) }));
+
+				expect(eventLogger).toHaveBeenCalledTimes(1);
+				expect(eventLogger).toHaveBeenCalledWith(
+					'skills/list',
+					expect.objectContaining({
+						protocolEra: 'modern',
+						protocolVersion: '2026-07-28',
+						clientName: 'skills-client',
+						clientVersion: '1.0.0',
+						success: true,
+						cursorSupplied: false,
+						responseItemCount: 2,
+					})
+				);
+				const serializedEvent = JSON.stringify(eventLogger.mock.calls[0]);
+				expect(serializedEvent).not.toContain('skill://');
+				expect(serializedEvent).not.toContain('PRIVATE_');
+
+				await client.close();
+			} finally {
+				await new Promise<void>((resolve, reject) => {
+					httpServer.close((error) => (error ? reject(error) : resolve()));
+				});
+				await transport.cleanup();
+			}
+		});
+
+		it('logs a legacy full-server skills/list probe exactly once', async () => {
+			delete process.env.ANALYTICS_MODE;
+			const app = express();
+			app.use(express.json());
+			const eventLogger = vi.fn();
+			const serverFactory: ServerFactory = vi.fn(async () => {
+				const server = new McpServer({ name: 'legacy-skills-logging-test', version: '1.0.0' });
+				server.server.setRequestHandler(
+					'skills/list',
+					{ params: z.looseObject({ cursor: z.string().optional() }) },
+					() => ({
+						skills: [{ uri: 'skill://private/legacy/SKILL.md', frontmatter: { description: 'PRIVATE_LEGACY' } }],
+					})
+				);
+				return { server, enabledToolIds: [] };
+			});
+			transport = new StatelessHttpTransport(serverFactory, app, eventLogger);
+			await transport.initialize();
+
+			const httpServer = app.listen(0);
+			try {
+				await new Promise<void>((resolve, reject) => {
+					httpServer.once('listening', resolve);
+					httpServer.once('error', reject);
+				});
+				const address = httpServer.address();
+				if (!address || typeof address === 'string') {
+					throw new Error('Expected the test server to listen on a TCP port');
+				}
+
+				const response = await fetch(`http://127.0.0.1:${address.port}/mcp`, {
+					method: 'POST',
+					headers: {
+						accept: 'application/json, text/event-stream',
+						'content-type': 'application/json',
+						'mcp-protocol-version': '2025-03-26',
+						'mcp-session-id': 'legacy-session-1',
+					},
+					body: JSON.stringify({
+						jsonrpc: '2.0',
+						id: 1,
+						method: 'skills/list',
+						params: {},
+					}),
+				});
+				expect(response.status).toBe(200);
+				expect(await response.json()).toMatchObject({ result: { skills: [expect.any(Object)] } });
+
+				expect(eventLogger).toHaveBeenCalledTimes(1);
+				expect(eventLogger).toHaveBeenCalledWith(
+					'skills/list',
+					expect.objectContaining({
+						protocolEra: 'legacy',
+						protocolVersion: '2025-03-26',
+						clientSessionId: 'legacy-session-1',
+						success: true,
+						cursorSupplied: false,
+						responseItemCount: 1,
+					})
+				);
+				const serializedEvent = JSON.stringify(eventLogger.mock.calls[0]);
+				expect(serializedEvent).not.toContain('skill://');
+				expect(serializedEvent).not.toContain('PRIVATE_');
+			} finally {
+				await new Promise<void>((resolve, reject) => {
+					httpServer.close((error) => (error ? reject(error) : resolve()));
+				});
+				await transport.cleanup();
+			}
+		});
+
 		it('rejects modern subscription listeners through the configured SDK limit', async () => {
 			const app = express();
 			app.use(express.json());
@@ -422,8 +913,16 @@ describe('StatelessHttpTransport', () => {
 				server.registerTool(
 					'progress_test',
 					{
+						title: 'Progress Test',
 						description: 'Emits progress for modern transport testing.',
 						inputSchema: z.object({}),
+						annotations: {
+							title: 'Progress Test',
+							destructiveHint: false,
+							idempotentHint: false,
+							readOnlyHint: true,
+							openWorldHint: false,
+						},
 					},
 					async (_params, ctx) => {
 						await createProgressRelay(ctx)?.({ progress: 1, total: 2, message: 'Modern halfway' });
@@ -465,16 +964,48 @@ describe('StatelessHttpTransport', () => {
 						},
 					}
 				);
+				await expect(client.callTool({ name: 'hf_fs', arguments: { cmd: 'ls', args: ['hf://'] } })).rejects.toThrow(
+					'Tool hf_fs not found'
+				);
 				await client.close();
+				const mismatchedDiscoveryResponse = await fetch(`http://127.0.0.1:${address.port}/mcp?bouquet=search`, {
+					method: 'POST',
+					headers: {
+						Accept: 'application/json, text/event-stream',
+						'Content-Type': 'application/json',
+						'MCP-Protocol-Version': '2026-07-28',
+						'MCP-Name': 'modern-test',
+					},
+					body: JSON.stringify({
+						jsonrpc: '2.0',
+						id: 'missing-method-header',
+						method: 'server/discover',
+						params: {
+							_meta: {
+								'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+								'io.modelcontextprotocol/clientInfo': {
+									name: 'malformed-modern-client',
+									version: '1.0.0',
+								},
+								'io.modelcontextprotocol/clientCapabilities': {},
+							},
+						},
+					}),
+				});
+				expect(mismatchedDiscoveryResponse.status).toBe(400);
+				await expect(mismatchedDiscoveryResponse.json()).resolves.toMatchObject({
+					error: { code: -32020 },
+				});
 
 				expect(result.content).toEqual([{ type: 'text', text: 'modern done' }]);
 				expect(progress).toEqual([expect.objectContaining({ progress: 1, total: 2, message: 'Modern halfway' })]);
 				expect(factoryCalls.length).toBeGreaterThanOrEqual(2);
-				expect(factoryCalls.every(({ headers }) => headers?.['x-mcp-bouquet'] === 'search')).toBe(true);
 				expect(factoryCalls[0]).toMatchObject({
+					headers: { 'x-mcp-bouquet': 'search' },
 					settings: { builtInTools: expect.any(Array), spaceTools: [] },
 					skipGradio: true,
 				});
+				expect(factoryCalls.at(-1)?.headers).not.toHaveProperty('x-mcp-bouquet');
 				expect(factoryCalls.at(-1)?.sessionInfo).toMatchObject({
 					protocolEra: 'modern',
 					protocolVersion: '2026-07-28',
@@ -483,6 +1014,7 @@ describe('StatelessHttpTransport', () => {
 					clientInfo: { name: 'modern-contract-test', version: '1.0.0' },
 					requestId: expect.any(String),
 				});
+				expect(factoryCalls.at(-1)?.settings).toEqual({ builtInTools: ['hf_fs'], spaceTools: [] });
 
 				const metrics = transport.getMetrics();
 				expect(metrics.protocolEras.modern).toBeGreaterThanOrEqual(2);
@@ -490,10 +1022,12 @@ describe('StatelessHttpTransport', () => {
 				expect(metrics.protocolVersions.get('modern:2026-07-28')).toMatchObject({
 					era: 'modern',
 					version: '2026-07-28',
-					uniqueClients: 1,
+					uniqueClients: 2,
 					unattributedRequests: 0,
 				});
-				expect(metrics.methods.get('server/discover')).toMatchObject({ count: 1, errors: 0 });
+				expect(metrics.methods.get('server/discover')).toMatchObject({ count: 2, errors: 1 });
+				expect(metrics.serverDiscoverOutcomes?.get('success')).toMatchObject({ count: 1 });
+				expect(metrics.serverDiscoverOutcomes?.get('headerBodyMismatch')).toMatchObject({ count: 1 });
 				expect(metrics.methods.get('tools/call:progress_test')).toMatchObject({ count: 1, errors: 0 });
 				expect(Array.from(metrics.clients.values())).toContainEqual(
 					expect.objectContaining({
@@ -526,8 +1060,16 @@ describe('StatelessHttpTransport', () => {
 				server.registerTool(
 					'progress_test',
 					{
+						title: 'Progress Test',
 						description: 'Emits progress for transport testing.',
 						inputSchema: z.object({}),
+						annotations: {
+							title: 'Progress Test',
+							destructiveHint: false,
+							idempotentHint: false,
+							readOnlyHint: true,
+							openWorldHint: false,
+						},
 					},
 					async (_params, ctx) => {
 						await createProgressRelay(ctx)?.({ progress: 1, total: 2, message: 'Halfway' });
@@ -679,6 +1221,34 @@ describe('StatelessHttpTransport', () => {
 					errors: 1,
 				});
 
+				const directKnownToolResponse = await fetch(`http://127.0.0.1:${address.port}/mcp?bouquet=search`, {
+					method: 'POST',
+					headers: {
+						accept: 'application/json, text/event-stream',
+						'content-type': 'application/json',
+						'mcp-session-id': sessionId ?? '',
+					},
+					body: JSON.stringify({
+						jsonrpc: '2.0',
+						id: 5,
+						method: 'tools/call',
+						params: { name: 'hf_fs', arguments: { cmd: 'ls', args: ['hf://'] } },
+					}),
+				});
+				expect(directKnownToolResponse.status).toBe(200);
+				expect(await directKnownToolResponse.json()).toMatchObject({
+					error: { code: -32602, message: 'Tool hf_fs not found' },
+				});
+				expect(serverFactory.mock.calls.at(-1)?.[0]).not.toHaveProperty('x-mcp-bouquet');
+				expect(serverFactory.mock.calls.at(-1)?.[1]).toEqual({
+					builtInTools: ['hf_fs'],
+					spaceTools: [],
+				});
+
+				expect(serverFactory.mock.calls.slice(1).every((factoryCall) => factoryCall[1]?.spaceTools.length === 0)).toBe(
+					true
+				);
+
 				const deleteResponse = await fetch(`http://127.0.0.1:${address.port}/mcp`, {
 					method: 'DELETE',
 					headers: { 'mcp-session-id': sessionId ?? '' },
@@ -738,6 +1308,42 @@ describe('StatelessHttpTransport', () => {
 	});
 
 	describe('disabled tools', () => {
+		it('rejects modern disabled calls before dispatch', async () => {
+			process.env.DISABLE_TOOLS = 'hub_repo_search';
+			const mockServerFactory = vi.fn() as unknown as ServerFactory;
+			transport = new StatelessHttpTransport(mockServerFactory, express());
+
+			const req = {
+				headers: {},
+				query: {},
+				body: {
+					jsonrpc: '2.0',
+					id: 1,
+					method: 'tools/call',
+					params: { name: 'hub_repo_search', arguments: { query: 'bert' } },
+				},
+				ip: '127.0.0.1',
+			};
+			const res = {
+				set: vi.fn().mockReturnThis(),
+				status: vi.fn().mockReturnThis(),
+				json: vi.fn().mockReturnThis(),
+				send: vi.fn().mockReturnThis(),
+			};
+
+			await (transport as any).handleModernRequest(req, res);
+
+			expect(mockServerFactory).not.toHaveBeenCalled();
+			expect(res.status).toHaveBeenCalledWith(200);
+			expect(res.json).toHaveBeenCalledWith(
+				expect.objectContaining({
+					error: expect.objectContaining({
+						message: 'Invalid params: Tool hub_repo_search is disabled by server configuration',
+					}),
+				})
+			);
+		});
+
 		it('rejects disabled calls before dispatch and records a dashboard error', async () => {
 			process.env.DISABLE_TOOLS = 'hub_repo_search';
 			const mockServerFactory = vi.fn() as unknown as ServerFactory;

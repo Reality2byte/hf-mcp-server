@@ -13,7 +13,7 @@ import type { McpApiClient } from './mcp-api-client.js';
 import { extractAuthBouquetAndMix } from '../utils/auth-utils.js';
 import { BOUQUETS } from '../../shared/bouquet-presets.js';
 import { getProxyToolsConfig } from './proxy-tools-config.js';
-import { GRADIO_IMAGE_FILTER_FLAG, README_INCLUDE_FLAG, type ToolBehaviorFlags } from '../../shared/behavior-flags.js';
+import { GRADIO_IMAGE_FILTER_FLAG, type ToolBehaviorFlags } from '../../shared/behavior-flags.js';
 import { ANONYMOUS_BUILTIN_TOOL_IDS } from '../../shared/settings.js';
 
 export { ANONYMOUS_BUILTIN_TOOL_IDS } from '../../shared/settings.js';
@@ -111,7 +111,6 @@ export class ToolSelectionStrategy {
 			...ALL_BUILTIN_TOOL_IDS,
 			...TOOL_ID_GROUPS.sandbox,
 			HF_FILES_FLAG,
-			README_INCLUDE_FLAG,
 			GRADIO_IMAGE_FILTER_FLAG,
 			...this.getProxyConfigIds(),
 		]);
@@ -124,22 +123,18 @@ export class ToolSelectionStrategy {
 
 	private resolveToolIds(ids: readonly string[]): string[] {
 		const supportedIds = this.filterSupportedConfigIds([...new Set(ids)]);
-		const toolIds = supportedIds.filter(
-			(id) => id !== HF_FILES_FLAG && id !== README_INCLUDE_FLAG && id !== GRADIO_IMAGE_FILTER_FLAG
-		);
+		const toolIds = supportedIds.filter((id) => id !== HF_FILES_FLAG && id !== GRADIO_IMAGE_FILTER_FLAG);
 		return [...new Set(this.applyToolDependencies(toolIds))];
 	}
 
 	private getBehaviorFlags(ids: readonly string[], hfToken?: string): ToolBehaviorFlags {
 		if (!hfToken) {
 			return {
-				allowReadmeInclude: false,
 				stripGradioImages: false,
 				enableHfFsWrite: false,
 			};
 		}
 		return {
-			allowReadmeInclude: ids.includes(README_INCLUDE_FLAG),
 			stripGradioImages: ids.includes(GRADIO_IMAGE_FILTER_FLAG),
 			enableHfFsWrite: ids.includes(HF_FILES_FLAG),
 		};

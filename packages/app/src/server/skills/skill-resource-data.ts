@@ -28,7 +28,7 @@ export interface SkillListResult {
 	nextCursor?: string;
 }
 
-export function toProtocolEntry(entry: SkillEntry): SkillProtocolEntry {
+function toProtocolEntry(entry: SkillEntry): SkillProtocolEntry {
 	return {
 		uri: entry.uri,
 		frontmatter: entry.frontmatter,

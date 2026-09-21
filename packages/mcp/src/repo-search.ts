@@ -21,6 +21,7 @@ const DEFAULT_REPO_TYPES: RepoType[] = ['model', 'dataset'];
 
 export const REPO_SEARCH_TOOL_CONFIG = {
 	name: 'hub_repo_search',
+	title: 'Repo Search',
 	description:
 		'Search Hugging Face repositories with a shared query interface. ' +
 		'You can target models, datasets, spaces, or aggregate across multiple repo types in one call. ' +
@@ -64,6 +65,7 @@ export const REPO_SEARCH_TOOL_CONFIG = {
 	annotations: {
 		title: 'Repo Search',
 		destructiveHint: false,
+		idempotentHint: false,
 		readOnlyHint: true,
 		openWorldHint: true,
 	},

@@ -68,6 +68,30 @@ describe('validateInboundRequest', () => {
 		});
 	});
 
+	it('can allow any Origin without bypassing Host validation', () => {
+		expect(
+			validateInboundRequest(
+				request({
+					host: '127.0.0.1:3000',
+					origin: 'http://attacker.example:3000',
+				}),
+				{ allowAnyOrigin: true }
+			)
+		).toEqual({ allowed: true });
+		expect(
+			validateInboundRequest(
+				request({
+					host: 'attacker.example:3000',
+					origin: 'http://attacker.example:3000',
+				}),
+				{ allowAnyOrigin: true }
+			)
+		).toEqual({
+			allowed: false,
+			reason: 'Host attacker.example is not allowed',
+		});
+	});
+
 	it('allows configured deployment hosts and origins', () => {
 		process.env.MCP_ALLOWED_HOSTS = 'mcp.example.com';
 		process.env.CORS_ALLOWED_ORIGINS = 'https://app.example.com';

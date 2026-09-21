@@ -3,6 +3,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { SERVER_BUILD_SHA, SERVER_VERSION } from '../server-build-info.js';
 import { redactHfTokens, redactSensitiveLogValues } from './hf-dataset-transport.js';
+import type { HfFsQueryTelemetry } from './hf-fs-telemetry.js';
 
 // Feature flags: enable/disable per-log-type; defaults to true
 const QUERY_LOGS_ENABLED = (process.env.LOG_QUERY_EVENTS ?? 'true').toLowerCase() === 'true';
@@ -16,7 +17,7 @@ const __dirname = dirname(__filename);
 /**
  * Structure for query logs - consistent fields for HF dataset viewer
  */
-interface QueryLogEntry {
+interface QueryLogEntry extends Partial<HfFsQueryTelemetry> {
 	mcpServerSessionId: string; // MCP Server to Dataset connection
 	serverVersion: string;
 	serverBuildSha: string;
@@ -43,7 +44,7 @@ interface QueryLogEntry {
 	errorMessage?: string | null;
 }
 
-export interface QueryLoggerOptions {
+export interface QueryLoggerOptions extends Partial<HfFsQueryTelemetry> {
 	clientSessionId?: string;
 	requestId?: string;
 	protocolEra?: 'legacy' | 'modern';
@@ -196,7 +197,7 @@ const gradioLogger: Logger | null = createGradioLogger();
 // Stable session ID for this MCP server instance (process lifetime)
 const mcpServerSessionId = crypto.randomUUID();
 
-function getMcpServerSessionId(): string {
+export function getMcpServerSessionId(): string {
 	return mcpServerSessionId;
 }
 
@@ -253,6 +254,16 @@ function logQueryEvent(
 		durationMs: normalizedDurationMs,
 		success: options?.success ?? true,
 		errorMessage: normalizedError,
+		hfFsReportingSchema: options?.hfFsReportingSchema,
+		hfFsBatchOutcome: options?.hfFsBatchOutcome,
+		hfFsOperationsRequested: options?.hfFsOperationsRequested,
+		hfFsOperationsCompleted: options?.hfFsOperationsCompleted,
+		hfFsOperationsSucceeded: options?.hfFsOperationsSucceeded,
+		hfFsRequestErrorCount: options?.hfFsRequestErrorCount,
+		hfFsTargetErrorCount: options?.hfFsTargetErrorCount,
+		hfFsPolicyLimitErrorCount: options?.hfFsPolicyLimitErrorCount,
+		hfFsServiceErrorCount: options?.hfFsServiceErrorCount,
+		hfFsOperationErrorsJson: options?.hfFsOperationErrorsJson,
 	});
 }
 

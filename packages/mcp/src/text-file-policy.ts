@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { lookup as lookupMimeType } from 'mime-types';
+import { HfFsTextOnlyError } from './hf-fs-errors.js';
 
 const MAX_CONTROL_CHARACTER_RATIO = 0.02;
 const MAX_CONTROL_CHARACTER_COUNT = 8;
@@ -130,10 +131,16 @@ const BINARY_MIME_TYPES = new Set([
 ]);
 
 type TextFilePathPolicy = 'text' | 'binary' | 'unknown';
+export type HfFsImageMimeType = 'image/jpeg' | 'image/png' | 'image/webp';
 
 export function assertTextFilePath(filePath: string): void {
 	if (classifyTextFilePath(filePath) === 'binary') {
-		throw nonTextFileError(filePath, 'The file extension or MIME type is known to be binary.');
+		const imageMimeType = imageMimeTypeForPath(filePath);
+		throw nonTextFileError(
+			filePath,
+			'The file extension or MIME type is known to be binary.',
+			imageMimeType ? 'attach' : 'stat'
+		);
 	}
 }
 
@@ -181,6 +188,20 @@ export function classifyTextFilePath(filePath: string): TextFilePathPolicy {
 	return 'unknown';
 }
 
+export function imageMimeTypeForPath(filePath: string): HfFsImageMimeType | undefined {
+	switch (path.extname(filePath).toLowerCase()) {
+		case '.jpg':
+		case '.jpeg':
+			return 'image/jpeg';
+		case '.png':
+			return 'image/png';
+		case '.webp':
+			return 'image/webp';
+		default:
+			return undefined;
+	}
+}
+
 function isTextMimeType(mimeType: string): boolean {
 	const normalized = mimeType.toLowerCase();
 	return (
@@ -221,6 +242,13 @@ function hasBinaryControlCharacters(text: string): boolean {
 	);
 }
 
-function nonTextFileError(filePath: string, reason: string): Error {
-	return new Error(`Refusing to cat non-text file: ${filePath}. ${reason} Use ls or stat for file metadata.`);
+function nonTextFileError(filePath: string, reason: string, suggestedOperation: 'attach' | 'stat' = 'stat'): Error {
+	return new HfFsTextOnlyError(
+		`Refusing to cat non-text file: ${filePath}. ${reason} ${
+			suggestedOperation === 'attach'
+				? 'Use attach to return this image to the model, or stat for metadata.'
+				: 'Use ls or stat for file metadata.'
+		}`,
+		suggestedOperation
+	);
 }

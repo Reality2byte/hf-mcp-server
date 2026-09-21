@@ -1,7 +1,6 @@
 import { datasetInfo, HubApiError } from '@huggingface/hub';
 import { formatDate, formatNumber } from './utilities.js';
 import type { ToolResult } from './types/tool-result.js';
-import { fetchReadmeContent } from './readme-utils.js';
 
 // Clean interface design with explicit data availability
 
@@ -60,10 +59,9 @@ export class DatasetDetailTool {
 	 * Get detailed information about a specific dataset
 	 *
 	 * @param datasetId The dataset ID to get details for (e.g., squad, glue, imdb)
-	 * @param includeReadme Whether to include README content (default: false)
 	 * @returns ToolResult with formatted dataset details
 	 */
-	async getDetails(datasetId: string, includeReadme: boolean = false): Promise<ToolResult> {
+	async getDetails(datasetId: string): Promise<ToolResult> {
 		try {
 			// Define additional fields we want to retrieve (only those available in the hub library)
 			const additionalFields = ['author', 'downloadsAllTime', 'tags', 'description', 'cardData'] as const;
@@ -128,17 +126,6 @@ export class DatasetDetailTool {
 
 			// Note: siblings information is not available through the additional fields API
 			// It would require a separate API call to list files
-
-			// Fetch and append README content if requested
-			if (includeReadme) {
-				const readmeContent = await fetchReadmeContent(datasetDetails.name, 'datasets');
-				if (readmeContent) {
-					const result = formatDatasetDetails(datasetDetails);
-					result.formatted +=
-						'\n\n## README\n<datasetcard-readme>\n' + readmeContent.trim() + '\n</datasetcard-readme>';
-					return result;
-				}
-			}
 
 			return formatDatasetDetails(datasetDetails);
 		} catch (error) {

@@ -16,12 +16,13 @@ import { getProxyToolsConfig } from './utils/proxy-tools-config.js';
 import { registerProxyAppResource, rewriteProxyAppToolMeta } from './utils/proxy-apps.js';
 import { parseDisabledTools } from './utils/disabled-tools.js';
 import { createProgressRelay } from './utils/progress-relay.js';
+import { createRemoteToolAnnotations } from './utils/remote-tool-annotations.js';
 
 function isDuplicateRegistrationError(error: unknown): boolean {
 	return error instanceof Error && /already registered/i.test(error.message);
 }
 
-function registerProxyToolsFromConfig(
+export function registerProxyToolsFromConfig(
 	server: McpServer,
 	configs: ProxyToolDefinition[],
 	hfToken: string | undefined,
@@ -98,10 +99,7 @@ function registerProxyToolsFromConfig(
 					title,
 					description,
 					inputSchema: z.object(schemaShape),
-					annotations: {
-						openWorldHint: true,
-						title,
-					},
+					annotations: createRemoteToolAnnotations(title),
 					_meta: meta,
 				},
 				handler

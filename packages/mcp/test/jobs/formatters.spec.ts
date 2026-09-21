@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { formatJobsTable, formatScheduledJobsTable, formatJobDetails } from '../../src/jobs/formatters.js';
+import { toHfJobOutput } from '../../src/jobs/jobs-output.js';
 import type { JobInfo, ScheduledJobInfo, JobSpec } from '../../src/jobs/types.js';
 
 describe('Jobs Formatters', () => {
@@ -194,7 +195,7 @@ describe('Jobs Formatters', () => {
 				environment: {},
 			};
 
-			const result = formatJobDetails(job);
+			const result = formatJobDetails(toHfJobOutput(job));
 
 			// Should be wrapped in code block
 			expect(result).toMatch(/^```json\n/);
@@ -202,7 +203,7 @@ describe('Jobs Formatters', () => {
 
 			// Should contain job data as JSON
 			expect(result).toContain('"id": "job123"');
-			expect(result).toContain('"dockerImage": "python:3.12"');
+			expect(result).toContain('"docker_image": "python:3.12"');
 			expect(result).toContain('"stage": "RUNNING"');
 		});
 
@@ -230,7 +231,7 @@ describe('Jobs Formatters', () => {
 				},
 			];
 
-			const result = formatJobDetails(jobs);
+			const result = formatJobDetails(jobs.map((job) => toHfJobOutput(job)));
 
 			// Should be wrapped in code block
 			expect(result).toMatch(/^```json\n/);
@@ -257,11 +258,11 @@ describe('Jobs Formatters', () => {
 				environment: {},
 			};
 
-			const result = formatJobDetails(job);
+			const result = formatJobDetails(toHfJobOutput(job));
 
 			// Should have proper indentation (2 spaces)
 			expect(result).toContain('  "id"');
-			expect(result).toContain('  "createdAt"');
+			expect(result).toContain('  "created_at"');
 		});
 	});
 });

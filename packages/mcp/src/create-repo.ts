@@ -11,6 +11,7 @@ const DEFAULT_HUB_URL = 'https://huggingface.co';
 
 export const CREATE_REPO_TOOL_CONFIG = {
 	name: 'create_repo',
+	title: 'Create Hugging Face Repository',
 	description: '',
 	schema: z.object({
 		uri: z.string().min(1).describe('Destination repo URI in the form hf://models|datasets|spaces|buckets/OWNER/NAME.'),
@@ -33,6 +34,7 @@ export const CREATE_REPO_TOOL_CONFIG = {
 	annotations: {
 		title: 'Create Hugging Face Repository',
 		destructiveHint: false,
+		idempotentHint: false,
 		readOnlyHint: false,
 		openWorldHint: true,
 	},

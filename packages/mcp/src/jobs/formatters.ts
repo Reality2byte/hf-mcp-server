@@ -1,4 +1,5 @@
 import type { JobInfo, ScheduledJobInfo } from './types.js';
+import type { HfJobOutput, HfScheduledJobOutput } from './hf-jobs-output-schema.js';
 
 /**
  * Truncate a string to a maximum length with ellipsis
@@ -133,7 +134,7 @@ export function formatScheduledJobsTable(jobs: ScheduledJobInfo[]): string {
 /**
  * Format job details as JSON in a markdown code block
  */
-export function formatJobDetails(jobs: JobInfo | JobInfo[]): string {
+export function formatJobDetails(jobs: HfJobOutput | HfJobOutput[]): string {
 	const jobArray = Array.isArray(jobs) ? jobs : [jobs];
 	const json = JSON.stringify(jobArray, null, 2);
 	return `\`\`\`json\n${json}\n\`\`\``;
@@ -142,7 +143,7 @@ export function formatJobDetails(jobs: JobInfo | JobInfo[]): string {
 /**
  * Format scheduled job details as JSON in a markdown code block
  */
-export function formatScheduledJobDetails(jobs: ScheduledJobInfo | ScheduledJobInfo[]): string {
+export function formatScheduledJobDetails(jobs: HfScheduledJobOutput | HfScheduledJobOutput[]): string {
 	const jobArray = Array.isArray(jobs) ? jobs : [jobs];
 	const json = JSON.stringify(jobArray, null, 2);
 	return `\`\`\`json\n${json}\n\`\`\``;

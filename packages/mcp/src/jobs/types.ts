@@ -58,7 +58,7 @@ export interface JobStatus {
 export interface JobOwner {
 	id: string;
 	name: string;
-	type: 'user' | 'org';
+	type?: 'user' | 'org';
 }
 
 /**
@@ -116,6 +116,8 @@ export interface JobSpec {
 	volumes?: JobVolume[];
 	labels?: Record<string, string>;
 	expose?: { ports: number[] };
+	/** Enterprise resource group used for billing attribution. */
+	resourceGroupId?: string;
 }
 
 /**
@@ -158,8 +160,15 @@ const commonArgsSchema = z.object({
 	namespace: z.string().optional().describe('Target namespace (username or organization). Defaults to current user.'),
 });
 
+const submissionArgsSchema = commonArgsSchema.extend({
+	resource_group_id: z
+		.string()
+		.optional()
+		.describe('Enterprise resource group ID for billing attribution. Requires its organization as namespace.'),
+});
+
 // Run command args
-export const runArgsSchema = commonArgsSchema.extend({
+export const runArgsSchema = submissionArgsSchema.extend({
 	image: z
 		.string()
 		.describe('Docker image or HF Space URL (e.g., "python:3.12" or "hf.co/spaces/user/space")')
@@ -168,8 +177,9 @@ export const runArgsSchema = commonArgsSchema.extend({
 	command: z
 		.union([z.string(), z.array(z.string())])
 		.describe(
-			'Command to execute. Array format recommended (e.g., ["python", "script.py"]). ' +
-				'String format is parsed with POSIX shell semantics (quotes, escaping). ' +
+			'Command to execute. Arrays are literal argv (recommended, e.g., ["python", "script.py"]); no implicit shell execution. ' +
+				'Strings tokenize quotes and escaping, not shell execution; shell operators are rejected. ' +
+				'For pipes, chaining, redirections, or variable expansion, explicitly use ["/bin/sh", "-lc", "..."] only if the image provides that shell. ' +
 				'For multiline scripts, use array with newlines in arguments.'
 		),
 	flavor: z
@@ -199,7 +209,7 @@ export const runArgsSchema = commonArgsSchema.extend({
 });
 
 // UV command args
-export const uvArgsSchema = commonArgsSchema.extend({
+export const uvArgsSchema = submissionArgsSchema.extend({
 	script: z
 		.string()
 		.describe('Python script: local file path, URL, or inline code. UV will handle dependencies automatically.'),

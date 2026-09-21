@@ -7,6 +7,7 @@ import { createHuggingFaceHubPolicy } from './network/url-policy.js';
 import type { HfFsCatResult, HfFsEntry, HfFsLsResult, HfFsParams, HfFsResult, HfFsStatResult } from './hf-fs.js';
 
 const DAILY_PAPERS_LIMIT = 100;
+const DEFAULT_TRENDING_PAPERS_LIMIT = 20;
 const DEFAULT_ROOT_PAPER_SAMPLE_LIMIT = 10;
 const PAPER_SEARCH_LIMIT = 120;
 const DEFAULT_PAPER_SEARCH_LIMIT = 100;
@@ -246,6 +247,8 @@ export class HfFsPaperProvider {
 				return await this.ls(params);
 			case 'cat':
 				return await this.cat(params);
+			case 'attach':
+				throw new Error('attach requires a direct repository or bucket file URI.');
 			case 'stat':
 				return await this.stat(params);
 			case 'find':
@@ -511,7 +514,7 @@ export class HfFsPaperProvider {
 		if (params.sort !== undefined && params.sort !== 'trending') {
 			throw new Error('EINVAL: hf://papers/trending does not accept another sort');
 		}
-		const limit = Math.min(params.limit ?? DAILY_PAPERS_LIMIT, DAILY_PAPERS_LIMIT);
+		const limit = Math.min(params.limit ?? DEFAULT_TRENDING_PAPERS_LIMIT, DAILY_PAPERS_LIMIT);
 		const url = new URL('/api/daily_papers', this.hubUrl);
 		url.searchParams.set('p', '0');
 		url.searchParams.set('limit', limit.toString());
@@ -523,11 +526,22 @@ export class HfFsPaperProvider {
 		const papers = Array.isArray(body)
 			? body.flatMap((item) => paperEntry(item)).map((entry) => ({ ...entry, observed_at: observedAt }))
 			: [];
+		const entries = filterPaperEntries(papers, params).slice(0, limit);
+		const hasMore = hasNextLink(response.headers.get('link'));
 		const result: HfFsLsResult = {
 			uri: params.uri,
 			op: params.op === 'find' ? 'find' : 'ls',
-			entries: filterPaperEntries(papers, params).slice(0, limit),
-			...(hasNextLink(response.headers.get('link')) ? { truncated: true, truncation_reason: 'limit' as const } : {}),
+			entries,
+			...(hasMore
+				? {
+						truncated: true,
+						truncation_reason: 'limit' as const,
+						truncation_message:
+							limit < DAILY_PAPERS_LIMIT
+								? `Showing ${entries.length.toString()} papers in Hugging Face global trending rank. More papers are available; rerun ls hf://papers/trending with --limit up to ${DAILY_PAPERS_LIMIT.toString()}.`
+								: `Showing ${entries.length.toString()} papers in Hugging Face global trending rank. More papers are available from the provider, but hf_fs caps this listing at ${DAILY_PAPERS_LIMIT.toString()}.`,
+					}
+				: {}),
 		};
 		paperOrders.set(result, 'trending');
 		return result;

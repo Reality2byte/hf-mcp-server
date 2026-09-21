@@ -7,6 +7,7 @@ import { createSortableHeader } from './data-table-utils';
 import { MetricTile, SectionHeader } from './DashboardPrimitives';
 import { formatCompactNumber } from '../lib/dashboard-utils';
 import type { TransportMetricsResponse } from '../../shared/transport-metrics.js';
+import { HfFsLiveMetricsCard } from './HfFsLiveMetricsCard';
 
 type ClientMetric = TransportMetricsResponse['clients'][number];
 type ClientProtocolMetric = ClientMetric['protocols'][number];
@@ -15,6 +16,8 @@ type ClientProtocolData = Omit<
 	'protocols' | 'requestCount' | 'toolCallCount' | 'firstSeen' | 'lastSeen'
 > & {
 	protocol: ClientProtocolMetric;
+	sortKey: string;
+	clientWideToolCallCount: number;
 	requestCount: number;
 	toolCallCount: number;
 	firstSeen: string;
@@ -80,10 +83,12 @@ interface StatelessTransportMetricsProps {
 
 export function StatelessTransportMetrics({ metrics }: StatelessTransportMetricsProps) {
 	const clientData: ClientProtocolData[] = metrics.clients.flatMap((client) => {
-		const { protocols, ...clientTotals } = client;
+		const { protocols, toolCallCount: clientWideToolCallCount, ...clientTotals } = client;
 		return protocols.map((protocol) => ({
 			...clientTotals,
 			protocol,
+			sortKey: `${client.name}\u0000${client.version}\u0000${protocol.era}\u0000${protocol.version}`,
+			clientWideToolCallCount,
 			requestCount: protocol.requestCount,
 			toolCallCount: protocol.toolCallCount,
 			firstSeen: protocol.firstSeen,
@@ -98,6 +103,7 @@ export function StatelessTransportMetrics({ metrics }: StatelessTransportMetrics
 		.filter((method) => method.method === 'tools/call' || method.method.startsWith('tools/call:'))
 		.reduce((sum, method) => sum + method.count, 0);
 	const recentClients = metrics.clients.filter((client) => isRecentlyActive(client.lastSeen)).length;
+	const hfFsMetrics = metrics.hfFsMetrics;
 	const protocolFilterOptions = Array.from(
 		new Map(
 			clientData.map((client) => {
@@ -110,7 +116,8 @@ export function StatelessTransportMetrics({ metrics }: StatelessTransportMetrics
 	// Define columns for exact client/protocol combinations.
 	const createClientColumns = (): ColumnDef<ClientProtocolData>[] => [
 		{
-			accessorKey: 'name',
+			id: 'name',
+			accessorFn: (client) => client.sortKey,
 			header: createSortableHeader('Client'),
 			cell: ({ row }) => {
 				const client = row.original;
@@ -148,6 +155,28 @@ export function StatelessTransportMetrics({ metrics }: StatelessTransportMetrics
 			accessorKey: 'toolCallCount',
 			header: createSortableHeader('Tool Calls', 'right'),
 			cell: ({ row }) => <div className="text-right font-mono text-sm">{row.getValue<number>('toolCallCount')}</div>,
+		},
+		{
+			accessorKey: 'toolCallErrorRate',
+			header: createSortableHeader('Tool Error Rate', 'right'),
+			cell: ({ row }) => {
+				const client = row.original;
+				if (client.clientWideToolCallCount === 0) {
+					return <div className="text-right text-muted-foreground">—</div>;
+				}
+				return (
+					<div
+						className="text-right font-mono text-sm"
+						title={`${client.toolCallErrorCount.toLocaleString()} failed of ${client.clientWideToolCallCount.toLocaleString()} client tool calls across all protocol versions`}
+					>
+						{client.toolCallErrorRate > 0 ? (
+							<span className="text-red-600 dark:text-red-400">{client.toolCallErrorRate.toFixed(1)}%</span>
+						) : (
+							'0%'
+						)}
+					</div>
+				);
+			},
 		},
 		{
 			accessorKey: 'newIpCount',
@@ -273,6 +302,8 @@ export function StatelessTransportMetrics({ metrics }: StatelessTransportMetrics
 				/>
 			</div>
 
+			{hfFsMetrics ? <HfFsLiveMetricsCard metrics={hfFsMetrics} /> : null}
+
 			<Card>
 				<CardContent>
 					<div className="grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
@@ -309,7 +340,7 @@ export function StatelessTransportMetrics({ metrics }: StatelessTransportMetrics
 				<CardContent>
 					<SectionHeader
 						title="Client implementations"
-						description="One row per implementation and exact protocol version, with protocol-attributed requests and tool calls."
+						description="One row per implementation and exact protocol version. Error rate is client-wide across protocol versions."
 					/>
 					<DataTable
 						columns={createClientColumns()}
@@ -322,7 +353,7 @@ export function StatelessTransportMetrics({ metrics }: StatelessTransportMetrics
 							options: protocolFilterOptions,
 						}}
 						pageSize={50}
-						defaultSorting={[{ id: 'lastSeen', desc: true }]}
+						defaultSorting={[{ id: 'name', desc: false }]}
 					/>
 				</CardContent>
 			</Card>

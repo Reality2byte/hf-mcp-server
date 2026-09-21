@@ -3,16 +3,14 @@ import type { CallToolResult, McpServer, ServerContext, Tool } from '@modelconte
 import { logger } from './utils/logger.js';
 import { logGradioEvent } from './utils/query-logger.js';
 import { z } from 'zod';
-import { spaceInfo } from '@huggingface/hub';
 import { gradioMetrics, getMetricsSafeName } from './utils/gradio-metrics.js';
 import { createGradioToolName } from './utils/gradio-utils.js';
-import { spaceMetadataCache, CACHE_CONFIG } from './utils/gradio-cache.js';
 import { callGradioTool, applyResultPostProcessing, type GradioToolCallOptions } from './utils/gradio-tool-caller.js';
 import { parseDisabledTools } from './utils/disabled-tools.js';
 import { createProgressRelay } from './utils/progress-relay.js';
 import { registerProxyAppResource, rewriteProxyAppToolMeta } from './utils/proxy-apps.js';
+import { createRemoteToolAnnotations } from './utils/remote-tool-annotations.js';
 import * as hfMcp from '@llmindset/hf-mcp';
-import { fetchWithProfile, NETWORK_FETCH_PROFILES } from '@llmindset/hf-mcp/network';
 
 // Define types for JSON Schema
 interface JsonSchemaProperty {
@@ -28,13 +26,6 @@ interface JsonSchema {
 	properties?: Record<string, JsonSchemaProperty>;
 	required?: string[];
 	[key: string]: unknown;
-}
-
-interface GradioEndpoint {
-	name: string;
-	subdomain: string;
-	id?: string;
-	emoji?: string;
 }
 
 // Define type for array format schema
@@ -53,32 +44,6 @@ interface RegisterRemoteToolsOptions {
 	stripImageContent?: boolean;
 }
 
-type EndpointConnectionResult =
-	| {
-			success: true;
-			endpointId: string;
-			connection: EndpointConnection;
-	  }
-	| {
-			success: false;
-			endpointId: string;
-			error: Error;
-	  };
-
-const CONNECTION_TIMEOUT_MS = 12000;
-
-/**
- * Creates a timeout promise that rejects after the specified milliseconds
- */
-function createTimeout(ms: number): Promise<never> {
-	return new Promise((_, reject) => {
-		setTimeout(() => {
-			reject(new Error(`Connection timeout after ${ms.toString()}ms`));
-		}, ms);
-	});
-}
-
-// Kept export for callers; now delegates to shared helper and tracks metrics.
 export function parseSchemaResponse(
 	schemaResponse: unknown,
 	endpointId: string,
@@ -120,208 +85,6 @@ export function parseSchemaResponse(
 		);
 		throw error;
 	}
-}
-
-/**
- * Check if a space is private using cache first, then API if needed
- */
-async function isSpacePrivate(spaceName: string, hfToken?: string): Promise<boolean> {
-	try {
-		if (!hfToken) return false; // anonymous requests don't have a token to forward
-
-		// Check cache first
-		const cached = spaceMetadataCache.get(spaceName);
-		if (cached) {
-			logger.trace({ spaceName, private: cached.private }, 'Using cached private status');
-			return cached.private;
-		}
-
-		// Fall back to API call if not cached
-		logger.debug({ spaceName }, 'Cache miss for private status, fetching from API');
-
-		// Create abort controller for timeout
-		const controller = new AbortController();
-		const timeoutId = setTimeout(() => controller.abort(), CACHE_CONFIG.SPACE_INFO_TIMEOUT);
-
-		try {
-			const info = await spaceInfo({
-				name: spaceName,
-				credentials: { accessToken: hfToken },
-				// Note: We can't pass signal to spaceInfo, but this is a best-effort timeout
-			});
-
-			clearTimeout(timeoutId);
-
-			// Only cache public spaces - private spaces should always be fetched fresh
-			// This ensures auth-sensitive information is never stale
-			if (!info.private) {
-				const metadata = {
-					_id: (info as { _id?: string })._id || `gradio_${spaceName.replace('/', '-')}`,
-					name: spaceName,
-					subdomain: (info as { subdomain?: string }).subdomain || '',
-					emoji: '🔧',
-					private: info.private,
-					sdk: (info as { sdk?: string }).sdk || 'gradio',
-					fetchedAt: Date.now(),
-				};
-				spaceMetadataCache.set(spaceName, metadata);
-				logger.trace({ spaceName }, 'Public space metadata cached');
-			} else {
-				logger.trace({ spaceName }, 'Private space metadata not cached');
-			}
-
-			return info.private;
-		} finally {
-			clearTimeout(timeoutId);
-		}
-	} catch (error) {
-		// If we can't fetch space info, assume it might be private to be safe
-		logger.warn({ spaceName, error }, 'Failed to fetch space info, assuming private');
-		return true;
-	}
-}
-
-/**
- * Fetches schema from a single Gradio endpoint without establishing a Streamable HTTP connection
- */
-async function fetchEndpointSchema(
-	endpoint: GradioEndpoint,
-	originalIndex: number,
-	hfToken: string | undefined
-): Promise<EndpointConnection> {
-	const endpointId = `endpoint${(originalIndex + 1).toString()}`;
-	const schemaUrl = `https://${endpoint.subdomain}.hf.space/gradio_api/mcp/schema`;
-
-	// TODO -- leaving this commented out for now -- i may want this again very shortly
-	const isPrivateSpace = await isSpacePrivate(endpoint.name, hfToken);
-	logger.debug({ url: schemaUrl, endpointId }, 'Fetching schema from endpoint');
-
-	// Prepare headers
-	const headers: Record<string, string> = {
-		'Content-Type': 'application/json',
-	};
-
-	if (isPrivateSpace && hfToken) {
-		headers['X-HF-Authorization'] = `Bearer ${hfToken}`;
-	}
-
-	// Add timeout
-	const apiTimeout = process.env.HF_API_TIMEOUT ? parseInt(process.env.HF_API_TIMEOUT, 10) : 12500;
-
-	// Fetch schema directly
-	const { response } = await fetchWithProfile(
-		schemaUrl,
-		NETWORK_FETCH_PROFILES.gradioSchemaHost(`${endpoint.subdomain}.hf.space`),
-		{
-			timeoutMs: apiTimeout,
-			requestInit: {
-				method: 'GET',
-				headers,
-			},
-		}
-	);
-
-	if (!response.ok) {
-		throw new Error(`Failed to fetch schema: ${response.status} ${response.statusText}`);
-	}
-
-	const schemaResponse = (await response.json()) as unknown;
-
-	// Parse the schema response
-	const parsed = parseSchemaResponse(schemaResponse, endpointId, endpoint.subdomain);
-	const tools: Tool[] = parsed
-		.filter((parsedTool) => !parsedTool.name.toLowerCase().includes('<lambda'))
-		.map((parsedTool) => ({
-			name: parsedTool.name,
-			description: parsedTool.description || `${parsedTool.name} tool`,
-			inputSchema: {
-				type: 'object',
-				properties: parsedTool.inputSchema.properties || {},
-				required: parsedTool.inputSchema.required || [],
-				description: parsedTool.inputSchema.description,
-			} as Tool['inputSchema'],
-			_meta: parsedTool._meta,
-		}));
-
-	return {
-		endpointId,
-		originalIndex,
-		client: null, // No client connection yet
-		tools: tools,
-		name: endpoint.name,
-		emoji: endpoint.emoji,
-		mcpUrl: `https://${endpoint.subdomain}.hf.space/gradio_api/mcp/`, // Store MCP URL for later
-		isPrivate: isPrivateSpace,
-	};
-}
-
-/**
- * Fetches schemas from multiple Gradio endpoints in parallel with timeout
- * Uses efficient /mcp/schema endpoint instead of opening streaming connections
- */
-/** @lintignore retained for future external connector use */
-export async function connectToGradioEndpoints(
-	gradioEndpoints: GradioEndpoint[],
-	hfToken: string | undefined
-): Promise<EndpointConnectionResult[]> {
-	// Filter and map valid endpoints with their indices
-	const validWithIndex = gradioEndpoints
-		.map((ep, index) => ({ endpoint: ep, originalIndex: index }))
-		.filter((item) => item.endpoint.subdomain && item.endpoint.subdomain.trim() !== '');
-
-	if (validWithIndex.length === 0) {
-		logger.debug('No valid Gradio endpoints to fetch schemas from');
-		return [];
-	}
-
-	// Create schema fetch tasks with timeout
-	const schemaFetchTasks = validWithIndex.map(({ endpoint, originalIndex }) => {
-		const endpointId = `endpoint${(originalIndex + 1).toString()}`;
-
-		return Promise.race([fetchEndpointSchema(endpoint, originalIndex, hfToken), createTimeout(CONNECTION_TIMEOUT_MS)])
-			.then((connection): EndpointConnectionResult => ({
-				success: true,
-				endpointId,
-				connection,
-			}))
-			.catch((error: unknown): EndpointConnectionResult => {
-				const isFirstError = gradioMetrics.schemaFetchError(endpoint.name);
-				const logLevel = isFirstError ? 'warn' : 'trace';
-
-				logger[logLevel](
-					{
-						endpointId,
-						subdomain: endpoint.subdomain,
-						error: error instanceof Error ? error.message : String(error),
-					},
-					'Failed to fetch schema from endpoint'
-				);
-
-				return {
-					success: false,
-					endpointId,
-					error: error instanceof Error ? error : new Error(String(error)),
-				};
-			});
-	});
-
-	// Execute all schema fetches in parallel
-	const results = await Promise.all(schemaFetchTasks);
-
-	// Log results
-	const successful = results.filter((r) => r.success);
-	const failed = results.filter((r) => !r.success);
-
-	logger.debug(
-		{
-			total: results.length,
-			successful: successful.length,
-			failed: failed.length,
-		},
-		'Gradio endpoint schema fetch results'
-	);
-
-	return results;
 }
 
 /**
@@ -563,10 +326,7 @@ export function registerRemoteTools(
 				title: title,
 				description,
 				inputSchema: z.object(schemaShape),
-				annotations: {
-					openWorldHint: true,
-					title: title,
-				},
+				annotations: createRemoteToolAnnotations(title),
 				_meta: meta,
 			},
 			handler

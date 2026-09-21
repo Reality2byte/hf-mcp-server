@@ -5,6 +5,10 @@ import { logger } from './logger.js';
 
 const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '::1'];
 
+export interface InboundRequestSecurityOptions {
+	allowAnyOrigin?: boolean;
+}
+
 function parseCsv(value: string | undefined): string[] {
 	return (value || '')
 		.split(',')
@@ -62,7 +66,10 @@ function getAllowedOrigins(): string[] {
 	return (configured.length > 0 ? configured : CORS_ALLOWED_ORIGINS).map(normalizeCorsOrigin);
 }
 
-export function validateInboundRequest(req: Request): { allowed: true } | { allowed: false; reason: string } {
+export function validateInboundRequest(
+	req: Request,
+	options: InboundRequestSecurityOptions = {}
+): { allowed: true } | { allowed: false; reason: string } {
 	const allowedHosts = getAllowedHosts();
 	const host = parseHostHeader(req.headers.host);
 
@@ -72,6 +79,10 @@ export function validateInboundRequest(req: Request): { allowed: true } | { allo
 
 	if (!hostMatches(host, allowedHosts)) {
 		return { allowed: false, reason: `Host ${host} is not allowed` };
+	}
+
+	if (options.allowAnyOrigin) {
+		return { allowed: true };
 	}
 
 	const originHeader = typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
@@ -99,8 +110,13 @@ export function validateInboundRequest(req: Request): { allowed: true } | { allo
 	return { allowed: false, reason: `Origin ${parsedOrigin.origin} is not allowed` };
 }
 
-export function inboundRequestSecurityMiddleware(req: Request, res: Response, next: NextFunction): void {
-	const result = validateInboundRequest(req);
+export function inboundRequestSecurityMiddleware(
+	req: Request,
+	res: Response,
+	next: NextFunction,
+	options: InboundRequestSecurityOptions = {}
+): void {
+	const result = validateInboundRequest(req, options);
 	if (result.allowed) {
 		next();
 		return;

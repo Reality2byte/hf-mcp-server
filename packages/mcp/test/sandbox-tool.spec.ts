@@ -173,17 +173,21 @@ describe('HfSandboxTool', () => {
 			MCP_SANDBOX_VOLUMES: JSON.stringify(STORED_VOLUMES),
 		});
 		expect(jobSpec.environment?.MCP_SANDBOX_NAME).toBeUndefined();
-		expect(jobSpec.secrets).toMatchObject({
-			SBX_DL_TOKEN: 'hf-token',
+		expect(jobSpec.secrets).toEqual({
+			SBX_TOKEN: expect.stringMatching(/^[0-9a-f]{64}$/),
 			HF_TOKEN: 'hf-token',
 		});
-		expect(jobSpec.secrets?.SBX_TOKEN).toMatch(/^[0-9a-f]{64}$/);
 		expect(jobSpec.volumes).toEqual([
 			...STORED_VOLUMES,
 			{ type: 'bucket', source: 'huggingface/sbx-server', mountPath: '/.hf-sbx-server', readOnly: true },
 		]);
 		expect(jobSpec.command[0]).toBe('/bin/sh');
-		expect(jobSpec.command[2]).toContain('sbx-server');
+		const bootstrap = jobSpec.command[2];
+		expect(bootstrap).toContain('sbx-server');
+		expect(bootstrap).toContain('wget -q -O "$d" "$SBX_SERVER_URL"');
+		expect(bootstrap).toContain('curl -fsSL -o "$d" "$SBX_SERVER_URL"');
+		expect(bootstrap).not.toContain('Authorization: Bearer');
+		expect(bootstrap).not.toContain('SBX_DL_TOKEN');
 	});
 
 	it('waits for sandbox health during create', async () => {
@@ -200,6 +204,34 @@ describe('HfSandboxTool', () => {
 			}),
 			expect.objectContaining({ timeoutSeconds: expect.any(Number) })
 		);
+	});
+
+	it('attributes the backing Job to an organization resource group', async () => {
+		const jobsClient = createJobsClient();
+		const tool = new HfSandboxTool('hf-token', true, undefined, jobsClient, createRpcClient());
+
+		await tool.run({
+			cmd: 'create',
+			args: ['--namespace', 'acme', '--resource-group-id', '65f000000000000000000001'],
+		});
+
+		expect(jobsClient.runJob).toHaveBeenCalledWith(
+			expect.objectContaining({ resourceGroupId: '65f000000000000000000001' }),
+			'acme'
+		);
+	});
+
+	it('requires an organization namespace with a resource group', async () => {
+		const jobsClient = createJobsClient();
+		const tool = new HfSandboxTool('hf-token', true, undefined, jobsClient, createRpcClient());
+
+		await expect(
+			tool.run({
+				cmd: 'create',
+				args: ['--resource-group-id', '65f000000000000000000001'],
+			})
+		).rejects.toThrow(/requires --namespace/);
+		expect(jobsClient.runJob).not.toHaveBeenCalled();
 	});
 
 	it('emits startup progress while creating a sandbox', async () => {
@@ -479,6 +511,35 @@ describe('HfSandboxFsTool', () => {
 		const result = await tool.run({ cmd: 'stat', args: [HANDLE, '/nope'] });
 
 		expect(result).toEqual({ op: 'stat', path: '/nope', exists: false });
+	});
+
+	it('projects stat responses without leaking or accepting upstream overrides', async () => {
+		const rpcClient = createRpcClient();
+		vi.mocked(rpcClient.statPath).mockResolvedValueOnce({
+			name: 'out.txt',
+			path: '/upstream/path',
+			type: 'file',
+			size: 18,
+			mtime_ms: 1,
+			mode: '644',
+			inode: 42,
+			exists: false,
+			op: 'rm',
+		});
+		const tool = new HfSandboxFsTool('hf-token', true, 'evalstate', createJobsClient(), rpcClient);
+
+		const result = await tool.run({ cmd: 'stat', args: [HANDLE, '/work/out.txt'] });
+
+		expect(result).toEqual({
+			op: 'stat',
+			path: '/work/out.txt',
+			exists: true,
+			type: 'file',
+			size: 18,
+			mtime_ms: 1,
+			mode: '644',
+		});
+		expect(HF_SANDBOX_FS_TOOL_CONFIG.outputSchema.parse(result)).toEqual(result);
 	});
 
 	it('writes text and base64 content, requiring exactly one', async () => {

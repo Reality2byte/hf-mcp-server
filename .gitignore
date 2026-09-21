@@ -39,6 +39,13 @@ packages/e2e-python/fastagent.jsonl
 .env.test-analytics
 packages/e2e-python/qwen-test/fastagent.secrets.yaml
 
+# Local development tool state
+/.fast-agent/
+
 # Generated files
 packages/app/src/server/resources/gradio-widget-content.ts
-.fast-agent/
+
+# Benchmark and optimization work is maintained in ~/hf-mcp-optimise.
+/tool-benchmark/
+*.credential
+/fast-agent-log.jsonl

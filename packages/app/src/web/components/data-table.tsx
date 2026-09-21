@@ -1,7 +1,13 @@
 'use client';
 
 import * as React from 'react';
-import type { ColumnDef, ColumnFiltersState, SortingState, VisibilityState } from '@tanstack/react-table';
+import type {
+	ColumnDef,
+	ColumnFiltersState,
+	PaginationState,
+	SortingState,
+	VisibilityState,
+} from '@tanstack/react-table';
 import {
 	flexRender,
 	getCoreRowModel,
@@ -51,30 +57,42 @@ export function DataTable<TData, TValue>({
 	const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
 	const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>(defaultColumnVisibility);
 	const [rowSelection, setRowSelection] = React.useState({});
+	const [pagination, setPagination] = React.useState<PaginationState>({ pageIndex: 0, pageSize });
+
+	React.useEffect(() => {
+		setPagination((current) => {
+			const maximumPageIndex = Math.max(0, Math.ceil(data.length / current.pageSize) - 1);
+			return current.pageIndex > maximumPageIndex ? { ...current, pageIndex: maximumPageIndex } : current;
+		});
+	}, [data.length]);
 
 	// TanStack Table intentionally manages mutable callbacks; React Compiler skips this component safely.
 	// eslint-disable-next-line react-hooks/incompatible-library
 	const table = useReactTable({
 		data,
 		columns,
-		onSortingChange: setSorting,
-		onColumnFiltersChange: setColumnFilters,
+		onSortingChange: (updater) => {
+			setSorting(updater);
+			setPagination((current) => ({ ...current, pageIndex: 0 }));
+		},
+		onColumnFiltersChange: (updater) => {
+			setColumnFilters(updater);
+			setPagination((current) => ({ ...current, pageIndex: 0 }));
+		},
+		onPaginationChange: setPagination,
 		getCoreRowModel: getCoreRowModel(),
 		getPaginationRowModel: getPaginationRowModel(),
 		getSortedRowModel: getSortedRowModel(),
 		getFilteredRowModel: getFilteredRowModel(),
 		onColumnVisibilityChange: setColumnVisibility,
 		onRowSelectionChange: setRowSelection,
-		initialState: {
-			pagination: {
-				pageSize: pageSize,
-			},
-		},
+		autoResetPageIndex: false,
 		state: {
 			sorting,
 			columnFilters,
 			columnVisibility,
 			rowSelection,
+			pagination,
 		},
 	});
 
@@ -178,6 +196,9 @@ export function DataTable<TData, TValue>({
 			<div className="flex items-center justify-end space-x-2 pt-3">
 				<div className="text-muted-foreground flex-1 text-sm">
 					{table.getFilteredRowModel().rows.length} row(s) total.
+				</div>
+				<div className="text-sm text-muted-foreground">
+					Page {table.getState().pagination.pageIndex + 1} of {Math.max(1, table.getPageCount())}
 				</div>
 				<div className="space-x-2">
 					<Button

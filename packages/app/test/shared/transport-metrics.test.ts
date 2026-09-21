@@ -111,6 +111,21 @@ describe('MetricsCounter', () => {
 		);
 	});
 
+	it('reports client-wide tool-call error rates without counting non-tool method errors', () => {
+		const metrics = new MetricsCounter();
+		const client = { name: 'batch-client', version: '1.0.0' };
+		metrics.associateSessionWithClient(client);
+		metrics.trackMethod('tools/call:hf_fs', 10, false, client);
+		metrics.trackMethod('tools/call:hf_fs', 20, true, client);
+		metrics.trackMethod('resources/read:skill://example', 5, true, client);
+
+		expect(formatMetricsForAPI(metrics.getMetrics(), 'streamableHttpJson', true).clients[0]).toMatchObject({
+			toolCallCount: 2,
+			toolCallErrorCount: 1,
+			toolCallErrorRate: 50,
+		});
+	});
+
 	it('bounds unexpected protocol-version cardinality', () => {
 		const metrics = new MetricsCounter();
 		for (let index = 0; index < 40; index++) {
@@ -176,6 +191,38 @@ describe('MetricsCounter', () => {
 				lastSeen: expect.any(String),
 			}),
 		]);
+	});
+
+	it('aggregates server discovery outcomes in a stable low-cardinality order', () => {
+		const metrics = new MetricsCounter();
+		metrics.trackServerDiscoverOutcome('unsupportedVersion');
+		metrics.trackServerDiscoverOutcome('success');
+		metrics.trackServerDiscoverOutcome('headerBodyMismatch');
+		metrics.trackServerDiscoverOutcome('success');
+
+		expect(formatMetricsForAPI(metrics.getMetrics(), 'streamableHttpJson', true).serverDiscoverOutcomes).toEqual([
+			expect.objectContaining({
+				outcome: 'success',
+				count: 2,
+				firstSeen: expect.any(String),
+				lastSeen: expect.any(String),
+			}),
+			expect.objectContaining({
+				outcome: 'headerBodyMismatch',
+				count: 1,
+			}),
+			expect.objectContaining({
+				outcome: 'unsupportedVersion',
+				count: 1,
+			}),
+		]);
+	});
+
+	it('formats metrics created before discovery outcome tracking was available', () => {
+		const metrics = new MetricsCounter().getMetrics();
+		delete metrics.serverDiscoverOutcomes;
+
+		expect(formatMetricsForAPI(metrics, 'streamableHttpJson', true).serverDiscoverOutcomes).toEqual([]);
 	});
 
 	it('bounds subscription attempt dimensions and client identity lengths', () => {

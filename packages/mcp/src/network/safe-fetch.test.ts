@@ -42,6 +42,41 @@ describe('safeFetch', () => {
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 
+	it('strips sensitive headers on cross-origin redirects without skipping sorted entries', async () => {
+		let redirectedHeaders: Headers | undefined;
+		let callCount = 0;
+		const fetchMock = vi.fn((_input: string | URL | Request, init?: RequestInit) => {
+			callCount += 1;
+			if (callCount === 1) {
+				return Promise.resolve(
+					new Response('', { status: 302, headers: { location: 'https://redirected.example/path' } })
+				);
+			}
+			redirectedHeaders = new Headers(init?.headers);
+			return Promise.resolve(new Response('ok', { status: 200 }));
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		await safeFetch('https://example.com/start', {
+			urlPolicy: createExternalHttpsPolicy(),
+			requestInit: {
+				headers: {
+					Accept: 'application/json',
+					Authorization: 'Bearer hf-token',
+					'Content-Type': 'application/json',
+					'X-HF-Authorization': 'Bearer hf-token',
+					'X-Sandbox-Token': 'sandbox-token',
+				},
+			},
+		});
+
+		expect(redirectedHeaders?.get('authorization')).toBeNull();
+		expect(redirectedHeaders?.get('x-hf-authorization')).toBeNull();
+		expect(redirectedHeaders?.get('accept')).toBe('application/json');
+		expect(redirectedHeaders?.get('content-type')).toBe('application/json');
+		expect(redirectedHeaders?.get('x-sandbox-token')).toBe('sandbox-token');
+	});
+
 	it('enforces redirect limits', async () => {
 		const fetchMock = vi
 			.fn()

@@ -3,7 +3,7 @@ import type { ColumnDef } from '@tanstack/react-table';
 import { Badge } from './ui/badge';
 import { Card, CardContent } from './ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
-import type { TransportMetricsResponse } from '../../shared/transport-metrics.js';
+import type { ServerDiscoverOutcome, TransportMetricsResponse } from '../../shared/transport-metrics.js';
 import { ArrowRight, Network, Radio, Users, Waypoints } from 'lucide-react';
 import { MetricTile, SectionHeader } from './DashboardPrimitives';
 import { formatCompactNumber } from '../lib/dashboard-utils';
@@ -23,6 +23,56 @@ const KNOWN_PROTOCOL_COLORS: Readonly<Record<string, string>> = {
 	'legacy:2025-03-26': '#8b5cf6',
 	'legacy:2024-11-05': '#f43f5e',
 };
+
+const DISCOVERY_OUTCOME_DETAILS: ReadonlyArray<{
+	outcome: ServerDiscoverOutcome;
+	label: string;
+	description: string;
+	variant: 'success' | 'secondary' | 'outline' | 'destructive';
+}> = [
+	{
+		outcome: 'success',
+		label: 'Successful discovery',
+		description: 'Compatible modern negotiation completed.',
+		variant: 'success',
+	},
+	{
+		outcome: 'headerBodyMismatch',
+		label: 'Header/body mismatch',
+		description: 'Required MCP headers were missing or disagreed with the JSON-RPC body (-32020).',
+		variant: 'secondary',
+	},
+	{
+		outcome: 'unsupportedVersion',
+		label: 'Unsupported version',
+		description: 'The client proposed an unsupported protocol version (-32022).',
+		variant: 'secondary',
+	},
+	{
+		outcome: 'invalidRequest',
+		label: 'Invalid request',
+		description: 'Malformed JSON-RPC or discovery parameters.',
+		variant: 'secondary',
+	},
+	{
+		outcome: 'authRejected',
+		label: 'Authentication rejected',
+		description: 'Authentication policy rejected the probe before negotiation.',
+		variant: 'outline',
+	},
+	{
+		outcome: 'internalServerError',
+		label: 'Internal server error',
+		description: 'Discovery failed because of an internal or HTTP 5xx error.',
+		variant: 'destructive',
+	},
+	{
+		outcome: 'otherError',
+		label: 'Other error',
+		description: 'Another non-success response that did not match a known negotiation outcome.',
+		variant: 'destructive',
+	},
+];
 
 function protocolColor(era: 'legacy' | 'modern', version: string): string {
 	const key = `${era}:${version}`;
@@ -151,6 +201,12 @@ export function ProtocolMetricsCard() {
 	const subscriptionBehaviorCount = new Set(
 		subscriptionAttempts.map((attempt) => `${attempt.method}:${attempt.requestShape}`)
 	).size;
+	const discoveryMetrics = metrics.serverDiscoverOutcomes ?? [];
+	const discoveryProbeTotal = discoveryMetrics.reduce((sum, outcome) => sum + outcome.count, 0);
+	const discoveryOutcomeRows = DISCOVERY_OUTCOME_DETAILS.map((details) => ({
+		...details,
+		metrics: discoveryMetrics.find((metric) => metric.outcome === details.outcome),
+	}));
 
 	return (
 		<div className="space-y-5">
@@ -288,6 +344,60 @@ export function ProtocolMetricsCard() {
 					</div>
 				</CardContent>
 			</Card>
+
+			{metrics.isStateless && metrics.serverDiscoverOutcomes !== undefined ? (
+				<Card>
+					<CardContent className="space-y-5">
+						<SectionHeader
+							title="Discovery probe outcomes"
+							description="Classifies modern server/discover negotiation results since this process started. Compatibility rejections are separated from internal failures."
+							aside={<Badge variant="outline">{formatCompactNumber(discoveryProbeTotal)} total probes</Badge>}
+						/>
+						<div className="overflow-x-auto rounded-xl border">
+							<Table className="min-w-[760px]">
+								<caption className="sr-only">
+									Modern server discovery probe outcomes since this server process started
+								</caption>
+								<TableHeader>
+									<TableRow>
+										<TableHead>Outcome</TableHead>
+										<TableHead>Meaning</TableHead>
+										<TableHead className="text-right">Probes</TableHead>
+										<TableHead className="text-right">Share</TableHead>
+										<TableHead>Last seen</TableHead>
+									</TableRow>
+								</TableHeader>
+								<TableBody>
+									{discoveryOutcomeRows.map((row) => {
+										const count = row.metrics?.count ?? 0;
+										return (
+											<TableRow key={row.outcome}>
+												<TableCell>
+													<Badge variant={row.variant}>{row.label}</Badge>
+												</TableCell>
+												<TableCell className="max-w-md whitespace-normal text-sm text-muted-foreground">
+													{row.description}
+												</TableCell>
+												<TableCell className="text-right font-mono">{count.toLocaleString()}</TableCell>
+												<TableCell className="text-right font-mono">
+													{formatProtocolShare(count, discoveryProbeTotal)}
+												</TableCell>
+												<TableCell className="text-xs">
+													{row.metrics ? new Date(row.metrics.lastSeen).toLocaleString() : '—'}
+												</TableCell>
+											</TableRow>
+										);
+									})}
+								</TableBody>
+							</Table>
+						</div>
+						<p className="text-xs text-muted-foreground">
+							Counts are process-local. Header mismatches and unsupported versions usually indicate client compatibility
+							probes, not server outages.
+						</p>
+					</CardContent>
+				</Card>
+			) : null}
 
 			<Card>
 				<CardContent className="space-y-5">

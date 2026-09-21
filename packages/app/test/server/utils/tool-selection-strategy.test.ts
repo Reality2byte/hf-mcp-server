@@ -24,9 +24,9 @@ import {
 } from '@llmindset/hf-mcp';
 import { extractAuthBouquetAndMix } from '../../../src/server/utils/auth-utils.js';
 import { BOUQUETS } from '../../../src/shared/bouquet-presets.js';
-import { GRADIO_IMAGE_FILTER_FLAG, README_INCLUDE_FLAG } from '../../../src/shared/behavior-flags.js';
+import { GRADIO_IMAGE_FILTER_FLAG } from '../../../src/shared/behavior-flags.js';
 
-const BEHAVIOR_FLAG_IDS = new Set<string>([HF_FILES_FLAG, GRADIO_IMAGE_FILTER_FLAG, README_INCLUDE_FLAG]);
+const BEHAVIOR_FLAG_IDS = new Set<string>([HF_FILES_FLAG, GRADIO_IMAGE_FILTER_FLAG]);
 const normalizeBuiltInTools = (toolIds: readonly string[]): string[] => [
 	...new Set(toolIds.filter((toolId) => !BEHAVIOR_FLAG_IDS.has(toolId))),
 ];
@@ -85,10 +85,10 @@ describe('extractBouquetAndMix', () => {
 	});
 
 	it('should parse comma-separated mix list', () => {
-		const headers = { 'x-mcp-mix': 'hf_api, jobs ,hub_repo_details_readme' };
+		const headers = { 'x-mcp-mix': 'hf_api, jobs ,hub_repo_details' };
 		const result = extractAuthBouquetAndMix(headers);
 
-		expect(result.mix).toEqual(['hf_api', 'jobs', 'hub_repo_details_readme']);
+		expect(result.mix).toEqual(['hf_api', 'jobs', 'hub_repo_details']);
 	});
 
 	it('should not use DEFAULT_HF_TOKEN unless explicitly allowed', () => {
@@ -193,6 +193,30 @@ describe('BOUQUETS configuration', () => {
 			expect(bouquet.spaceTools).toEqual([]);
 		}
 	});
+
+	it('should expose the research toolkit plus jobs through intern bouquet', () => {
+		expect(BOUQUETS.intern).toEqual({
+			builtInTools: [...BOUQUETS.research!.builtInTools, HF_JOBS_TOOL_ID],
+			spaceTools: [],
+		});
+		expect(BOUQUETS.research!.builtInTools).not.toContain(HF_JOBS_TOOL_ID);
+	});
+
+	it('should expose the OpenAI toolkit through openai bouquet', () => {
+		const bouquet = BOUQUETS.openai;
+		expect(bouquet).toBeDefined();
+		if (bouquet) {
+			expect(bouquet.builtInTools).toEqual([
+				HF_FS_TOOL_ID,
+				HUB_REPO_DETAILS_TOOL_ID,
+				REPO_SEARCH_TOOL_ID,
+				DYNAMIC_SPACE_TOOL_ID,
+				HF_JOBS_TOOL_ID,
+				...TOOL_ID_GROUPS.sandbox,
+			]);
+			expect(bouquet.spaceTools).toEqual([]);
+		}
+	});
 });
 
 describe('ToolSelectionStrategy', () => {
@@ -239,6 +263,17 @@ describe('ToolSelectionStrategy', () => {
 			expect(result.mode).toBe(ToolSelectionMode.BOUQUET_OVERRIDE);
 			expect(result.enabledToolIds).toEqual([...ANONYMOUS_BUILTIN_TOOL_IDS]);
 			expect(result.enabledToolIds).toContain(HF_FS_TOOL_ID);
+		});
+
+		it('should restrict anonymous openai bouquet users to its public tools', async () => {
+			const context: ToolSelectionContext = {
+				headers: { 'x-mcp-bouquet': 'openai' },
+			};
+
+			const result = await strategy.selectTools(context);
+
+			expect(result.mode).toBe(ToolSelectionMode.BOUQUET_OVERRIDE);
+			expect(result.enabledToolIds).toEqual([HF_FS_TOOL_ID, HUB_REPO_DETAILS_TOOL_ID, REPO_SEARCH_TOOL_ID]);
 		});
 
 		it('should use bouquet override for search bouquet', async () => {
@@ -293,6 +328,28 @@ describe('ToolSelectionStrategy', () => {
 			expect(result.mode).toBe(ToolSelectionMode.BOUQUET_OVERRIDE);
 			expect(result.enabledToolIds).toEqual(normalizeBuiltInTools(ALL_BUILTIN_TOOL_IDS));
 			expect(result.reason).toBe('Bouquet override: all');
+		});
+
+		it('should use bouquet override for openai bouquet', async () => {
+			const context: ToolSelectionContext = {
+				headers: { 'x-mcp-bouquet': 'openai' },
+				hfToken: 'test-token',
+			};
+
+			const result = await strategy.selectTools(context);
+
+			expect(result.mode).toBe(ToolSelectionMode.BOUQUET_OVERRIDE);
+			expect(result.enabledToolIds).toEqual([
+				HF_FS_TOOL_ID,
+				HUB_REPO_DETAILS_TOOL_ID,
+				REPO_SEARCH_TOOL_ID,
+				DYNAMIC_SPACE_TOOL_ID,
+				HF_JOBS_TOOL_ID,
+				HF_SANDBOX_TOOL_ID,
+				HF_SANDBOX_EXEC_TOOL_ID,
+				HF_SANDBOX_FS_TOOL_ID,
+			]);
+			expect(result.reason).toBe('Bouquet override: openai');
 		});
 
 		it('should use bouquet override for sandbox bouquet', async () => {
@@ -795,7 +852,7 @@ describe('ToolSelectionStrategy', () => {
 
 	describe('Behavior flags', () => {
 		const flaggedSettings: AppSettings = {
-			builtInTools: [HF_FILES_FLAG, README_INCLUDE_FLAG, GRADIO_IMAGE_FILTER_FLAG],
+			builtInTools: [HF_FILES_FLAG, GRADIO_IMAGE_FILTER_FLAG],
 			spaceTools: [],
 		};
 
@@ -808,7 +865,6 @@ describe('ToolSelectionStrategy', () => {
 
 			expect(result.enabledToolIds).toEqual([HF_FS_TOOL_ID]);
 			expect(result.behaviorFlags).toEqual({
-				allowReadmeInclude: true,
 				stripGradioImages: true,
 				enableHfFsWrite: true,
 			});
@@ -822,7 +878,6 @@ describe('ToolSelectionStrategy', () => {
 
 			expect(result.enabledToolIds).toEqual([HF_FS_TOOL_ID]);
 			expect(result.behaviorFlags).toEqual({
-				allowReadmeInclude: false,
 				stripGradioImages: false,
 				enableHfFsWrite: false,
 			});

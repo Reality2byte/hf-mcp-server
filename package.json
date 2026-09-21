@@ -1,6 +1,6 @@
 {
 	"name": "hf-mcp",
-	"version": "0.4.6",
+	"version": "0.4.20",
 	"type": "module",
 	"packageManager": "pnpm@11.9.0+sha256.2b567aa66026238078ac2e0a33bec3febd60e962987aac697456f3180819b287",
 	"scripts": {
@@ -19,6 +19,7 @@
 		"e2e:sandbox:local": "pnpm build && node scripts/test-sandbox-tool-local.mjs",
 		"e2e:sandbox:live": "pnpm build && node scripts/test-sandbox-tool-live.mjs",
 		"e2e:hf-fs:live": "./scripts/test-hf-fs-live.sh .env.test",
+		"health:dynamic-spaces": "python3 monitor/distribution/bin/monitor.py --check",
 		"smoke:http:v1": "node scripts/test-http-v1.ts",
 		"smoke:http:v2": "node scripts/test-http-v2.ts",
 		"test:oauth": "node --test scripts/diagnose-oauth*.test.mjs",

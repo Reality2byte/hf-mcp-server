@@ -16,3 +16,6 @@ npm-debug.log
 .vscode
 *.md
 !README.md
+
+# Standalone benchmark workspace (kept out of source and build contexts)
+tool-benchmark

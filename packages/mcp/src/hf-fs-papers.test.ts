@@ -256,6 +256,31 @@ describe('papers guidance and Daily Papers', () => {
 		await expect(tool.run({ op: 'find', uri: 'hf://papers' })).rejects.toThrow('find is not supported on hf://papers');
 	});
 
+	it('defaults trending listings to 20 and indicates when a larger result is available', async () => {
+		const fetchSimulator = installFetchSimulator([
+			{
+				path: '/api/daily_papers',
+				search: { p: '0', limit: '20', sort: 'trending' },
+				response: () =>
+					json([{ paper }, { paper: { ...paper, id: '2401.00002' } }], {
+						headers: { link: '</api/daily_papers?p=1&limit=20&sort=trending>; rel="next"' },
+					}),
+			},
+		]);
+
+		const result = await new HfFsTool().run({ op: 'ls', uri: 'hf://papers/trending' });
+
+		expect(result).toMatchObject({
+			entries: [{ uri: 'hf://papers/2401.00001' }, { uri: 'hf://papers/2401.00002' }],
+			truncated: true,
+			truncation_reason: 'limit',
+			truncation_message:
+				'Showing 2 papers in Hugging Face global trending rank. More papers are available; rerun ls hf://papers/trending with --limit up to 100.',
+		});
+		expect(formatHfFsMarkdown(result)).toContain('More papers are available');
+		expect(fetchSimulator).toHaveBeenCalledOnce();
+	});
+
 	it('synthesizes bounded Daily Papers directories and lists a stable dated batch', async () => {
 		installFetchSimulator([
 			{

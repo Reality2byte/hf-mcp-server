@@ -6,10 +6,11 @@ import { MetricsCounter } from '../../shared/transport-metrics.js';
 import type { AppSettings } from '../../shared/settings.js';
 import type { ToolBehaviorFlags } from '../../shared/behavior-flags.js';
 import type { ProtocolEra } from '../../shared/transport-metrics.js';
-import { whoAmI, HubApiError, type WhoAmI } from '@huggingface/hub';
 import { extractAuthBouquetAndMix } from '../utils/auth-utils.js';
 import { getMetricsSafeName } from '../utils/gradio-metrics.js';
 import { isGradioTool } from '../utils/gradio-utils.js';
+import { fetchHfWhoami, isHfWhoamiUnauthorizedError, type HfWhoamiResponse } from '../utils/hf-whoami-client.js';
+import { isConfiguredProxyToolName } from '../utils/direct-tool-settings.js';
 
 /**
  * Result returned by ServerFactory containing the server instance and optional user details
@@ -29,7 +30,7 @@ export interface ServerRequestContext {
 	clientCapabilities?: Record<string, unknown>;
 	isAuthenticated?: boolean;
 	clientInfo?: { name: string; version: string };
-	authenticatedUser?: WhoAmI;
+	authenticatedUser?: HfWhoamiResponse;
 }
 
 /**
@@ -292,6 +293,12 @@ export abstract class BaseTransport {
 		if (methodName === 'tools/call' && body?.params && typeof body.params === 'object' && 'name' in body.params) {
 			const toolName = body.params.name;
 			if (typeof toolName === 'string') {
+				// Exact startup proxy names take precedence over the generated
+				// Gradio alias pattern.
+				if (isConfiguredProxyToolName(toolName)) {
+					return false;
+				}
+
 				// Check for standard Gradio tools (gr<number>_ or grp<number>_)
 				if (isGradioTool(toolName)) {
 					return true;
@@ -366,40 +373,45 @@ export abstract class BaseTransport {
 	 * Validate HF token and track authentication metrics
 	 * Returns true if request should continue, false if 401 should be returned
 	 */
-	protected async validateAuthAndTrackMetrics(
-		headers: Record<string, string>
-	): Promise<{ shouldContinue: boolean; statusCode?: number; userIdentified: boolean; authenticatedUser?: WhoAmI }> {
+	protected async validateAuthAndTrackMetrics(headers: Record<string, string>): Promise<{
+		shouldContinue: boolean;
+		statusCode?: number;
+		userIdentified: boolean;
+		authenticatedUser?: HfWhoamiResponse;
+	}> {
 		const { hfToken } = extractAuthBouquetAndMix(headers);
 
 		if (hfToken) {
 			try {
-				const authenticatedUser = await whoAmI({ credentials: { accessToken: hfToken } });
+				const authenticatedUser = await fetchHfWhoami(hfToken);
 				// Track authenticated connection
 				this.metrics.trackAuthenticatedConnection();
 				return { shouldContinue: true, userIdentified: true, authenticatedUser };
 			} catch (error) {
-				// Check for 401 status in multiple possible locations
-				const errorObj = error as { statusCode?: number; status?: number };
-				const isUnauthorized =
-					(error instanceof HubApiError && error.statusCode === 401) ||
-					errorObj.statusCode === 401 ||
-					errorObj.status === 401 ||
-					(error instanceof Error && error.message.includes('401')) ||
-					(error instanceof TypeError && error.message.includes('Your access token must start with'));
-
-				if (isUnauthorized) {
+				if (isHfWhoamiUnauthorizedError(error)) {
 					logger.debug('Invalid HF token - returning 401');
 					// Track unauthorized connection
 					this.metrics.trackUnauthorizedConnection();
 					return { shouldContinue: false, statusCode: 401, userIdentified: false };
 				}
+				if (isStrictTokenModeEnabled()) {
+					// Validation is unavailable, not necessarily invalid. Do not log error
+					// details that could contain credentials or count this as unauthorized.
+					logger.debug('HF token validation unavailable in strict token mode - returning 503');
+					return { shouldContinue: false, statusCode: 503, userIdentified: false };
+				}
 				// For other errors (network issues, 500s, etc.), continue processing
 				// but don't track as authenticated since we couldn't validate
-				logger.debug({ error }, 'Non-401 error from whoAmI, continuing without auth tracking');
+				logger.debug({ error }, 'Non-401 error from Hugging Face whoami, continuing without auth tracking');
 				// Don't track any auth metrics for this case - token exists but validation failed for non-auth reasons
 				return { shouldContinue: true, userIdentified: false };
 			}
 		} else {
+			if (isStrictTokenModeEnabled()) {
+				logger.trace('NO TOKEN, STRICT TOKEN MODE enabled - returning 401');
+				this.metrics.trackUnauthorizedConnection();
+				return { shouldContinue: false, statusCode: 401, userIdentified: false };
+			}
 			// Track anonymous connection
 			this.metrics.trackAnonymousConnection();
 			const shouldContinue: boolean = !headers['x-mcp-force-auth'];
@@ -407,4 +419,14 @@ export abstract class BaseTransport {
 			return { shouldContinue, userIdentified: false };
 		}
 	}
+}
+
+/**
+ * Strict Token Mode (opt-in): when `MCP_STRICT_TOKEN=true`, token-less
+ * HTTP connections are rejected with 401 at the auth gate before any
+ * server instance is built. Supplied tokens must pass whoami validation;
+ * validation failures other than an explicit 401 are rejected with 503.
+ */
+function isStrictTokenModeEnabled(): boolean {
+	return process.env.MCP_STRICT_TOKEN === 'true';
 }

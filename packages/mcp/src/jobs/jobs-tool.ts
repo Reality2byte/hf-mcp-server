@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { JobsApiClient } from './api-client.js';
-import { HfApiError } from '../hf-api-call.js';
 import { runCommand, uvCommand } from './commands/run.js';
 import { psCommand } from './commands/ps.js';
 import { logsCommand } from './commands/logs.js';
@@ -16,9 +15,15 @@ import {
 	scheduledResumeCommand,
 } from './commands/scheduled.js';
 import { formatCommandHelp, extractFieldDetails } from './schema-help.js';
-import type { ToolResult } from '../types/tool-result.js';
 import { CPU_FLAVORS, GPU_FLAVORS, SPECIALIZED_FLAVORS } from './types.js';
 import { DEFAULT_LOG_WAIT_SECONDS } from './sse-handler.js';
+import {
+	HF_JOBS_OPERATIONS,
+	HF_JOBS_OUTPUT_SCHEMA,
+	type HfJobsOperation,
+	type HfJobsOutcome,
+} from './hf-jobs-output-schema.js';
+import { createHfJobsToolResult, type HfJobsToolResult, type JobsCommandResult } from './jobs-output.js';
 import type {
 	RunArgs,
 	UvArgs,
@@ -34,6 +39,8 @@ import type {
 
 // Re-export types
 export * from './types.js';
+export * from './hf-jobs-output-schema.js';
+export * from './jobs-output.js';
 export { JobsApiClient } from './api-client.js';
 
 // Import Zod schemas for validation
@@ -50,23 +57,8 @@ import {
 	scheduledJobArgsSchema,
 } from './types.js';
 
-const OPERATION_NAMES = [
-	'run',
-	'uv',
-	'ps',
-	'logs',
-	'inspect',
-	'cancel',
-	'scheduled run',
-	'scheduled uv',
-	'scheduled ps',
-	'scheduled inspect',
-	'scheduled delete',
-	'scheduled suspend',
-	'scheduled resume',
-] as const;
-
-type OperationName = (typeof OPERATION_NAMES)[number];
+const OPERATION_NAMES = HF_JOBS_OPERATIONS;
+type OperationName = HfJobsOperation;
 
 const OPERATION_EXAMPLES: Partial<Record<OperationName, string>> = {
 	run: `{
@@ -264,7 +256,7 @@ function validateArgs<T extends z.ZodTypeAny>(
 	schema: T,
 	args: unknown,
 	operationName: string
-): { success: true; data: z.infer<T> } | { success: false; errorResult: ToolResult } {
+): { success: true; data: z.infer<T> } | { success: false; errorMessage: string } {
 	const result = schema.safeParse(args);
 
 	if (result.success) {
@@ -299,12 +291,7 @@ function validateArgs<T extends z.ZodTypeAny>(
 
 	return {
 		success: false,
-		errorResult: {
-			formatted: errorMessage,
-			totalResults: 0,
-			resultsShared: 0,
-			isError: true,
-		},
+		errorMessage,
 	};
 }
 
@@ -381,13 +368,13 @@ ${HARDWARE_FLAVORS_SECTION}
 ## Command Format Guidelines
 
 **Array format (default):**
-- Recommended for every command—JSON keeps arguments intact (URLs with \`&\`, spaces, etc.)
-- Use \`["/bin/sh", "-lc", "..."]\` when you need shell operators like \`&&\`, \`|\`, or redirections
+- Arrays are literal argv; no implicit shell execution. JSON keeps arguments intact (URLs with \`&\`, spaces, etc.)
+- For pipes, chaining, redirections, or variable expansion, explicitly use ["/bin/sh", "-lc", "..."] only if the image provides that shell.
 - Works with any language: Python, bash, node, npm, uv, etc.
 
 **String format (simple cases only):**
-- Still accepted for backwards compatibility, parsed with POSIX shell semantics
-- Rejects shell operators and can mis-handle characters such as \`&\`; switch to arrays when things turn complex
+- Still accepted for backwards compatibility: strings tokenize quotes and escaping, not shell execution
+- Rejects shell operators; use literal argv for special characters in arguments, or an explicit shell for shell syntax
 - \`$HF_TOKEN\` stays literal—forward it via \`secrets: { "HF_TOKEN": "$HF_TOKEN" }\`
 
 **Multiline inline scripts:**
@@ -436,9 +423,15 @@ Call this tool with:
  */
 export const HF_JOBS_TOOL_CONFIG = {
 	name: 'hf_jobs',
+	title: 'Hugging Face Jobs',
 	description:
 		'Remote compute for Hugging Face workflows. Run Python/UV or Docker jobs to deeply analyze Hub datasets, repos, traces, models, and large files; compute trends/statistics; run batch inference/evaluation; or perform long-running work with installed libraries. ' +
-		'Use for dataset/repo analysis prompts when local chat inspection is insufficient. Includes submit, logs, inspect, cancel, schedule, and volume mounting.',
+		'Use for dataset/repo analysis prompts when local chat inspection is insufficient. Includes submit, logs, inspect, cancel, schedule, and volume mounting. ' +
+		'Minimal run: {"operation":"run","args":{"image":"python:3.12","command":["python","-c","print(123)"]}}. ' +
+		'Command arrays are literal argv; strings tokenize quotes and escaping, not shell execution. ' +
+		'For pipes, chaining, redirections, or variable expansion, explicitly use ["/bin/sh", "-lc", "..."] only if the image provides that shell. ' +
+		'Help: {"operation":"run","args":{"help":true}}; full usage: {}. ' +
+		'Follow up with logs or inspect using args: {"job_id":"<returned job ID>"}.',
 	schema: z.object({
 		operation: z
 			.enum(OPERATION_NAMES)
@@ -446,8 +439,11 @@ export const HF_JOBS_TOOL_CONFIG = {
 			.describe(`Operation to execute. Valid values: ${OPERATION_NAMES.map((cmd) => `"${cmd}"`).join(', ')}`),
 		args: z.record(z.string(), z.unknown()).optional().describe('Operation-specific arguments as a JSON object'),
 	}),
+	outputSchema: HF_JOBS_OUTPUT_SCHEMA,
 	annotations: {
-		title: 'Hugging Face Jobs', // omit destructive hint.
+		title: 'Hugging Face Jobs',
+		destructiveHint: true,
+		idempotentHint: false,
 		readOnlyHint: false,
 		openWorldHint: true,
 	},
@@ -473,68 +469,66 @@ export class HfJobsTool {
 	async execute(
 		params: { operation?: string; args?: Record<string, unknown> },
 		options?: { onProgress?: JobsProgressCallback }
-	): Promise<ToolResult> {
+	): Promise<HfJobsToolResult> {
 		// If not authenticated, show upgrade message
 		if (!this.isAuthenticated) {
-			return {
-				formatted:
-					'Jobs are available for Pro, Team and Enterprise users. Go to https://huggingface.co/pricing to get started.',
-				totalResults: 0,
-				resultsShared: 0,
-			};
+			const message =
+				'Jobs are available for Pro, Team and Enterprise users. Go to https://huggingface.co/pricing to get started.';
+			return respond(undefined, message, {
+				kind: 'unavailable',
+				message,
+				upgrade_url: 'https://huggingface.co/pricing',
+			});
 		}
 
 		const requestedOperation = params.operation;
 
 		// If no operation provided, return usage instructions
 		if (!requestedOperation) {
-			return {
-				formatted: USAGE_INSTRUCTIONS,
-				totalResults: 1,
-				resultsShared: 1,
-			};
+			return respond(undefined, USAGE_INSTRUCTIONS, {
+				kind: 'usage',
+				available_operations: [...HF_JOBS_OPERATIONS],
+				instructions: USAGE_INSTRUCTIONS,
+			});
 		}
 
 		const normalizedOperation = requestedOperation.toLowerCase();
 		if (!isOperationName(normalizedOperation)) {
-			return {
-				formatted: formatUnknownOperationMessage(requestedOperation),
-				totalResults: 0,
-				resultsShared: 0,
-			};
+			const message = formatUnknownOperationMessage(requestedOperation);
+			return respond(undefined, message, { kind: 'error', code: 'unknown_operation', message }, true);
 		}
 
 		const operation = normalizedOperation;
 		const legacyArgs = extractTopLevelArgs(params);
 		const rawArgs = params.args ? params.args : Object.keys(legacyArgs).length > 0 ? legacyArgs : {};
 		const schema = OPERATION_SCHEMAS[operation];
-		const noArgsProvided = !params.args || Object.keys(params.args).length === 0;
+		const noArgsProvided = Object.keys(rawArgs).length === 0;
 
 		if (schema && noArgsProvided && operationRequiresArgs(operation)) {
 			const helpText = formatCommandHelpWithExample(operation, schema);
-			return {
-				formatted: `No arguments provided for "${operation}".\n\n${helpText}`,
-				totalResults: 1,
-				resultsShared: 1,
-			};
+			const formatted = `No arguments provided for "${operation}".\n\n${helpText}`;
+			return respond(operation, formatted, {
+				kind: 'help',
+				operation,
+				reason: 'missing_arguments',
+				instructions: helpText,
+			});
 		}
 		const helpRequested = isHelpRequested(rawArgs);
 
 		if (helpRequested) {
 			if (!schema) {
-				return {
-					formatted: `No help available for '${requestedOperation}'.`,
-					totalResults: 0,
-					resultsShared: 0,
-				};
+				const message = `No help available for '${requestedOperation}'.`;
+				return respond(operation, message, { kind: 'error', code: 'execution', message }, true);
 			}
 
 			const helpText = formatCommandHelpWithExample(operation, schema);
-			return {
-				formatted: helpText,
-				totalResults: 1,
-				resultsShared: 1,
-			};
+			return respond(operation, helpText, {
+				kind: 'help',
+				operation,
+				reason: 'requested',
+				instructions: helpText,
+			});
 		}
 
 		const cleanedArgs = removeHelpFlag(rawArgs);
@@ -544,13 +538,18 @@ export class HfJobsTool {
 		if (schema) {
 			const validation = validateArgs(schema, cleanedArgs, operation);
 			if (!validation.success) {
-				return validation.errorResult;
+				return respond(
+					operation,
+					validation.errorMessage,
+					{ kind: 'error', code: 'validation', message: validation.errorMessage },
+					true
+				);
 			}
 			parsedArgs = validation.data as Record<string, unknown>;
 		}
 
 		try {
-			let result: string;
+			let result: JobsCommandResult;
 
 			switch (operation) {
 				case 'run':
@@ -605,43 +604,32 @@ export class HfJobsTool {
 					result = await scheduledResumeCommand(parsedArgs as ScheduledJobArgs, this.client);
 					break;
 
-				default:
-					return {
-						formatted: formatUnknownOperationMessage(requestedOperation),
-						totalResults: 0,
-						resultsShared: 0,
-					};
-			}
-
-			return {
-				formatted: result,
-				totalResults: 1,
-				resultsShared: 1,
-			};
-		} catch (error) {
-			let errorMessage = error instanceof Error ? error.message : String(error);
-
-			// If this is an HfApiError with a response body, include it
-			if (error instanceof HfApiError && error.responseBody) {
-				try {
-					// Try to parse and format the response body
-					const parsed: unknown = JSON.parse(error.responseBody);
-					const formattedBody = JSON.stringify(parsed, null, 2);
-					errorMessage += `\n\nServer response:\n${formattedBody}`;
-				} catch {
-					// If not valid JSON, include raw response (if not too long)
-					if (error.responseBody.length < 500) {
-						errorMessage += `\n\nServer response: ${error.responseBody}`;
-					}
+				default: {
+					const message = formatUnknownOperationMessage(requestedOperation);
+					return respond(undefined, message, { kind: 'error', code: 'unknown_operation', message }, true);
 				}
 			}
 
-			return {
-				formatted: `Error executing ${requestedOperation ?? 'operation'}: ${errorMessage}`,
-				totalResults: 0,
-				resultsShared: 0,
-				isError: true,
-			};
+			return createHfJobsToolResult(operation, result);
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : String(error);
+			const message = `Error executing ${requestedOperation}: ${errorMessage}`;
+			return respond(operation, message, { kind: 'error', code: 'execution', message }, true);
 		}
 	}
+}
+
+function respond(
+	operation: HfJobsOperation | undefined,
+	formatted: string,
+	outcome: HfJobsOutcome,
+	isError: boolean = false
+): HfJobsToolResult {
+	return createHfJobsToolResult(operation, {
+		formatted,
+		outcome,
+		totalResults: 0,
+		resultsShared: 0,
+		...(isError ? { isError: true } : {}),
+	});
 }

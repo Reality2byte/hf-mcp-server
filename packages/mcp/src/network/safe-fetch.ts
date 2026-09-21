@@ -90,6 +90,22 @@ async function fetchWithTimeout(url: URL, requestInit: RequestInit, timeoutMs: n
 	}
 }
 
+/**
+ * Creates a fetch implementation that propagates an operation-level abort
+ * signal while preserving any narrower signal supplied by the caller.
+ *
+ * This is intended for SDKs that accept a custom fetch implementation and
+ * perform their own URL construction and redirect handling.
+ */
+export function createAbortAwareFetch(abortSignal: AbortSignal): typeof fetch {
+	return async (input, init) => {
+		const requestSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+		const signal =
+			requestSignal && requestSignal !== abortSignal ? AbortSignal.any([requestSignal, abortSignal]) : abortSignal;
+		return await fetch(input, { ...init, signal });
+	};
+}
+
 export async function safeFetch(url: string | URL, options: SafeFetchOptions): Promise<SafeFetchResult> {
 	const {
 		urlPolicy,
@@ -151,9 +167,9 @@ export async function safeFetch(url: string | URL, options: SafeFetchOptions): P
 
 		if (stripSensitiveHeadersOnCrossHostRedirect && currentUrl.origin !== nextUrl.origin) {
 			const filtered = dropSensitiveHeaders(baseHeaders);
-			baseHeaders.forEach((_, key) => {
+			for (const key of [...baseHeaders.keys()]) {
 				baseHeaders.delete(key);
-			});
+			}
 			filtered.forEach((value, key) => {
 				baseHeaders.set(key, value);
 			});

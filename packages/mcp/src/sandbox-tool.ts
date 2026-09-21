@@ -7,7 +7,15 @@ import { JobsApiClient } from './jobs/api-client.js';
 import type { JobInfo, JobSpec, JobStatus, JobVolume } from './jobs/types.js';
 import { parseTimeout, parseVolumes } from './jobs/commands/utils.js';
 import { fetchWithProfile, NETWORK_FETCH_PROFILES } from './network/fetch-profile.js';
+import { memoizeByKey } from './schema-cache.js';
 import { escapeMarkdown, formatBytes } from './utilities.js';
+
+/**
+ * Sandbox schemas vary only by the username in one field description (`handleDescription`),
+ * so they are cached per username. Each entry retains a whole zod tree (~35 KB), hence the
+ * small bound: three caches cost ~6.5 MB.
+ */
+const SANDBOX_CONFIG_CACHE_SIZE = 64;
 
 const SANDBOX_HANDLE_VERSION = 'hfsb2';
 const SANDBOX_PORT = 49983;
@@ -40,11 +48,11 @@ const AUTH_REQUIRED_MESSAGE =
 	'Hugging Face sandboxes require authentication because they create and control HF Jobs. Set HF_TOKEN or authenticate your MCP client, then retry with ?mix=sandbox or ?bouquet=sandbox.';
 const BOOTSTRAP_DOWNLOAD = `set -e
 d=/tmp/.sbx-server
-if command -v wget >/dev/null 2>&1; then wget -q --header "Authorization: Bearer $SBX_DL_TOKEN" -O "$d" "$SBX_SERVER_URL"
-elif command -v curl >/dev/null 2>&1; then curl -fsSL -H "Authorization: Bearer $SBX_DL_TOKEN" -o "$d" "$SBX_SERVER_URL"
+if command -v wget >/dev/null 2>&1; then wget -q -O "$d" "$SBX_SERVER_URL"
+elif command -v curl >/dev/null 2>&1; then curl -fsSL -o "$d" "$SBX_SERVER_URL"
 else cp "$SBX_SERVER_MOUNT/sbx-server" "$d"; fi
 chmod +x "$d"
-unset SBX_DL_TOKEN SBX_SERVER_URL SBX_SERVER_MOUNT
+unset SBX_SERVER_URL SBX_SERVER_MOUNT
 exec "$d"`;
 
 function handleDescription(username?: string): string {
@@ -696,6 +704,7 @@ const SANDBOX_CREATE_FLAGS: CommandOptionMap = {
 	'--timeout': { key: 'timeout', kind: 'string' },
 	'--name': { key: 'name', kind: 'string' },
 	'--namespace': { key: 'namespace', kind: 'string' },
+	'--resource-group-id': { key: 'resource_group_id', kind: 'string' },
 	'--forward-hf-token': { key: 'forward_hf_token', kind: 'boolean' },
 	'--volume': { key: 'volumes', kind: 'string', repeatable: true },
 	'--bucket': { key: 'bucket', kind: 'string' },
@@ -715,7 +724,7 @@ const SANDBOX_DESCRIPTION = `Create and manage Hugging Face Sandboxes.
 
 Grammar; each token below is one args array element:
   create [--name NAME] [--image IMAGE] [--flavor FLAVOR] [--timeout DURATION]
-         [--namespace NAMESPACE] [--forward-hf-token] [--volume SPEC]...
+         [--namespace NAMESPACE] [--resource-group-id ID] [--forward-hf-token] [--volume SPEC]...
          [--bucket OWNER/NAME] [--bucket-mode ro|rw] [--bucket-mount-path PATH]
   status HANDLE
   terminate HANDLE
@@ -762,6 +771,8 @@ export const HF_SANDBOX_TOOL_CONFIG = {
 	outputSchema: createSandboxOutputSchema(),
 	annotations: {
 		title: 'Hugging Face Sandbox',
+		destructiveHint: true,
+		idempotentHint: false,
 		readOnlyHint: false,
 		openWorldHint: true,
 	},
@@ -781,6 +792,7 @@ interface SandboxParams {
 	timeout?: string;
 	name?: string;
 	namespace?: string;
+	resource_group_id?: string;
 	forward_hf_token?: boolean;
 	volumes?: string[];
 	bucket?: string;
@@ -812,6 +824,7 @@ function parseSandboxRequest(request: HfSandboxParams): SandboxParams {
 		...(typeof options.timeout === 'string' ? { timeout: options.timeout } : {}),
 		...(typeof options.name === 'string' ? { name: options.name } : {}),
 		...(typeof options.namespace === 'string' ? { namespace: options.namespace } : {}),
+		...(typeof options.resource_group_id === 'string' ? { resource_group_id: options.resource_group_id } : {}),
 		...(options.forward_hf_token === true ? { forward_hf_token: true } : {}),
 		...(Array.isArray(options.volumes) ? { volumes: options.volumes } : {}),
 		...(typeof options.bucket === 'string' ? { bucket: options.bucket } : {}),
@@ -916,8 +929,13 @@ function parseStoredSandboxVolumes(job: JobInfo): JobVolume[] {
 }
 
 export class HfSandboxTool extends SandboxToolBase {
+	private static readonly configByUsername = memoizeByKey<string | undefined, SandboxToolConfig>(
+		(username) => ({ ...HF_SANDBOX_TOOL_CONFIG, schema: createSandboxSchema(username) }),
+		SANDBOX_CONFIG_CACHE_SIZE
+	);
+
 	static createToolConfig(username?: string): SandboxToolConfig {
-		return { ...HF_SANDBOX_TOOL_CONFIG, schema: createSandboxSchema(username) };
+		return HfSandboxTool.configByUsername(username);
 	}
 
 	async run(params: HfSandboxParams, options?: SandboxOptions): Promise<SandboxResult> {
@@ -947,6 +965,9 @@ export class HfSandboxTool extends SandboxToolBase {
 	private async create(params: SandboxParams, options?: SandboxOptions): Promise<SandboxCreateResult> {
 		const name = params.name ?? generateName();
 		validateName(name);
+		if (params.resource_group_id && !params.namespace) {
+			throw new Error('EINVAL: --resource-group-id requires --namespace for the owning organization.');
+		}
 		await notifySandboxProgress(options, {
 			event: 'create',
 			message: `Creating sandbox ${name}: resolving namespace.`,
@@ -963,7 +984,6 @@ export class HfSandboxTool extends SandboxToolBase {
 
 		const secrets: Record<string, string> = {
 			SBX_TOKEN: sandboxToken,
-			SBX_DL_TOKEN: hfToken,
 		};
 		if (params.forward_hf_token) {
 			secrets.HF_TOKEN = hfToken;
@@ -1000,6 +1020,7 @@ export class HfSandboxTool extends SandboxToolBase {
 			},
 			expose: { ports: [SANDBOX_PORT] },
 			volumes,
+			...(params.resource_group_id ? { resourceGroupId: params.resource_group_id } : {}),
 		};
 
 		await notifySandboxProgress(options, {
@@ -1184,9 +1205,10 @@ export const HF_SANDBOX_EXEC_TOOL_CONFIG = {
 	outputSchema: createSandboxExecOutputSchema(),
 	annotations: {
 		title: 'Hugging Face Sandbox Exec',
+		destructiveHint: true,
+		idempotentHint: false,
 		readOnlyHint: false,
 		openWorldHint: true,
-		destructiveHint: true,
 	},
 } as const;
 
@@ -1258,8 +1280,13 @@ export interface SandboxDetachResult {
 export type HfSandboxExecResult = SandboxExecResult | SandboxDetachResult;
 
 export class HfSandboxExecTool extends SandboxToolBase {
+	private static readonly configByUsername = memoizeByKey<string | undefined, SandboxExecToolConfig>(
+		(username) => ({ ...HF_SANDBOX_EXEC_TOOL_CONFIG, schema: createSandboxExecSchema(username) }),
+		SANDBOX_CONFIG_CACHE_SIZE
+	);
+
 	static createToolConfig(username?: string): SandboxExecToolConfig {
-		return { ...HF_SANDBOX_EXEC_TOOL_CONFIG, schema: createSandboxExecSchema(username) };
+		return HfSandboxExecTool.configByUsername(username);
 	}
 
 	async run(params: HfSandboxExecParams, options?: SandboxExecOptions): Promise<HfSandboxExecResult> {
@@ -1370,6 +1397,7 @@ export const HF_SANDBOX_FS_TOOL_CONFIG = {
 	annotations: {
 		title: 'Hugging Face Sandbox Files',
 		destructiveHint: true,
+		idempotentHint: false,
 		readOnlyHint: false,
 		openWorldHint: true,
 	},
@@ -1433,8 +1461,13 @@ export type SandboxFsResult =
 	| { op: 'mkdir'; path: string; created: true };
 
 export class HfSandboxFsTool extends SandboxToolBase {
+	private static readonly configByUsername = memoizeByKey<string | undefined, SandboxFsToolConfig>(
+		(username) => ({ ...HF_SANDBOX_FS_TOOL_CONFIG, schema: createSandboxFsSchema(username) }),
+		SANDBOX_CONFIG_CACHE_SIZE
+	);
+
 	static createToolConfig(username?: string): SandboxFsToolConfig {
-		return { ...HF_SANDBOX_FS_TOOL_CONFIG, schema: createSandboxFsSchema(username) };
+		return HfSandboxFsTool.configByUsername(username);
 	}
 
 	async run(params: HfSandboxFsParams): Promise<SandboxFsResult> {
@@ -1452,8 +1485,15 @@ export class HfSandboxFsTool extends SandboxToolBase {
 				if (!entry) {
 					return { op: 'stat', path: parsed.path, exists: false };
 				}
-				const { name: _name, path: _path, ...details } = entry;
-				return { op: 'stat', path: parsed.path, exists: true, ...details };
+				return {
+					op: 'stat',
+					path: parsed.path,
+					exists: true,
+					type: entry.type,
+					size: entry.size,
+					mtime_ms: entry.mtime_ms,
+					mode: entry.mode,
+				};
 			}
 			case 'write':
 				return this.write(conn, parsed);

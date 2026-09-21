@@ -140,7 +140,6 @@ export class JobsApiClient extends HfApiCall {
 	async getScheduledJob(scheduledJobId: string, namespace?: string): Promise<ScheduledJobInfo> {
 		const ns = await this.getNamespace(namespace);
 		const url = `https://huggingface.co/api/scheduled-jobs/${ns}/${scheduledJobId}`;
-		console.error(url);
 		return this.fetchFromApi<ScheduledJobInfo>(url);
 	}
 

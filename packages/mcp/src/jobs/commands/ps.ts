@@ -1,12 +1,13 @@
 import type { PsArgs } from '../types.js';
 import type { JobsApiClient } from '../api-client.js';
 import { formatJobsTable } from '../formatters.js';
+import { toHfJobOutput, type JobsCommandResult } from '../jobs-output.js';
 
 /**
  * Execute the 'ps' command
  * Lists jobs with optional filtering
  */
-export async function psCommand(args: PsArgs, client: JobsApiClient): Promise<string> {
+export async function psCommand(args: PsArgs, client: JobsApiClient): Promise<JobsCommandResult> {
 	// Fetch all jobs from API
 	const allJobs = await client.listJobs(args.namespace);
 
@@ -28,13 +29,28 @@ export async function psCommand(args: PsArgs, client: JobsApiClient): Promise<st
 	const table = formatJobsTable(jobs);
 
 	if (jobs.length === 0) {
-		if (args.all) {
-			return 'No jobs found.';
-		}
-		return 'No running jobs found. Use `{"args": {"all": true}}` to show all jobs.';
+		return {
+			formatted: args.all ? 'No jobs found.' : 'No running jobs found. Use `{"args": {"all": true}}` to show all jobs.',
+			outcome: {
+				kind: 'jobs',
+				jobs: [],
+				total_jobs: allJobs.length,
+			},
+			totalResults: allJobs.length,
+			resultsShared: 0,
+		};
 	}
 
-	return `**Jobs (${jobs.length} of ${allJobs.length} total):**
+	return {
+		formatted: `**Jobs (${jobs.length} of ${allJobs.length} total):**
 
-${table}`;
+${table}`,
+		outcome: {
+			kind: 'jobs',
+			jobs: jobs.map((job) => toHfJobOutput(job)),
+			total_jobs: allJobs.length,
+		},
+		totalResults: allJobs.length,
+		resultsShared: jobs.length,
+	};
 }

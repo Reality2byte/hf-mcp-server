@@ -4,9 +4,6 @@
 
 <!-- fast-agent-subagents -->
 
-Use codexresponses.gpt-5.6-terra?reasoning=high subagents to help with analysis, review and production
-of code when necessary.
-
 ## Project Structure & Module Organization
 
 - `packages/app`: MCP server plus management web UI. Server code lives in `packages/app/src/server`, UI in `packages/app/src/web`, and tests in `packages/app/test`.

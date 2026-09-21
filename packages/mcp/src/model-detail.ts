@@ -1,7 +1,6 @@
 import { modelInfo, HubApiError } from '@huggingface/hub';
 import { formatDate, formatNumber } from './utilities.js';
 import type { ToolResult } from './types/tool-result.js';
-import { fetchReadmeContent } from './readme-utils.js';
 
 const SPACES_TO_INCLUDE = 12;
 
@@ -85,10 +84,9 @@ export class ModelDetailTool {
 	 * Get detailed information about a specific model
 	 *
 	 * @param modelId The model ID to get details for (e.g., microsoft/DialoGPT-large)
-	 * @param includeReadme Whether to include README content (default: false)
 	 * @returns ToolResult with formatted model details
 	 */
-	async getDetails(modelId: string, includeReadme: boolean = false): Promise<ToolResult> {
+	async getDetails(modelId: string): Promise<ToolResult> {
 		try {
 			// Define additional fields we want to retrieve (only those available in the hub library)
 			const additionalFields = [
@@ -218,16 +216,6 @@ export class ModelDetailTool {
 					// eslint-disable-next-line @typescript-eslint/no-unused-vars
 				} catch (ignoreUnformattedSpaces) {
 					console.error(`Error processing spaces for model ${modelId}:`);
-				}
-			}
-
-			// Fetch and append README content if requested
-			if (includeReadme) {
-				const readmeContent = await fetchReadmeContent(modelDetails.name, 'models');
-				if (readmeContent) {
-					const result = formatModelDetails(modelDetails);
-					result.formatted += '\n\n## README\n<modelcard-readme>\n\n' + readmeContent.trim() + '\n</modelcard-readme>';
-					return result;
 				}
 			}
 

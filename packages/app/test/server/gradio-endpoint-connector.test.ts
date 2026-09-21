@@ -341,6 +341,15 @@ describe('registerRemoteTools', () => {
 			expect(resources).toHaveLength(1);
 			expect(resourceUri).toMatch(/^ui:\/\/hf-mcp-proxy\/gradio-gradio_owner-space\//);
 			expect(resources[0]?.mimeType).toBe('text/html;profile=mcp-app');
+			for (const tool of tools) {
+				expect(tool.annotations).toEqual({
+					title: tool.title,
+					readOnlyHint: false,
+					destructiveHint: true,
+					idempotentHint: false,
+					openWorldHint: true,
+				});
+			}
 			expect(tools[0]?._meta).toEqual({
 				ui: {
 					resourceUri,

@@ -7,18 +7,19 @@ export * from './create-repo.js';
 export * from './dataset-viewer-inspect.js';
 export * from './hub-inspect.js';
 export * from './hf-fs.js';
+export * from './hf-fs-errors.js';
 export * from './hf-fs-write-contract.js';
 export * from './hf-fs-papers.js';
 export * from './hf-fs-docs.js';
 export * from './hf-nav.js';
 export * from './hf-fs-write.js';
-export * from './readme-utils.js';
 export * from './jobs/jobs-tool.js';
 export * from './sandbox-tool.js';
 export * from './space/dynamic-space-tool.js';
 export * from './space/utils/gradio-caller.js';
 export * from './space/utils/gradio-schema.js';
 export * from './network/url-policy.js';
+export * from './schema-cache.js';
 
 // Export shared types
 export * from './types/tool-result.js';

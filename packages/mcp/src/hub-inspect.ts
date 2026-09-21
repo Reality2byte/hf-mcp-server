@@ -23,7 +23,6 @@ export const HUB_REPO_DETAILS_TOOL_CONFIG = {
 			.max(10, 'Provide at most 10 repo ids')
 			.describe('Repo IDs for (models|dataset/space) - usually in author/name format (e.g. openai/gpt-oss-120b)'),
 		repo_type: z.enum(['model', 'dataset', 'space']).optional().describe('Specify lookup type; otherwise auto-detects'),
-		include_readme: z.boolean().default(false).describe('Include README from the repo'),
 		operations: z
 			.array(z.enum(HUB_INSPECT_OPERATIONS))
 			.optional()
@@ -50,9 +49,11 @@ export const HUB_REPO_DETAILS_TOOL_CONFIG = {
 			.describe('Row count for dataset_preview. Defaults to 5 and is clamped to 1-100.'),
 	}),
 	annotations: {
+		title: 'Hub Repository Details',
 		destructiveHint: false,
+		idempotentHint: false,
 		readOnlyHint: true,
-		openWorldHint: false,
+		openWorldHint: true,
 	},
 } as const;
 
@@ -71,13 +72,13 @@ export class HubInspectTool {
 		this.hubUrl = hubUrl;
 	}
 
-	async inspect(params: HubInspectParams, includeReadme: boolean = false): Promise<ToolResult> {
+	async inspect(params: HubInspectParams): Promise<ToolResult> {
 		const parts: string[] = [];
 		let successCount = 0;
 
 		for (const id of params.repo_ids) {
 			try {
-				const section = await this.inspectSingle(id, params, includeReadme);
+				const section = await this.inspectSingle(id, params);
 				parts.push(section);
 				successCount += 1;
 			} catch (err) {
@@ -95,7 +96,7 @@ export class HubInspectTool {
 		};
 	}
 
-	private async inspectSingle(repoId: string, params: HubInspectParams, includeReadme: boolean): Promise<string> {
+	private async inspectSingle(repoId: string, params: HubInspectParams): Promise<string> {
 		const type = params.repo_type;
 		const operations = normalizeOperations(params.operations);
 		const hasDatasetOperation = operations.some(
@@ -105,10 +106,10 @@ export class HubInspectTool {
 		// If caller constrained the type, do only that
 		if (type === 'model') {
 			if (hasDatasetOperation) return operationMismatch(repoId, 'model', operations);
-			return (await this.modelDetail.getDetails(repoId, includeReadme)).formatted;
+			return (await this.modelDetail.getDetails(repoId)).formatted;
 		}
 		if (type === 'dataset') {
-			return await this.getDatasetDetails(repoId, params, includeReadme, operations);
+			return await this.getDatasetDetails(repoId, params, operations);
 		}
 		if (type === 'space') {
 			if (hasDatasetOperation) return operationMismatch(repoId, 'space', operations);
@@ -116,21 +117,21 @@ export class HubInspectTool {
 		}
 
 		if (hasDatasetOperation) {
-			return await this.getDatasetDetails(repoId, params, includeReadme, operations);
+			return await this.getDatasetDetails(repoId, params, operations);
 		}
 
 		// Auto-detect: attempt all three and aggregate. The same id may exist for multiple types.
 		const matches: string[] = [];
 
 		try {
-			const r = await this.modelDetail.getDetails(repoId, includeReadme);
+			const r = await this.modelDetail.getDetails(repoId);
 			matches.push(`**Type: Model**\n\n${r.formatted}`);
 		} catch {
 			/* not a model */
 		}
 
 		try {
-			const r = await this.datasetDetail.getDetails(repoId, includeReadme);
+			const r = await this.datasetDetail.getDetails(repoId);
 			matches.push(`**Type: Dataset**\n\n${r.formatted}`);
 		} catch {
 			/* not a dataset */
@@ -153,12 +154,11 @@ export class HubInspectTool {
 	private async getDatasetDetails(
 		repoId: string,
 		params: HubInspectParams,
-		includeReadme: boolean,
 		operations: HubInspectOperation[]
 	): Promise<string> {
 		const sections: string[] = [];
 		if (operations.includes('overview')) {
-			const overview = (await this.datasetDetail.getDetails(repoId, includeReadme)).formatted;
+			const overview = (await this.datasetDetail.getDetails(repoId)).formatted;
 			sections.push(`${overview}\n\n${datasetDrillDownHint()}`);
 		}
 		if (operations.includes('dataset_structure')) {

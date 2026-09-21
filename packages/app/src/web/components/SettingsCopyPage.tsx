@@ -596,70 +596,58 @@ const CLIENT_CONFIGS: ClientConfig[] = [
 		],
 	},
 	{
-		id: 'gemini-cli',
-		name: 'Gemini CLI',
+		id: 'fx',
+		name: 'fx',
 		icon: (
 			<svg
 				className="h-5 w-5"
 				width="1em"
 				height="1em"
-				viewBox="0 0 548 548"
+				viewBox="166.241 0 155.861 156"
 				fill="none"
 				xmlns="http://www.w3.org/2000/svg"
+				aria-hidden="true"
 			>
-				<g clipPath="url(#clip0_172_122)">
-					<rect width="548" height="548" rx="100" fill="#1E1E2E" />
-					<path
-						d="M449.292 0.0078125C503.925 0.699564 548 45.2028 548 100V448L547.992 449.292C547.3 503.925 502.797 548 448 548H100C44.7715 548 0 503.228 0 448V100C4.09157e-06 45.2032 44.0744 0.700077 98.707 0.0078125L100 0H448L449.292 0.0078125ZM100 32C62.4446 32 32 62.4446 32 100V448C32 485.555 62.4446 516 100 516H448C485.555 516 516 485.555 516 448V100C516 62.4446 485.555 32 448 32H100ZM383.091 238.818V322.455L165.637 427V366.364L343.782 280.637L165.637 194.909V134.273L383.091 238.818Z"
-						fill="url(#paint0_linear_172_122)"
-					/>
-					<path
-						d="M449.292 0.0078125C503.925 0.699564 548 45.2028 548 100V448L547.992 449.292C547.3 503.925 502.797 548 448 548H100C44.7715 548 0 503.228 0 448V100C4.09157e-06 45.2032 44.0744 0.700077 98.707 0.0078125L100 0H448L449.292 0.0078125ZM100 32C62.4446 32 32 62.4446 32 100V448C32 485.555 62.4446 516 100 516H448C485.555 516 516 485.555 516 448V100C516 62.4446 485.555 32 448 32H100ZM383.091 238.818V322.455L165.637 427V366.364L343.782 280.637L165.637 194.909V134.273L383.091 238.818Z"
-						fill="url(#paint1_linear_172_122)"
-					/>
-				</g>
-				<defs>
-					<linearGradient id="paint0_linear_172_122" x1="128" y1="276" x2="421" y2="276" gradientUnits="userSpaceOnUse">
-						<stop offset="0.0196292" stopColor="#406AFB" />
-						<stop offset="0.226827" stopColor="#078EFB" />
-						<stop offset="0.418757" stopColor="#939AFF" />
-						<stop offset="0.584515" stopColor="#D698FC" />
-						<stop offset="0.774264" stopColor="#FA6178" />
-						<stop offset="0.97928" stopColor="#F2554F" />
-					</linearGradient>
-					<linearGradient id="paint1_linear_172_122" x1="0" y1="276" x2="548" y2="276" gradientUnits="userSpaceOnUse">
-						<stop stopColor="#217BFE" />
-						<stop offset="0.335283" stopColor="#078EFB" />
-						<stop offset="0.7" stopColor="#AC87EB" />
-						<stop offset="1" stopColor="#EE4D5D" />
-					</linearGradient>
-					<clipPath id="clip0_172_122">
-						<rect width="548" height="548" rx="100" fill="white" />
-					</clipPath>
-				</defs>
+				<path
+					d="M237.89 0C243.18 0 249.38 1.42 253.03 3.07L255.09 4.01L250.08 18.63L247.68 17.75C244.9 16.72 241.94 15.8 238.49 15.8C234.98 15.8 232.79 16.56 231.08 18.32C229.23 20.23 227.63 23.64 226.23 29.76L225.14 34.85H241.67L260.43 34.95H260.69L260.84 35.17L278.85 61.63L296.74 34.95H320.87L291.68 76.74L322.1 119.75H299.33L299.18 119.55L241.14 40.48L239.35 49.4H222.07L205.69 127.21C203.93 135.71 201.19 142.84 196.78 147.87C192.27 153.01 186.2 155.75 178.34 155.75C174.18 155.75 170.75 155.11 167.91 154.11L166.24 153.52V137.18L166.9 137.4L169.53 138.28C172.18 139.16 174.41 139.8 177.14 139.8C178.53 139.8 179.7 139.53 180.73 138.98C181.76 138.43 182.68 137.6 183.52 136.44C185.3 133.99 186.72 130.13 187.9 124.67L203.76 49.4H189.87L191.76 39.44L192.04 39.35L206.82 34.47L208.15 28.64C210.52 18.21 213.77 10.94 218.71 6.32C223.74 1.61 230.13 0 237.89 0ZM273.99 99.08L260.07 120.25H234.54L261 82.02L273.99 99.08Z"
+					fill="currentColor"
+				/>
 			</svg>
 		),
-		//		description: 'Use with Gemini CLI in your terminal',
 		instructions: [
 			{
 				type: 'text',
-				content: 'Enter the command below to install in Gemini CLI:',
+				content: 'Install or upgrade to fx 0.0.6 or later:',
 			},
 			{
 				type: 'code',
-				content: 'gemini mcp add -t http huggingface https://huggingface.co/mcp?login',
+				content: 'curl -fsSL https://fx.sh/setup.sh | bash',
 				copyable: true,
 			},
 			{
 				type: 'text',
-				content: 'Then start Gemini CLI and follow the instructions to complete authentication.',
+				content: 'Add the MCP Server. fx saves it to your config and reloads MCP automatically:',
+			},
+			{
+				type: 'code',
+				content: '/mcp add --transport http huggingface https://huggingface.co/mcp?login',
+				copyable: true,
+			},
+			{
+				type: 'text',
+				content: 'Then sign in with Hugging Face using OAuth:',
+			},
+			{
+				type: 'code',
+				content: '/mcp auth huggingface --open',
+				copyable: true,
 			},
 		],
 		actionButtons: [
 			{
 				type: 'external',
-				label: 'Gemini CLI Docs',
-				url: 'https://geminicli.com/docs/',
+				label: 'fx MCP Docs',
+				url: 'https://fx.sh/docs/capabilities/mcp',
 				variant: 'outline',
 			},
 		],

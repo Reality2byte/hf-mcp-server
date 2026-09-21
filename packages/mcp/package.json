@@ -1,6 +1,6 @@
 {
 	"name": "@llmindset/hf-mcp",
-	"version": "0.4.6",
+	"version": "0.4.20",
 	"type": "module",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
@@ -19,7 +19,7 @@
 		}
 	},
 	"scripts": {
-		"build": "tsc --declaration",
+		"build": "rimraf dist && tsc --declaration",
 		"test": "vitest run",
 		"dev": "tsc --watch",
 		"typecheck": "tsc --noEmit",
@@ -33,7 +33,7 @@
 		"mime-types": "^3.0.2",
 		"picomatch": "^4.0.5",
 		"shell-quote": "^1.10.0",
-		"zod": "^4.4.3"
+		"zod": "4.5.4"
 	},
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",

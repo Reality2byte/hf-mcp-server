@@ -8,6 +8,7 @@ import { useSessionCache } from '../hooks/useSessionCache';
 import type { TransportMetricsResponse } from '../../shared/transport-metrics.js';
 import { MetricTile, SectionHeader } from './DashboardPrimitives';
 import { formatCompactNumber } from '../lib/dashboard-utils';
+import { HfFsLiveMetricsCard } from './HfFsLiveMetricsCard';
 
 type SessionData = {
 	id: string;
@@ -193,6 +194,7 @@ export function StdioTransportMetrics({ metrics }: StdioTransportMetricsProps) {
 					tone="amber"
 				/>
 			</div>
+			{metrics.hfFsMetrics ? <HfFsLiveMetricsCard metrics={metrics.hfFsMetrics} /> : null}
 			<Card>
 				<CardContent>
 					<SectionHeader

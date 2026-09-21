@@ -47,7 +47,9 @@ export const HF_FS_WRITE_TOOL_CONFIG = {
 	schema: createHfFsWriteSchema(),
 	outputSchema: createHfFsWriteOutputSchema(),
 	annotations: {
+		title: 'Hugging Face File Writes',
 		destructiveHint: true,
+		idempotentHint: false,
 		readOnlyHint: false,
 		openWorldHint: true,
 	},

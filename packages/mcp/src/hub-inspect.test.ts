@@ -13,7 +13,8 @@ describe('HUB_REPO_DETAILS_TOOL_CONFIG', () => {
 			limit: 5,
 		});
 
-		expect(parsed.include_readme).toBe(false);
+		expect(HUB_REPO_DETAILS_TOOL_CONFIG.schema.shape).not.toHaveProperty('include_readme');
+		expect(parsed).not.toHaveProperty('include_readme');
 		expect(parsed.operations).toEqual(['dataset_structure', 'dataset_preview']);
 	});
 

@@ -166,7 +166,9 @@ export class HfDatasetLogger {
 					? 'sessions'
 					: this.logType === 'Gradio'
 						? 'gradio'
-						: 'logs';
+						: this.logType === 'Skill'
+							? 'skills'
+							: 'logs';
 		const pathInRepo = `${folder}/${dateFolder}/${filename}`;
 
 		console.log(`[HF Dataset ${this.logType}] Uploading to path: ${pathInRepo}`);
@@ -318,8 +320,8 @@ function safeStringifyLog(log: LogEntry, sessionId: string, logType: string): st
 	if (!log) return ''; // Skip null/undefined logs
 	log = redactSensitiveLogValues(log) as LogEntry;
 
-	if (logType === 'Query' || logType === 'System' || logType === 'Gradio') {
-		// For query, system, and gradio logs, preserve pino's time field but strip other pino metadata
+	if (logType === 'Query' || logType === 'System' || logType === 'Gradio' || logType === 'Skill') {
+		// For structured event logs, preserve pino's time field but strip other pino metadata
 		// Pino adds level, time, pid, hostname, msg - we want to keep time but strip the rest
 		const { level: _level, pid: _pid, hostname: _hostname, msg: _msg, ...logEntry } = log;
 

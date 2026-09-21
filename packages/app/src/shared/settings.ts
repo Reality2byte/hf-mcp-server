@@ -1,7 +1,7 @@
 import { ALL_BUILTIN_TOOL_IDS, HF_FS_TOOL_ID, HUB_REPO_DETAILS_TOOL_ID, REPO_SEARCH_TOOL_ID } from '@llmindset/hf-mcp';
 
 // Define the settings types
-export interface SpaceTool {
+interface SpaceTool {
 	_id: string;
 	name: string;
 	subdomain: string;
