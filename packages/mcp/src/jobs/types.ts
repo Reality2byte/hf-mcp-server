@@ -318,7 +318,8 @@ export type ScheduledUvArgs = z.infer<typeof scheduledUvArgsSchema>;
 export type ScheduledPsArgs = z.infer<typeof scheduledPsArgsSchema>;
 export type ScheduledJobArgs = z.infer<typeof scheduledJobArgsSchema>;
 
-export const updateLabelsArgsSchema = cancelArgsSchema.extend({
+export const updateLabelsArgsSchema = commonArgsSchema.extend({
+	job_id: z.string().describe('Job ID whose labels to update'),
 	labels: jobLabelsSchema.describe('Replace all job labels. An empty object clears all labels.'),
 });
 export const scheduledUpdateLabelsArgsSchema = scheduledJobArgsSchema.extend({

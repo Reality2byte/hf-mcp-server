@@ -42,6 +42,15 @@ function mockFetch(payload: unknown) {
 }
 
 describe('label updates and filters', () => {
+	it('describes the update target without inheriting cancel help', async () => {
+		const tool = new HfJobsTool('token', true);
+		const help = await tool.execute({ operation: 'update-labels', args: { help: true } });
+		expect(help.formatted).toContain('Job ID whose labels to update');
+		expect(help.formatted).not.toContain('Job ID to cancel');
+		const cancelHelp = await tool.execute({ operation: 'cancel', args: { help: true } });
+		expect(cancelHelp.formatted).toContain('Job ID to cancel');
+	});
+
 	it('validates labels for every schema and requires replacement labels', () => {
 		for (const schema of [
 			psArgsSchema,
