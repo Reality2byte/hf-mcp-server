@@ -14,6 +14,7 @@ describe('Jobs Formatters', () => {
 			const jobs: JobInfo[] = [
 				{
 					id: 'job123',
+					labels: { name: 'eval-baseline' },
 					createdAt: '2025-01-20T10:00:00Z',
 					dockerImage: 'python:3.12',
 					command: ['python', 'script.py'],
@@ -28,6 +29,8 @@ describe('Jobs Formatters', () => {
 
 			// Should be a markdown table
 			expect(result).toContain('| JOB ID');
+			expect(result).toContain('| NAME');
+			expect(result).toContain('eval-baseline');
 			expect(result).toContain('| IMAGE/SPACE');
 			expect(result).toContain('| COMMAND');
 			expect(result).toContain('| CREATED');
@@ -123,6 +126,7 @@ describe('Jobs Formatters', () => {
 
 		it('should format a scheduled job as markdown table', () => {
 			const jobSpec: JobSpec = {
+				labels: { name: 'daily-eval' },
 				dockerImage: 'python:3.12',
 				command: ['python', 'backup.py'],
 				flavor: 'cpu-basic',
@@ -142,6 +146,8 @@ describe('Jobs Formatters', () => {
 			];
 
 			const result = formatScheduledJobsTable(jobs);
+			expect(result).toContain('| NAME');
+			expect(result).toContain('daily-eval');
 
 			// Should be a markdown table
 			expect(result).toContain('| ID');

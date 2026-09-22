@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { JobsApiClient } from './api-client.js';
+import { updateLabelsCommand, scheduledUpdateLabelsCommand } from './commands/update-labels.js';
 import { runCommand, uvCommand } from './commands/run.js';
 import { psCommand } from './commands/ps.js';
 import { logsCommand } from './commands/logs.js';
@@ -31,6 +32,8 @@ import type {
 	LogsArgs,
 	InspectArgs,
 	CancelArgs,
+	UpdateLabelsArgs,
+	ScheduledUpdateLabelsArgs,
 	ScheduledRunArgs,
 	ScheduledUvArgs,
 	ScheduledPsArgs,
@@ -51,6 +54,8 @@ import {
 	logsArgsSchema,
 	inspectArgsSchema,
 	cancelArgsSchema,
+	updateLabelsArgsSchema,
+	scheduledUpdateLabelsArgsSchema,
 	scheduledRunArgsSchema,
 	scheduledUvArgsSchema,
 	scheduledPsArgsSchema,
@@ -61,6 +66,8 @@ const OPERATION_NAMES = HF_JOBS_OPERATIONS;
 type OperationName = HfJobsOperation;
 
 const OPERATION_EXAMPLES: Partial<Record<OperationName, string>> = {
+	'update-labels': `{"operation":"update-labels","args":{"job_id":"your-job-id","labels":{"team":"ml"}}}`,
+	'scheduled update-labels': `{"operation":"scheduled update-labels","args":{"scheduled_job_id":"your-job-id","labels":{}}}`,
 	run: `{
   "operation": "run",
   "args": {
@@ -132,6 +139,8 @@ const OPERATION_SCHEMAS: Record<OperationName, z.ZodSchema> = {
 	logs: logsArgsSchema,
 	inspect: inspectArgsSchema,
 	cancel: cancelArgsSchema,
+	'update-labels': updateLabelsArgsSchema,
+	'scheduled update-labels': scheduledUpdateLabelsArgsSchema,
 	'scheduled run': scheduledRunArgsSchema,
 	'scheduled uv': scheduledUvArgsSchema,
 	'scheduled ps': scheduledPsArgsSchema,
@@ -156,8 +165,8 @@ const HARDWARE_FLAVORS_SECTION = [
 	.join('\n');
 
 const UNKNOWN_OPERATION_INSTRUCTIONS = `Available operations:
-- run, uv, ps, logs, inspect, cancel
-- scheduled run, scheduled uv, scheduled ps, scheduled inspect, scheduled delete, scheduled suspend, scheduled resume
+- run, uv, ps, logs, inspect, cancel, update-labels
+- scheduled run, scheduled uv, scheduled ps, scheduled inspect, scheduled delete, scheduled suspend, scheduled resume, scheduled update-labels
 
 Call this tool with no operation for full usage instructions.`;
 
@@ -307,19 +316,21 @@ Manage compute jobs on Hugging Face infrastructure.
 ### Job Management
 - **run** - Run a job with a Docker image
 - **uv** - Run a Python script with UV (inline dependencies)
-- **ps** - List jobs
+- **ps** - List jobs matching all supplied labels
 - **logs** - Fetch job logs
 - **inspect** - Get detailed job information
 - **cancel** - Cancel a running job
+- **update-labels** - Replace all labels (empty labels object clears all)
 
 ### Scheduled Jobs
 - **scheduled run** - Create a scheduled job
 - **scheduled uv** - Create a scheduled UV job
-- **scheduled ps** - List scheduled jobs
+- **scheduled ps** - List scheduled jobs matching all supplied labels
 - **scheduled inspect** - Get scheduled job details
 - **scheduled delete** - Delete a scheduled job
 - **scheduled suspend** - Pause a scheduled job
 - **scheduled resume** - Resume a suspended job
+- **scheduled update-labels** - Replace all scheduled job labels (empty labels object clears all)
 
 ## Examples
 
@@ -411,6 +422,11 @@ Call this tool with:
 
 ## Tips
 
+- Submissions accept \`name\` and \`labels\` (string key/value pairs). \`name\` is an alias for \`labels.name\`; do not supply both. Names are not unique identifiers: continue using job IDs for operations.
+- Label keys and values allow up to 100 alphanumeric, dash, or underscore characters.
+- Filter ps/scheduled ps with \`labels: {"name": "my-job"}\`. All supplied labels must match.
+- update-labels/scheduled update-labels replace all user labels, including the name; omitted labels are removed and \`{}\` clears them.
+
 - The uv-scripts organisation contains examples for common tasks. hub_repo_search {"repo_types":["dataset"],"author":"uv-scripts"}
 - Jobs default to non-detached mode (tail logs for up to ${DEFAULT_LOG_WAIT_SECONDS}s or until completion). Set \`detach: true\` to return immediately.
 - Prefer array commands to avoid shell parsing surprises
@@ -426,7 +442,7 @@ export const HF_JOBS_TOOL_CONFIG = {
 	title: 'Hugging Face Jobs',
 	description:
 		'Remote compute for Hugging Face workflows. Run Python/UV or Docker jobs to deeply analyze Hub datasets, repos, traces, models, and large files; compute trends/statistics; run batch inference/evaluation; or perform long-running work with installed libraries. ' +
-		'Use for dataset/repo analysis prompts when local chat inspection is insufficient. Includes submit, logs, inspect, cancel, schedule, and volume mounting. ' +
+		'Use for dataset/repo analysis prompts when local chat inspection is insufficient. Includes submit, logs, inspect, cancel, schedule, labels/names, and volume mounting. ' +
 		'Minimal run: {"operation":"run","args":{"image":"python:3.12","command":["python","-c","print(123)"]}}. ' +
 		'Command arrays are literal argv; strings tokenize quotes and escaping, not shell execution. ' +
 		'For pipes, chaining, redirections, or variable expansion, explicitly use ["/bin/sh", "-lc", "..."] only if the image provides that shell. ' +
@@ -552,6 +568,16 @@ export class HfJobsTool {
 			let result: JobsCommandResult;
 
 			switch (operation) {
+				case 'update-labels':
+					result = await updateLabelsCommand(parsedArgs as UpdateLabelsArgs, this.client, this.hfToken);
+					break;
+				case 'scheduled update-labels':
+					result = await scheduledUpdateLabelsCommand(
+						parsedArgs as ScheduledUpdateLabelsArgs,
+						this.client,
+						this.hfToken
+					);
+					break;
 				case 'run':
 					result = await runCommand(parsedArgs as RunArgs, this.client, this.hfToken, options?.onProgress);
 					break;

@@ -66,11 +66,13 @@ export class JobsApiClient extends HfApiCall {
 	 * List all jobs for a namespace
 	 * GET /api/jobs/{namespace}
 	 */
-	async listJobs(namespace?: string): Promise<JobInfo[]> {
+	async listJobs(namespace?: string, labels?: Record<string, string>): Promise<JobInfo[]> {
 		const ns = await this.getNamespace(namespace);
 		const url = `https://huggingface.co/api/jobs/${ns}`;
 
-		return this.fetchFromApi<JobInfo[]>(url);
+		const params = new URLSearchParams();
+		for (const [key, value] of Object.entries(labels ?? {})) params.append('label', `${key}=${value}`);
+		return this.fetchFromApi<JobInfo[]>(params.size ? `${url}?${params}` : url);
 	}
 
 	/**
@@ -126,11 +128,21 @@ export class JobsApiClient extends HfApiCall {
 	 * List all scheduled jobs
 	 * GET /api/scheduled-jobs/{namespace}
 	 */
-	async listScheduledJobs(namespace?: string): Promise<ScheduledJobInfo[]> {
+	async listScheduledJobs(namespace?: string, labels?: Record<string, string>): Promise<ScheduledJobInfo[]> {
 		const ns = await this.getNamespace(namespace);
 		const url = `https://huggingface.co/api/scheduled-jobs/${ns}`;
 
-		return this.fetchFromApi<ScheduledJobInfo[]>(url);
+		const entries = Object.entries(labels ?? {});
+		const params = new URLSearchParams();
+		const first = entries[0];
+		if (first) params.append('label', `${first[0]}=${first[1]}`);
+		const jobs = await this.fetchFromApi<ScheduledJobInfo[]>(params.size ? `${url}?${params}` : url);
+		return jobs.filter((job) =>
+			entries.every(
+				([key, value]) =>
+					Object.prototype.hasOwnProperty.call(job.jobSpec.labels ?? {}, key) && job.jobSpec.labels?.[key] === value
+			)
+		);
 	}
 
 	/**
@@ -179,6 +191,29 @@ export class JobsApiClient extends HfApiCall {
 
 		await this.fetchFromApi<void>(url, {
 			method: 'POST',
+		});
+	}
+	/** Replace all labels; an empty object clears them. */
+	async updateJobLabels(jobId: string, labels: Record<string, string>, namespace?: string): Promise<JobInfo> {
+		const ns = await this.getNamespace(namespace);
+		return this.fetchFromApi<JobInfo>(`https://huggingface.co/api/jobs/${ns}/${jobId}/labels`, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ labels }),
+		});
+	}
+
+	/** Replace all scheduled job labels; an empty object clears them. */
+	async updateScheduledJobLabels(
+		jobId: string,
+		labels: Record<string, string>,
+		namespace?: string
+	): Promise<ScheduledJobInfo> {
+		const ns = await this.getNamespace(namespace);
+		return this.fetchFromApi<ScheduledJobInfo>(`https://huggingface.co/api/scheduled-jobs/${ns}/${jobId}/labels`, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ labels }),
 		});
 	}
 }

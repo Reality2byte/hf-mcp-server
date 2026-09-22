@@ -32,6 +32,8 @@ export async function runCommand(
 		hfToken: token,
 		volumes: args.volumes,
 		resourceGroupId: args.resource_group_id,
+		name: args.name,
+		labels: args.labels,
 	});
 
 	// Submit job
@@ -41,6 +43,7 @@ export async function runCommand(
 	const jobUrl = `https://huggingface.co/jobs/${job.owner.name}/${job.id}`;
 	const sensitiveValues = collectSensitiveValues(jobSpec, [token]);
 	const jobOutput = toHfJobOutput(job, jobUrl, sensitiveValues);
+	const nameLine = jobOutput.labels?.name ? `**Name:** ${jobOutput.labels.name}\n` : '';
 
 	// If detached, return immediately
 	if (args.detach) {
@@ -48,7 +51,7 @@ export async function runCommand(
 			formatted: `Job started successfully!
 
 **Job ID:** ${job.id}
-**Status:** ${job.status.stage}
+${nameLine}**Status:** ${job.status.stage}
 **View at:** ${jobUrl}
 
 	To check logs, call this tool with \`{"operation": "logs", "args": {"job_id": "${job.id}"}}\`
@@ -73,7 +76,9 @@ export async function runCommand(
 		const logsError = error instanceof Error ? error.message : String(error);
 		return {
 			formatted:
-				`Job started: ${job.id}\n\n` + `Could not collect logs: ${logsError}\n\n` + `View job details: ${jobUrl}`,
+				`Job started: ${job.id}\n${nameLine}\n` +
+				`Could not collect logs: ${logsError}\n\n` +
+				`View job details: ${jobUrl}`,
 			outcome: {
 				kind: 'job',
 				job: jobOutput,
@@ -85,7 +90,7 @@ export async function runCommand(
 	}
 
 	const redactedLogs = logResult.logs.map((line) => redactSensitiveText(line, sensitiveValues));
-	let response = `Job started: ${job.id}\n\n`;
+	let response = `Job started: ${job.id}\n${nameLine}\n`;
 
 	if (redactedLogs.length > 0) {
 		response += `**Logs (last ${DEFAULT_MAX_LOG_LINES} lines):**\n\`\`\`\n`;
@@ -144,6 +149,8 @@ export async function uvCommand(
 		detach: args.detach,
 		namespace: args.namespace,
 		resource_group_id: args.resource_group_id,
+		name: args.name,
+		labels: args.labels,
 		volumes: args.volumes,
 	};
 
