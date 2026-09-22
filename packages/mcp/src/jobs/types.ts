@@ -160,7 +160,27 @@ const commonArgsSchema = z.object({
 	namespace: z.string().optional().describe('Target namespace (username or organization). Defaults to current user.'),
 });
 
-const submissionArgsSchema = commonArgsSchema.extend({
+/** Label keys and values follow the Hub Jobs API constraints. */
+export const jobLabelSchema = z
+	.string()
+	.max(100)
+	.regex(/^[a-zA-Z0-9._-]*$/);
+export const jobLabelsSchema = z.record(jobLabelSchema, jobLabelSchema);
+
+export const jobSubmissionLabelsSchema = z
+	.object({
+		name: jobLabelSchema.optional().describe('Job name, an alias for labels.name. Do not provide both.'),
+		labels: jobLabelsSchema
+			.optional()
+			.describe('Job labels. Keys and values: max 100 characters; alphanumeric, dot, dash, underscore.'),
+	})
+	.refine((args) => args.name === undefined || !Object.prototype.hasOwnProperty.call(args.labels ?? {}, 'name'), {
+		message: '`name` and the `name` key in `labels` cannot both be provided.',
+		path: ['name'],
+	});
+
+const submissionArgsSchema = jobSubmissionLabelsSchema.safeExtend({
+	...commonArgsSchema.shape,
 	resource_group_id: z
 		.string()
 		.optional()
@@ -168,7 +188,7 @@ const submissionArgsSchema = commonArgsSchema.extend({
 });
 
 // Run command args
-export const runArgsSchema = submissionArgsSchema.extend({
+export const runArgsSchema = submissionArgsSchema.safeExtend({
 	image: z
 		.string()
 		.describe('Docker image or HF Space URL (e.g., "python:3.12" or "hf.co/spaces/user/space")')
@@ -209,7 +229,7 @@ export const runArgsSchema = submissionArgsSchema.extend({
 });
 
 // UV command args
-export const uvArgsSchema = submissionArgsSchema.extend({
+export const uvArgsSchema = submissionArgsSchema.safeExtend({
 	script: z
 		.string()
 		.describe('Python script: local file path, URL, or inline code. UV will handle dependencies automatically.'),
@@ -240,6 +260,7 @@ export const uvArgsSchema = submissionArgsSchema.extend({
 
 // PS command args
 export const psArgsSchema = commonArgsSchema.extend({
+	labels: jobLabelsSchema.optional().describe('Match all supplied labels.'),
 	all: z.boolean().optional().default(false).describe('Show all jobs (default: only running)'),
 	status: z.string().optional().describe('Filter by status ("RUNNING", "COMPLETED", "CANCELED", "ERROR", "DELETED")'),
 });
@@ -261,19 +282,20 @@ export const cancelArgsSchema = commonArgsSchema.extend({
 });
 
 // Scheduled run args
-export const scheduledRunArgsSchema = runArgsSchema.extend({
+export const scheduledRunArgsSchema = runArgsSchema.safeExtend({
 	schedule: z.string().describe('Schedule: cron expression or shorthand (@hourly, @daily, @weekly, @monthly, @yearly)'),
 	suspend: z.boolean().optional().default(false).describe('Create in suspended state'),
 });
 
 // Scheduled UV args
-export const scheduledUvArgsSchema = uvArgsSchema.extend({
+export const scheduledUvArgsSchema = uvArgsSchema.safeExtend({
 	schedule: z.string().describe('Schedule: cron expression or shorthand'),
 	suspend: z.boolean().optional().default(false).describe('Create in suspended state'),
 });
 
 // Scheduled PS args
 export const scheduledPsArgsSchema = commonArgsSchema.extend({
+	labels: jobLabelsSchema.optional().describe('Match all supplied labels.'),
 	all: z.boolean().optional().default(false).describe('Show all scheduled jobs (default: hide suspended)'),
 });
 
@@ -295,3 +317,12 @@ export type ScheduledRunArgs = z.infer<typeof scheduledRunArgsSchema>;
 export type ScheduledUvArgs = z.infer<typeof scheduledUvArgsSchema>;
 export type ScheduledPsArgs = z.infer<typeof scheduledPsArgsSchema>;
 export type ScheduledJobArgs = z.infer<typeof scheduledJobArgsSchema>;
+
+export const updateLabelsArgsSchema = cancelArgsSchema.extend({
+	labels: jobLabelsSchema.describe('Replace all job labels. An empty object clears all labels.'),
+});
+export const scheduledUpdateLabelsArgsSchema = scheduledJobArgsSchema.extend({
+	labels: jobLabelsSchema.describe('Replace all scheduled job labels. An empty object clears all labels.'),
+});
+export type UpdateLabelsArgs = z.infer<typeof updateLabelsArgsSchema>;
+export type ScheduledUpdateLabelsArgs = z.infer<typeof scheduledUpdateLabelsArgsSchema>;

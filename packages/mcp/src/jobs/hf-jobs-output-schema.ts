@@ -7,6 +7,8 @@ export const HF_JOBS_OPERATIONS = [
 	'logs',
 	'inspect',
 	'cancel',
+	'update-labels',
+	'scheduled update-labels',
 	'scheduled run',
 	'scheduled uv',
 	'scheduled ps',

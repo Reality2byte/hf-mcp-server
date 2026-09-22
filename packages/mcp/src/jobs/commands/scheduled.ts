@@ -34,6 +34,8 @@ export async function scheduledRunCommand(
 		hfToken: token,
 		volumes: args.volumes,
 		resourceGroupId: args.resource_group_id,
+		name: args.name,
+		labels: args.labels,
 	});
 
 	// Create scheduled job spec
@@ -47,10 +49,15 @@ export async function scheduledRunCommand(
 	const scheduledJob = await client.createScheduledJob(scheduledSpec, args.namespace);
 	const sensitiveValues = collectSensitiveValues(jobSpec, [token]);
 
+	const scheduledJobOutput = toHfScheduledJobOutput(scheduledJob, sensitiveValues);
+	const nameLine = scheduledJobOutput.job_spec.labels?.name
+		? `**Name:** ${scheduledJobOutput.job_spec.labels.name}\n`
+		: '';
+
 	const message = `✓ Scheduled job created successfully!
 
 **Scheduled Job ID:** ${scheduledJob.id}
-**Schedule:** ${scheduledJob.schedule}
+${nameLine}**Schedule:** ${scheduledJob.schedule}
 **Suspended:** ${scheduledJob.suspend ? 'Yes' : 'No'}
 **Next Run:** ${scheduledJob.nextRun || 'N/A'}
 
@@ -60,7 +67,7 @@ export async function scheduledRunCommand(
 		formatted: message,
 		outcome: {
 			kind: 'scheduled_job',
-			scheduled_job: toHfScheduledJobOutput(scheduledJob, sensitiveValues),
+			scheduled_job: scheduledJobOutput,
 		},
 		totalResults: 1,
 		resultsShared: 1,
@@ -95,6 +102,8 @@ export async function scheduledUvCommand(
 		detach: args.detach,
 		namespace: args.namespace,
 		resource_group_id: args.resource_group_id,
+		name: args.name,
+		labels: args.labels,
 		volumes: args.volumes,
 	};
 
@@ -107,7 +116,7 @@ export async function scheduledUvCommand(
  */
 export async function scheduledPsCommand(args: ScheduledPsArgs, client: JobsApiClient): Promise<JobsCommandResult> {
 	// Fetch all scheduled jobs
-	const allJobs = await client.listScheduledJobs(args.namespace);
+	const allJobs = await client.listScheduledJobs(args.namespace, args.labels);
 
 	// Filter jobs
 	let jobs = allJobs;

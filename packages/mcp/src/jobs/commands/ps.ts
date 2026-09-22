@@ -9,7 +9,7 @@ import { toHfJobOutput, type JobsCommandResult } from '../jobs-output.js';
  */
 export async function psCommand(args: PsArgs, client: JobsApiClient): Promise<JobsCommandResult> {
 	// Fetch all jobs from API
-	const allJobs = await client.listJobs(args.namespace);
+	const allJobs = await client.listJobs(args.namespace, args.labels);
 
 	// Filter jobs
 	let jobs = allJobs;

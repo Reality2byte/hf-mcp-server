@@ -64,6 +64,7 @@ export function formatJobsTable(jobs: JobInfo[]): string {
 	// Define column widths
 	const colWidths = {
 		id: idColumnWidth,
+		name: 24,
 		image: 20,
 		command: 30,
 		created: 19,
@@ -71,18 +72,19 @@ export function formatJobsTable(jobs: JobInfo[]): string {
 	};
 
 	// Build header
-	const header = `| ${'JOB ID'.padEnd(colWidths.id)} | ${'IMAGE/SPACE'.padEnd(colWidths.image)} | ${'COMMAND'.padEnd(colWidths.command)} | ${'CREATED'.padEnd(colWidths.created)} | ${'STATUS'.padEnd(colWidths.status)} |`;
-	const separator = `|${'-'.repeat(colWidths.id + 2)}|${'-'.repeat(colWidths.image + 2)}|${'-'.repeat(colWidths.command + 2)}|${'-'.repeat(colWidths.created + 2)}|${'-'.repeat(colWidths.status + 2)}|`;
+	const header = `| ${'JOB ID'.padEnd(colWidths.id)} | ${'NAME'.padEnd(colWidths.name)} | ${'IMAGE/SPACE'.padEnd(colWidths.image)} | ${'COMMAND'.padEnd(colWidths.command)} | ${'CREATED'.padEnd(colWidths.created)} | ${'STATUS'.padEnd(colWidths.status)} |`;
+	const separator = `|${'-'.repeat(colWidths.id + 2)}|${'-'.repeat(colWidths.name + 2)}|${'-'.repeat(colWidths.image + 2)}|${'-'.repeat(colWidths.command + 2)}|${'-'.repeat(colWidths.created + 2)}|${'-'.repeat(colWidths.status + 2)}|`;
 
 	// Build rows
 	const rows = jobs.map((job) => {
 		const id = job.id; // Never truncate IDs!
+		const name = truncate(job.labels?.name ?? 'N/A', colWidths.name);
 		const image = truncate(getImageOrSpace(job), colWidths.image);
 		const command = truncate(formatCommand(job.command), colWidths.command);
 		const created = truncate(formatDate(job.createdAt), colWidths.created);
 		const status = truncate(job.status.stage, colWidths.status);
 
-		return `| ${id.padEnd(colWidths.id)} | ${image.padEnd(colWidths.image)} | ${command.padEnd(colWidths.command)} | ${created.padEnd(colWidths.created)} | ${status.padEnd(colWidths.status)} |`;
+		return `| ${id.padEnd(colWidths.id)} | ${name.padEnd(colWidths.name)} | ${image.padEnd(colWidths.image)} | ${command.padEnd(colWidths.command)} | ${created.padEnd(colWidths.created)} | ${status.padEnd(colWidths.status)} |`;
 	});
 
 	return [header, separator, ...rows].join('\n');
@@ -103,6 +105,7 @@ export function formatScheduledJobsTable(jobs: ScheduledJobInfo[]): string {
 	// Define column widths
 	const colWidths = {
 		id: idColumnWidth,
+		name: 24,
 		schedule: 12,
 		image: 18,
 		command: 25,
@@ -112,12 +115,13 @@ export function formatScheduledJobsTable(jobs: ScheduledJobInfo[]): string {
 	};
 
 	// Build header
-	const header = `| ${'ID'.padEnd(colWidths.id)} | ${'SCHEDULE'.padEnd(colWidths.schedule)} | ${'IMAGE/SPACE'.padEnd(colWidths.image)} | ${'COMMAND'.padEnd(colWidths.command)} | ${'LAST RUN'.padEnd(colWidths.lastRun)} | ${'NEXT RUN'.padEnd(colWidths.nextRun)} | ${'SUSPENDED'.padEnd(colWidths.suspend)} |`;
-	const separator = `|${'-'.repeat(colWidths.id + 2)}|${'-'.repeat(colWidths.schedule + 2)}|${'-'.repeat(colWidths.image + 2)}|${'-'.repeat(colWidths.command + 2)}|${'-'.repeat(colWidths.lastRun + 2)}|${'-'.repeat(colWidths.nextRun + 2)}|${'-'.repeat(colWidths.suspend + 2)}|`;
+	const header = `| ${'ID'.padEnd(colWidths.id)} | ${'NAME'.padEnd(colWidths.name)} | ${'SCHEDULE'.padEnd(colWidths.schedule)} | ${'IMAGE/SPACE'.padEnd(colWidths.image)} | ${'COMMAND'.padEnd(colWidths.command)} | ${'LAST RUN'.padEnd(colWidths.lastRun)} | ${'NEXT RUN'.padEnd(colWidths.nextRun)} | ${'SUSPENDED'.padEnd(colWidths.suspend)} |`;
+	const separator = `|${'-'.repeat(colWidths.id + 2)}|${'-'.repeat(colWidths.name + 2)}|${'-'.repeat(colWidths.schedule + 2)}|${'-'.repeat(colWidths.image + 2)}|${'-'.repeat(colWidths.command + 2)}|${'-'.repeat(colWidths.lastRun + 2)}|${'-'.repeat(colWidths.nextRun + 2)}|${'-'.repeat(colWidths.suspend + 2)}|`;
 
 	// Build rows
 	const rows = jobs.map((job) => {
 		const id = job.id; // Never truncate IDs!
+		const name = truncate(job.jobSpec.labels?.name ?? 'N/A', colWidths.name);
 		const schedule = truncate(job.schedule, colWidths.schedule);
 		const image = truncate(getImageOrSpace(job.jobSpec), colWidths.image);
 		const command = truncate(formatCommand(job.jobSpec.command), colWidths.command);
@@ -125,7 +129,7 @@ export function formatScheduledJobsTable(jobs: ScheduledJobInfo[]): string {
 		const nextRun = truncate(formatDate(job.nextRun), colWidths.nextRun);
 		const suspend = job.suspend ? 'Yes' : 'No';
 
-		return `| ${id.padEnd(colWidths.id)} | ${schedule.padEnd(colWidths.schedule)} | ${image.padEnd(colWidths.image)} | ${command.padEnd(colWidths.command)} | ${lastRun.padEnd(colWidths.lastRun)} | ${nextRun.padEnd(colWidths.nextRun)} | ${suspend.padEnd(colWidths.suspend)} |`;
+		return `| ${id.padEnd(colWidths.id)} | ${name.padEnd(colWidths.name)} | ${schedule.padEnd(colWidths.schedule)} | ${image.padEnd(colWidths.image)} | ${command.padEnd(colWidths.command)} | ${lastRun.padEnd(colWidths.lastRun)} | ${nextRun.padEnd(colWidths.nextRun)} | ${suspend.padEnd(colWidths.suspend)} |`;
 	});
 
 	return [header, separator, ...rows].join('\n');

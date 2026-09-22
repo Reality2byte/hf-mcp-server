@@ -1,3 +1,4 @@
+import { jobSubmissionLabelsSchema } from '../types.js';
 import type { JobSpec, JobVolume, JobVolumeType } from '../types.js';
 import { parse as parseShellArgs } from 'shell-quote';
 
@@ -249,6 +250,8 @@ export function createJobSpec(args: {
 	hfToken?: string;
 	volumes?: string[];
 	resourceGroupId?: string;
+	name?: string;
+	labels?: Record<string, string>;
 }): JobSpec {
 	// Validate required fields
 	if (!args.image) {
@@ -258,6 +261,8 @@ export function createJobSpec(args: {
 		throw new Error('command parameter is required. Provide a command as string or array.');
 	}
 
+	const { name, labels } = jobSubmissionLabelsSchema.parse(args);
+	const resolvedLabels = name === undefined ? labels : { ...labels, name };
 	const imageSource = parseImageSource(args.image);
 	const { command, arguments: cmdArgs } = parseCommand(args.command);
 	const timeoutSeconds = args.timeout ? parseTimeout(args.timeout) : undefined;
@@ -275,6 +280,9 @@ export function createJobSpec(args: {
 		timeoutSeconds,
 		...(args.resourceGroupId ? { resourceGroupId: args.resourceGroupId } : {}),
 	};
+	if (resolvedLabels && Object.keys(resolvedLabels).length > 0) {
+		spec.labels = { ...resolvedLabels };
+	}
 	if (volumes) {
 		spec.volumes = volumes;
 	}
