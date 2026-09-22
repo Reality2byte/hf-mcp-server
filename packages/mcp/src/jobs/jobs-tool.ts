@@ -423,7 +423,7 @@ Call this tool with:
 ## Tips
 
 - Submissions accept \`name\` and \`labels\` (string key/value pairs). \`name\` is an alias for \`labels.name\`; do not supply both. Names are not unique identifiers: continue using job IDs for operations.
-- Label keys and values allow up to 100 alphanumeric, dot, dash, or underscore characters.
+- Label keys and values allow up to 100 alphanumeric, dash, or underscore characters.
 - Filter ps/scheduled ps with \`labels: {"name": "my-job"}\`. All supplied labels must match.
 - update-labels/scheduled update-labels replace all user labels, including the name; omitted labels are removed and \`{}\` clears them.
 

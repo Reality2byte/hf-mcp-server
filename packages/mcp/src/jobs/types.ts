@@ -164,7 +164,7 @@ const commonArgsSchema = z.object({
 export const jobLabelSchema = z
 	.string()
 	.max(100)
-	.regex(/^[a-zA-Z0-9._-]*$/);
+	.regex(/^[a-zA-Z0-9_-]*$/);
 export const jobLabelsSchema = z.record(jobLabelSchema, jobLabelSchema);
 
 export const jobSubmissionLabelsSchema = z
@@ -172,7 +172,7 @@ export const jobSubmissionLabelsSchema = z
 		name: jobLabelSchema.optional().describe('Job name, an alias for labels.name. Do not provide both.'),
 		labels: jobLabelsSchema
 			.optional()
-			.describe('Job labels. Keys and values: max 100 characters; alphanumeric, dot, dash, underscore.'),
+			.describe('Job labels. Keys and values: max 100 characters; alphanumeric, dash, underscore.'),
 	})
 	.refine((args) => args.name === undefined || !Object.prototype.hasOwnProperty.call(args.labels ?? {}, 'name'), {
 		message: '`name` and the `name` key in `labels` cannot both be provided.',

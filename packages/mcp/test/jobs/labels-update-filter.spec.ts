@@ -51,7 +51,11 @@ describe('label updates and filters', () => {
 		]) {
 			const ids = { job_id: 'j', scheduled_job_id: 's' };
 			expect(schema.safeParse({ ...ids, labels: {} }).success).toBe(true);
-			expect(schema.safeParse({ ...ids, labels: { bad: 'not valid' } }).success).toBe(false);
+			expect(schema.safeParse({ ...ids, labels: { team_name: 'ML-team_2' } }).success).toBe(true);
+			for (const invalid of ['not valid', 'dot.here', 'equals=here']) {
+				expect(schema.safeParse({ ...ids, labels: { [invalid]: 'valid' } }).success).toBe(false);
+				expect(schema.safeParse({ ...ids, labels: { valid: invalid } }).success).toBe(false);
+			}
 		}
 		expect(updateLabelsArgsSchema.safeParse({ job_id: 'j' }).success).toBe(false);
 		expect(scheduledUpdateLabelsArgsSchema.safeParse({ scheduled_job_id: 's' }).success).toBe(false);
