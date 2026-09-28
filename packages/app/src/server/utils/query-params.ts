@@ -10,6 +10,7 @@ export function extractQueryParamsToHeaders(req: Request, headers: Record<string
 	const mix = Array.isArray(req.query.mix) ? req.query.mix.join(',') : (req.query.mix as string | undefined);
 	const gradio = req.query.gradio as string | undefined;
 	const streamable = req.query.streamable as string | undefined;
+	const anonymous = req.query.anon !== undefined;
 	const forceauth = req.query.forceauth as string | undefined;
 	const login = req.query.login;
 	const auth = req.query.auth;
@@ -29,6 +30,12 @@ export function extractQueryParamsToHeaders(req: Request, headers: Record<string
 	if (streamable) {
 		headers['x-mcp-streamable'] = streamable;
 	}
+	// ?anon forces anonymous handling even when the client sends a token (e.g.
+	// clients that attach credentials by default). Dropping credentials can only
+	// reduce access, so this runs before auth validation and wins over forceauth.
+	if (anonymous) {
+		delete headers.authorization;
+	}
 
 	if (typeof noImageContent === 'string') {
 		const normalized = noImageContent.trim().toLowerCase();
@@ -38,7 +45,7 @@ export function extractQueryParamsToHeaders(req: Request, headers: Record<string
 }
 
 	// Check if forceauth, login, or auth appears in the URL (with or without values)
-	if (forceauth || login !== undefined || auth !== undefined) {
+	if (!anonymous && (forceauth || login !== undefined || auth !== undefined)) {
 		headers['x-mcp-force-auth'] = 'true';
 	}
 }

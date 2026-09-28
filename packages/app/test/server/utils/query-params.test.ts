@@ -167,4 +167,25 @@ describe('extractQueryParamsToHeaders', () => {
 
 		expect(headers['x-mcp-no-image-content']).toBeUndefined();
 	});
+
+	it('should drop credentials and ignore forced auth when anon is present', () => {
+		for (const anon of ['', 'true', '1']) {
+			const req = { query: { anon, login: '', bouquet: 'search' } } as unknown as Request;
+			const headers: Record<string, string> = { authorization: 'Bearer hf_secret' };
+			extractQueryParamsToHeaders(req, headers);
+
+			expect(headers.authorization).toBeUndefined();
+			expect(headers['x-mcp-force-auth']).toBeUndefined();
+			expect(headers['x-mcp-bouquet']).toBe('search');
+		}
+	});
+
+	it('should keep credentials without anon', () => {
+		const req = { query: { login: '' } } as unknown as Request;
+		const headers: Record<string, string> = { authorization: 'Bearer hf_secret' };
+		extractQueryParamsToHeaders(req, headers);
+
+		expect(headers.authorization).toBe('Bearer hf_secret');
+		expect(headers['x-mcp-force-auth']).toBe('true');
+	});
 });

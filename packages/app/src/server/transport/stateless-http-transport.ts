@@ -34,6 +34,11 @@ import {
 import { SKILLS_GET_METHOD, SKILLS_LIST_METHOD } from '../skills/skill-method-schema.js';
 import { getProxyToolsConfig } from '../utils/proxy-tools-config.js';
 import { BOUQUET_FALLBACK } from '../../shared/settings.js';
+import {
+	definitionVersioningPolicy,
+	hasKnownDefinitionVersions,
+	type DefinitionVersioningPolicy,
+} from '../definition-versioning/index.js';
 import type { AppSettings } from '../../shared/settings.js';
 import { getErrorLogFields } from '../utils/observability.js';
 import { isProgressToken } from '../utils/progress-token.js';
@@ -137,7 +142,9 @@ interface ModernRequestData {
 	authenticatedUser?: ServerRequestContext['authenticatedUser'];
 	useFullServer: boolean;
 	skipGradio: boolean;
+	/** Ineligible discovery keeps the cheap fallback selection (no versions advertised). */
 	discoveryOnly: boolean;
+	definitionVersioning?: DefinitionVersioningPolicy;
 	userSettings?: AppSettings;
 	protocolVersion: string;
 	clientCapabilities: Record<string, unknown>;
@@ -620,6 +627,7 @@ export class StatelessHttpTransport extends BaseTransport {
 					requestData.skipGradio,
 					{
 						requestId: requestData.requestId,
+						definitionVersioning: requestData.definitionVersioning,
 						isAuthenticated: requestData.isAuthenticated,
 						clientInfo: requestData.clientInfo,
 						authenticatedUser: requestData.authenticatedUser,
@@ -787,7 +795,11 @@ export class StatelessHttpTransport extends BaseTransport {
 		);
 		this.trackProtocolToolCall(trackingName, 'modern', protocolVersion, clientInfo);
 
-		const disabledTool = disabledToolCallName(requestBody);
+		// Versions (and version checks) only where the full tool list is cheap to
+		// build; elsewhere known-version hints are ignored and shortcuts stay.
+		const definitionVersioning = definitionVersioningPolicy(headers);
+		const checkedCall = definitionVersioning !== undefined && hasKnownDefinitionVersions(requestBody);
+		const disabledTool = checkedCall ? undefined : disabledToolCallName(requestBody);
 		if (disabledTool) {
 			this.trackMethodCall(trackingName, startTime, true, clientInfo, { era: 'modern', version: protocolVersion });
 			res.status(200).json(JsonRpcErrors.invalidParams(disabledToolMessage(disabledTool), extractJsonRpcId(req.body)));
@@ -811,8 +823,14 @@ export class StatelessHttpTransport extends BaseTransport {
 		}
 
 		const useFullServer = isServerDiscover || this.shouldHandle(requestBody, clientInfo?.name, headers['user-agent']);
-		const userSettings = isServerDiscover ? undefined : getDirectToolCallSettings(requestBody, headers);
-		const skipGradio = isServerDiscover || userSettings !== undefined || this.skipGradioSetup(requestBody);
+		// Eligible discovery advertises the tools version, so it must select exactly
+		// what tools/list selects (cheap by eligibility). Ineligible discovery keeps
+		// the fallback selection and skips Gradio, as before.
+		const discoveryOnly = isServerDiscover && definitionVersioning === undefined;
+		const userSettings = isServerDiscover || checkedCall ? undefined : getDirectToolCallSettings(requestBody, headers);
+		const skipGradio = isServerDiscover
+			? discoveryOnly
+			: !checkedCall && (userSettings !== undefined || this.skipGradioSetup(requestBody));
 		const factoryHeaders = userSettings !== undefined ? withoutDiscoverySelectionHeaders(headers) : headers;
 		const requestData: ModernRequestData = {
 			headers,
@@ -823,7 +841,8 @@ export class StatelessHttpTransport extends BaseTransport {
 			authenticatedUser: authResult.authenticatedUser,
 			useFullServer,
 			skipGradio,
-			discoveryOnly: isServerDiscover,
+			discoveryOnly,
+			definitionVersioning,
 			userSettings,
 			protocolVersion,
 			clientCapabilities,
@@ -1011,7 +1030,9 @@ export class StatelessHttpTransport extends BaseTransport {
 			return;
 		}
 
-		const disabledTool = disabledToolCallName(requestBody);
+		const definitionVersioning = definitionVersioningPolicy(headers);
+		const checkedCall = definitionVersioning !== undefined && hasKnownDefinitionVersions(requestBody);
+		const disabledTool = checkedCall ? undefined : disabledToolCallName(requestBody);
 		if (disabledTool) {
 			const disabledSessionId = headers['mcp-session-id'];
 			const clientInfo =
@@ -1024,7 +1045,7 @@ export class StatelessHttpTransport extends BaseTransport {
 			res.status(200).json(JsonRpcErrors.invalidParams(disabledToolMessage(disabledTool), extractJsonRpcId(req.body)));
 			return;
 		}
-		const directToolSettings = getDirectToolCallSettings(requestBody, headers);
+		const directToolSettings = checkedCall ? undefined : getDirectToolCallSettings(requestBody, headers);
 		const factoryHeaders = directToolSettings !== undefined ? withoutDiscoverySelectionHeaders(headers) : headers;
 
 		// Analytics mode session tracking
@@ -1215,8 +1236,9 @@ export class StatelessHttpTransport extends BaseTransport {
 			const useFullServer = this.shouldHandle(requestBody, clientInfo?.name, headers['user-agent']);
 			if (useFullServer) {
 				// Create new server instance using factory with request headers and bouquet
-				// Skip Gradio endpoints for initialize requests or non-Gradio tool calls
-				const skipGradio = directToolSettings !== undefined || this.skipGradioSetup(requestBody);
+				// Checked calls must use the same complete registry as tools/list.
+				// Keep the existing Gradio shortcut only for unchecked requests.
+				const skipGradio = !checkedCall && (directToolSettings !== undefined || this.skipGradioSetup(requestBody));
 
 				// Pass session info to server factory for query logging
 				const sessionInfoForLogging = {
@@ -1228,6 +1250,7 @@ export class StatelessHttpTransport extends BaseTransport {
 					isAuthenticated: analyticsSession?.isAuthenticated ?? isAuthenticated,
 					clientInfo,
 					authenticatedUser: authResult.authenticatedUser,
+					definitionVersioning,
 				};
 				const result = await this.serverFactory(factoryHeaders, directToolSettings, skipGradio, sessionInfoForLogging);
 				server = result.server;

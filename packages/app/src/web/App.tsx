@@ -6,11 +6,13 @@ import { TransportMetricsCard } from './components/TransportMetricsCard';
 import { ProtocolMetricsCard } from './components/ProtocolMetricsCard';
 import { McpMethodsCard } from './components/McpMethodsCard';
 import { ConnectionFooter } from './components/ConnectionFooter';
+import { DefinitionVersionsCard } from './components/DefinitionVersionsCard';
+import { DEFINITION_VERSIONS_STATUS_URL, definitionVersionsFetcher } from './lib/definition-versions';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from './components/ui/tabs';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from './components/ui/card';
 import { Button } from './components/ui/button';
 import { Separator } from './components/ui/separator';
-import { Activity, BarChart3, Copy, Home, Network, Settings, Wrench } from 'lucide-react';
+import { Activity, BarChart3, Copy, DatabaseZap, Home, Network, Settings, Wrench } from 'lucide-react';
 import type { TransportInfo } from '../shared/transport-info.js';
 import hfLogo from './hf-logo.svg';
 
@@ -36,6 +38,13 @@ function App() {
 	useSWR(transportInfo?.transport === 'stdio' ? '/api/sessions' : null, fetcher, {
 		refreshInterval: 3000, // Refresh every 3 seconds
 		revalidateOnFocus: true,
+	});
+
+	// The Caching tab only appears while definition-versions test mode is on
+	// (the status endpoint returns 404 otherwise).
+	const { data: definitionVersions } = useSWR(DEFINITION_VERSIONS_STATUS_URL, definitionVersionsFetcher, {
+		refreshInterval: 15000,
+		shouldRetryOnError: false,
 	});
 
 	const isLoading = !transportInfo && !transportError;
@@ -101,6 +110,12 @@ function App() {
 							<Wrench className="size-4" />
 							MCP methods
 						</TabsTrigger>
+						{definitionVersions && (
+							<TabsTrigger value="caching" className="min-w-32 gap-2 whitespace-nowrap py-2">
+								<DatabaseZap className="size-4" />
+								Caching
+							</TabsTrigger>
+						)}
 						<TabsTrigger value="home" className="min-w-32 gap-2 whitespace-nowrap py-2">
 							<Home className="size-4" />
 							About
@@ -115,6 +130,11 @@ function App() {
 					<TabsContent value="mcp" className="mt-0">
 						<McpMethodsCard />
 					</TabsContent>
+					{definitionVersions && (
+						<TabsContent value="caching" className="mt-0">
+							<DefinitionVersionsCard />
+						</TabsContent>
+					)}
 					<TabsContent value="home" className="mt-0">
 						{/* HF MCP Server Card */}
 						<Card className="mx-auto max-w-3xl">
