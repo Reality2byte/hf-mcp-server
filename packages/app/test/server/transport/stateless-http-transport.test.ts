@@ -1003,8 +1003,8 @@ describe('StatelessHttpTransport', () => {
 				expect(factoryCalls.length).toBeGreaterThanOrEqual(2);
 				expect(factoryCalls[0]).toMatchObject({
 					headers: { 'x-mcp-bouquet': 'search' },
-					settings: { builtInTools: expect.any(Array), spaceTools: [] },
-					skipGradio: true,
+					settings: undefined,
+					skipGradio: false,
 				});
 				expect(factoryCalls.at(-1)?.headers).not.toHaveProperty('x-mcp-bouquet');
 				expect(factoryCalls.at(-1)?.sessionInfo).toMatchObject({

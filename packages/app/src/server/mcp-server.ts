@@ -75,6 +75,7 @@ import { AUTHENTICATION_UNVERIFIED_GUIDANCE, createHfWhoamiOutput, formatHfWhoam
 import { fetchHfWhoami, type HfWhoamiResponse } from './utils/hf-whoami-client.js';
 import { hfWhoamiOutputSchema } from './output-schemas/hf-whoami-output-schema.js';
 import { MCP_SERVER_NAME } from './server-card.js';
+import { definitionVersioningCacheHints, installDefinitionVersioning } from './definition-versioning/index.js';
 import { buildServerInstructions } from './server-instructions.js';
 import { getGrantedOAuthScopes } from './utils/oauth-scopes.js';
 
@@ -323,6 +324,8 @@ export const createServerFactory = (sharedApiClient: McpApiClient): ServerFactor
 			toolSelection.enabledToolIds = [...toolSelection.enabledToolIds, CREATE_REPO_TOOL_ID];
 		}
 
+		const instructions = buildServerInstructions(userInfo);
+		const definitionVersioning = sessionInfo?.definitionVersioning;
 		const server = new McpServer(
 			{
 				name: MCP_SERVER_NAME,
@@ -336,10 +339,16 @@ export const createServerFactory = (sharedApiClient: McpApiClient): ServerFactor
 				],
 			},
 			{
-				instructions: buildServerInstructions(userInfo),
+				instructions,
+				// Only eligible requests (see definition-versioning/policy.ts) get cache
+				// hints; everything else keeps the SDK default (ttlMs 0, private).
+				...(definitionVersioning ? { cacheHints: definitionVersioningCacheHints(definitionVersioning) } : {}),
 			}
 		);
 
+		const finalizeDefinitionVersioning = definitionVersioning
+			? installDefinitionVersioning(server, instructions, { salt: definitionVersioning.salt })
+			: () => undefined;
 		cacheRegisteredSchemaConversions(server);
 
 		const disabledTools = parseDisabledTools();
@@ -994,6 +1003,8 @@ export const createServerFactory = (sharedApiClient: McpApiClient): ServerFactor
 		registerCapabilities(server, {
 			hasSkills,
 		});
+
+		finalizeDefinitionVersioning();
 
 		return {
 			server,

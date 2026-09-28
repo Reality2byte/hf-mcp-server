@@ -5,6 +5,11 @@ allowBuilds:
   '@swc/core': true
   '@tailwindcss/oxide': true
   esbuild: true
+minimumReleaseAgeExclude:
+  - '@modelcontextprotocol/client@2.1.0'
+  - '@modelcontextprotocol/core@2.1.0'
+  - '@modelcontextprotocol/node@2.1.0'
+  - '@modelcontextprotocol/server@2.1.0'
 preferWorkspacePackages: true
 shamefullyHoist: true
 sharedWorkspaceLockfile: true

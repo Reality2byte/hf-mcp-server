@@ -2,10 +2,19 @@ import express, { type Express } from 'express';
 import cors from 'cors';
 import type { CorsOptions, CorsRequest, CorsOptionsDelegate } from 'cors';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import type { Server } from 'node:http';
 import type { TransportInfo } from '../shared/transport-info.js';
 import { logger } from './utils/logger.js';
+import {
+	DEFINITION_VERSION_MISMATCH,
+	definitionVersioningStats,
+	definitionVersionsTestEnabled,
+	resetDefinitionVersioningStats,
+	setDefinitionVersionsTestSalt,
+} from './definition-versioning/index.js';
+import { definitionVersioningStatus } from './definition-versioning/policy.js';
 import type { BaseTransport } from './transport/base-transport.js';
 import { formatMetricsForAPI } from '../shared/transport-metrics.js';
 import { getHfFsLiveMetrics } from './utils/hf-fs-live-metrics.js';
@@ -302,7 +311,48 @@ export class WebServer {
 		}
 	}
 
+	/**
+	 * Test-only definition-versions controls (DEFINITION_VERSIONS_TEST=true), used by
+	 * the dashboard Caching tab. Changing the runtime salt changes every advertised
+	 * version without changing definitions, so connected clients see a mismatch on
+	 * their next checked call. Lives under /api, so metrics-page authentication applies
+	 * when configured. Salt and counters are per process.
+	 */
+	private setupDefinitionVersionsTestRoutes(): void {
+		const base = '/api/definition-versions';
+		const respond = (res: express.Response) =>
+			res.json(definitionVersioningStatus(DEFINITION_VERSION_MISMATCH, definitionVersioningStats()));
+		const guard = (_req: express.Request, res: express.Response, next: express.NextFunction) => {
+			if (definitionVersionsTestEnabled()) next();
+			else res.status(404).json({ error: 'Definition versions test mode is not enabled' });
+		};
+
+		this.app.get(base, guard, (_req, res) => respond(res));
+		this.app.post(`${base}/salt`, guard, (req, res) => {
+			const value = typeof req.query.value === 'string' ? req.query.value : randomUUID().slice(0, 8);
+			try {
+				setDefinitionVersionsTestSalt(value);
+			} catch (error) {
+				res.status(400).json({ error: (error as Error).message });
+				return;
+			}
+			logger.info({ salt: value }, 'Definition versions test salt updated');
+			respond(res);
+		});
+		this.app.delete(`${base}/salt`, guard, (_req, res) => {
+			setDefinitionVersionsTestSalt('');
+			logger.info('Definition versions test salt cleared');
+			respond(res);
+		});
+		this.app.delete(`${base}/stats`, guard, (_req, res) => {
+			resetDefinitionVersioningStats();
+			respond(res);
+		});
+	}
+
 	public setupApiRoutes(): void {
+		this.setupDefinitionVersionsTestRoutes();
+
 		// Transport info endpoint
 		this.app.get('/api/transport', (_req, res) => {
 			res.json(this.transportInfo);

@@ -6,6 +6,11 @@ import { MetricsCounter } from '../../src/shared/transport-metrics.js';
 import { SERVER_CARD_PATH } from '../../src/server/server-card.js';
 import { createMetricsPageAuth, METRICS_PAGE_AUTH_COOKIE_NAME } from '../../src/server/utils/metrics-page-auth.js';
 import { recordHfFsLiveMetrics, resetHfFsLiveMetricsForTests } from '../../src/server/utils/hf-fs-live-metrics.js';
+import {
+	getDefinitionVersionsTestSalt,
+	setDefinitionVersionsTestSalt,
+} from '../../src/server/definition-versioning/policy.js';
+import type { DefinitionVersioningStatus } from '../../src/shared/definition-versioning-status.js';
 
 const METRICS_PASSWORD = 'test metrics password & secret';
 
@@ -201,6 +206,52 @@ describe('WebServer', () => {
 		const queryResponse = await fetch(`${baseUrl}/api/transport-metrics?${query.toString()}`);
 		expect(queryResponse.status).toBe(200);
 		expect(queryResponse.headers.get('cache-control')).toBe('no-store, private');
+	});
+
+	it('serves definition-versions test controls only in test mode, behind API authentication', async () => {
+		const previous = process.env.DEFINITION_VERSIONS_TEST;
+		const webServer = protectedWebServer();
+		webServers.push(webServer);
+		webServer.setupApiRoutes();
+		await webServer.start(0);
+		const base = `http://localhost:${webServerPort(webServer).toString()}/api/definition-versions`;
+		const auth = { 'X-Metrics-Password': METRICS_PASSWORD };
+		const json = async (response: Response) => (await response.json()) as DefinitionVersioningStatus;
+		try {
+			delete process.env.DEFINITION_VERSIONS_TEST;
+			expect((await fetch(base, { headers: auth })).status).toBe(404);
+			expect((await fetch(`${base}/salt`, { method: 'POST', headers: auth })).status).toBe(404);
+
+			process.env.DEFINITION_VERSIONS_TEST = 'true';
+			expect((await fetch(`${base}/salt`, { method: 'POST' })).status).toBe(401);
+			expect(getDefinitionVersionsTestSalt()).toBe('');
+
+			const initial = await json(await fetch(base, { headers: auth }));
+			expect(initial).toMatchObject({ enabled: true, testSalt: '', errorCode: -32987, stats: { checkedCalls: 0 } });
+
+			const set = await json(await fetch(`${base}/salt?value=abc`, { method: 'POST', headers: auth }));
+			expect(set).toMatchObject({ testSalt: 'abc', testSaltUpdatedAt: expect.any(String) });
+
+			const random = await json(await fetch(`${base}/salt`, { method: 'POST', headers: auth }));
+			expect(random.testSalt).toMatch(/^[0-9a-f]{8}$/);
+
+			const invalid = await fetch(`${base}/salt?value=${encodeURIComponent('has space')}`, {
+				method: 'POST',
+				headers: auth,
+			});
+			expect(invalid.status).toBe(400);
+			expect(getDefinitionVersionsTestSalt()).toBe(random.testSalt);
+
+			expect(await json(await fetch(`${base}/salt`, { method: 'DELETE', headers: auth }))).toMatchObject({
+				testSalt: '',
+			});
+			const reset = await json(await fetch(`${base}/stats`, { method: 'DELETE', headers: auth }));
+			expect(reset.stats).toMatchObject({ checkedCalls: 0, mismatched: 0, since: expect.any(String) });
+		} finally {
+			setDefinitionVersionsTestSalt('');
+			if (previous === undefined) delete process.env.DEFINITION_VERSIONS_TEST;
+			else process.env.DEFINITION_VERSIONS_TEST = previous;
+		}
 	});
 
 	it('does not call the metrics handler before an API request is authenticated', async () => {
