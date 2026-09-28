@@ -16,7 +16,6 @@ export {
 	definitionVersioningCacheHints,
 	definitionVersioningPolicy,
 	definitionVersionsTestEnabled,
-	getDefinitionVersionsTestSalt,
 	setDefinitionVersionsTestSalt,
 	type DefinitionVersioningPolicy,
 } from './policy.js';
@@ -99,7 +98,7 @@ export function hasKnownDefinitionVersions(request: unknown): boolean {
  * a non-object value is treated as no hint. Any string is compared for equality, so
  * an unrecognized version is simply stale.
  */
-export function parseKnownDefinitionVersions(meta: Record<string, unknown> | undefined): Partial<DefinitionVersions> {
+function parseKnownDefinitionVersions(meta: Record<string, unknown> | undefined): Partial<DefinitionVersions> {
 	const value = meta?.[KNOWN_DEFINITION_VERSIONS];
 	if (!record(value)) return {};
 	const known: Partial<DefinitionVersions> = {};
