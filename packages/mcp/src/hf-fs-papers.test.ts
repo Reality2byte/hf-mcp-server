@@ -336,6 +336,27 @@ describe('papers guidance and Daily Papers', () => {
 		expect(formatHfFsMarkdown(day)).toContain('Order: Daily Papers batch upvotes, then feed placement');
 	});
 
+	it('returns compact paper descriptions in listing results and markdown alike', async () => {
+		const abstract = `${'A long abstract sentence. '.repeat(40)}Final words.`;
+		installFetchSimulator([
+			{
+				path: '/api/daily_papers',
+				search: { p: '0', limit: '100', date: '2024-01-03', sort: 'publishedAt' },
+				response: () => json([{ paper: { ...paper, summary: abstract, ai_summary: undefined } }]),
+			},
+		]);
+
+		const day = await new HfFsTool().run({ op: 'ls', uri: 'hf://papers/daily/2024/01/03' });
+		if (day.op !== 'ls') {
+			throw new Error('Expected ls result');
+		}
+		const description = day.entries[0]?.description ?? '';
+		expect(description.length).toBeLessThanOrEqual(240);
+		expect(description.endsWith('…')).toBe(true);
+		expect(formatHfFsMarkdown(day)).toContain(`summary=${description}`);
+		expect(formatHfFsMarkdown(day)).toContain('Order: Daily Papers batch upvotes, then feed placement');
+	});
+
 	it('exposes latest as a dated alias and keeps trending recursion at the index edge', async () => {
 		const fetchSimulator = installFetchSimulator([
 			{

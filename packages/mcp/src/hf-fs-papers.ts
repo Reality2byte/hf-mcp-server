@@ -56,6 +56,15 @@ export function paperListingOrder(result: HfFsLsResult): PaperOrder | undefined 
 	return paperOrders.get(result);
 }
 
+/** Carry the listing order of `source` over to a derived copy of it. */
+export function withPaperListingOrder(source: HfFsLsResult, copy: HfFsLsResult): HfFsLsResult {
+	const order = paperOrders.get(source);
+	if (order) {
+		paperOrders.set(copy, order);
+	}
+	return copy;
+}
+
 interface PaperData extends Record<string, unknown> {
 	id?: unknown;
 	title?: unknown;

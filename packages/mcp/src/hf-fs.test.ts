@@ -435,7 +435,7 @@ describe('HfFsTool', () => {
 		]);
 	});
 
-	it('caps cumulative batch text and structured content', () => {
+	it('caps cumulative batch output by trimming the operation that overflows in both views', () => {
 		const items = [0, 1].map((index) => ({
 			index,
 			status: 'success' as const,
@@ -451,7 +451,6 @@ describe('HfFsTool', () => {
 
 		const markdown = formatHfFsBatchMarkdown(items);
 		expect(markdown.length).toBeLessThanOrEqual(HF_FS_MAX_OUTPUT_CHARS);
-		expect(markdown).toContain('Batch output truncated');
 
 		const structured = toHfFsBatchResult(items);
 		expect(JSON.stringify(structured).length).toBeLessThanOrEqual(HF_FS_MAX_OUTPUT_CHARS);
@@ -459,11 +458,69 @@ describe('HfFsTool', () => {
 			truncated: true,
 			truncation_reason: 'output_budget',
 			results: [
-				{ index: 0, status: 'success' },
-				{ index: 1, status: 'success', output_truncated: true },
+				{ index: 0, status: 'success', result: { content: 'x'.repeat(60_000) } },
+				{
+					index: 1,
+					status: 'success',
+					output_truncated: true,
+					result: { op: 'cat', truncated: true, truncation_reason: 'output_budget' },
+				},
 			],
 		});
-		expect(structured.results[1]).not.toHaveProperty('result.content');
+		const partial = structured.results[1];
+		if (partial?.status !== 'success' || partial.result.content === undefined) {
+			throw new Error('Expected partial cat content');
+		}
+		expect(partial.result.content.length).toBeGreaterThan(0);
+		expect(partial.result.content.length).toBeLessThan(60_000);
+		expect(markdown).toContain(`${partial.result.content}\n\n${partial.result.truncation_message ?? ''}`);
+		expect(partial.result.truncation_message).toContain(
+			`--offset advanced by ${partial.result.content.length.toString()} bytes`
+		);
+		expect(HF_FS_TOOL_CONFIG.outputSchema.parse(structured)).toEqual(structured);
+	});
+
+	it('keeps the same leading entries in both views when a single listing exceeds the budget', () => {
+		const total = 300;
+		const items = [
+			{
+				index: 0,
+				status: 'success' as const,
+				executionResult: {
+					op: 'ls' as const,
+					uri: 'hf://papers/daily/latest',
+					entries: Array.from({ length: total }, (_, index) => ({
+						type: 'paper' as const,
+						path: `2609.${(30_000 + index).toString()}`,
+						uri: `hf://papers/2609.${(30_000 + index).toString()}`,
+						title: `Paper ${index.toString()}`,
+						description: 's'.repeat(240),
+					})),
+					truncated: true,
+					truncation_reason: 'limit' as const,
+				},
+			},
+		];
+
+		const structured = toHfFsBatchResult(items);
+		const markdown = formatHfFsBatchMarkdown(items);
+		expect(JSON.stringify(structured).length).toBeLessThanOrEqual(HF_FS_MAX_OUTPUT_CHARS);
+		expect(markdown.length).toBeLessThanOrEqual(HF_FS_MAX_OUTPUT_CHARS);
+
+		const listing = structured.results[0];
+		if (listing?.status !== 'success' || listing.result.entries === undefined) {
+			throw new Error('Expected listing entries');
+		}
+		const kept = listing.result.entries.length;
+		expect(kept).toBeGreaterThan(0);
+		expect(kept).toBeLessThan(total);
+		expect(listing).toMatchObject({
+			output_truncated: true,
+			result: { truncated: true, truncation_reason: 'output_budget' },
+		});
+		expect(markdown).toContain(`Showing ${kept.toString()} of ${total.toString()} entries`);
+		expect(markdown).toContain(`hf://papers/2609.${(30_000 + kept - 1).toString()}`);
+		expect(markdown).not.toContain(`hf://papers/2609.${(30_000 + kept).toString()}`);
 		expect(HF_FS_TOOL_CONFIG.outputSchema.parse(structured)).toEqual(structured);
 	});
 
@@ -670,7 +727,7 @@ describe('HfFsTool', () => {
 		});
 	});
 
-	it('keeps complete structured ls results while truncating the markdown view', async () => {
+	it('bounds an oversized single ls markdown view without referring to other output forms', async () => {
 		vi.mocked(listFiles).mockReturnValue(
 			entries(
 				Array.from({ length: 100 }, (_, index) => ({
@@ -694,7 +751,8 @@ describe('HfFsTool', () => {
 		expect(result.truncated).toBeUndefined();
 		const markdown = formatHfFsMarkdown(result);
 		expect(markdown.length).toBeLessThanOrEqual(HF_FS_MAX_OUTPUT_CHARS);
-		expect(markdown).toContain('Markdown view truncated');
+		expect(markdown).toContain('Output truncated to fit the hf_fs output budget');
+		expect(markdown).not.toMatch(/structured/i);
 	});
 
 	it('renders available structured entry metadata in markdown details', () => {
@@ -1548,7 +1606,7 @@ describe('HfFsTool', () => {
 		});
 	});
 
-	it('keeps complete structured cat content while truncating the markdown view', async () => {
+	it('bounds an oversized single cat markdown view without referring to other output forms', async () => {
 		vi.mocked(pathsInfo).mockResolvedValueOnce([{ path: 'large.txt', type: 'file', size: 120_000 }]);
 		vi.mocked(downloadFile).mockResolvedValueOnce(new Blob(['x'.repeat(120_000)]));
 
@@ -1568,7 +1626,8 @@ describe('HfFsTool', () => {
 		expect(result.next_offset).toBe(80_000);
 		const markdown = formatHfFsMarkdown(result);
 		expect(markdown.length).toBeLessThanOrEqual(HF_FS_MAX_OUTPUT_CHARS);
-		expect(markdown).toContain('Markdown view truncated');
+		expect(markdown).toContain('Output truncated to fit the hf_fs output budget');
+		expect(markdown).not.toMatch(/structured/i);
 	});
 
 	it('reports cat max-byte continuation offsets from the requested offset', async () => {
