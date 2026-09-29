@@ -40,7 +40,7 @@ import {
 import { escapeMarkdown, fitsWithinCharBudget, formatBytes, maxCharsForTokenBudget } from './utilities.js';
 import { HF_NAV_MAX_LIMIT, HfNavTool, type HfNavEntry, type HfNavParams, type HfNavResult } from './hf-nav.js';
 import { catGuidance, isRootGuidanceUri, statGuidance } from './hf-fs-guidance.js';
-import { HfFsPaperProvider, isPaperUri, paperListingOrder } from './hf-fs-papers.js';
+import { HfFsPaperProvider, isPaperUri, paperListingOrder, withPaperListingOrder } from './hf-fs-papers.js';
 import { HfFsDocsProvider, isDocsUri } from './hf-fs-docs.js';
 import {
 	HF_FS_ATTACH_MAX_BYTES,
@@ -85,6 +85,7 @@ const MAX_UTF8_SEQUENCE_BYTES = 4;
 export const HF_FS_MAX_OUTPUT_TOKENS = 20_000;
 export const HF_FS_MAX_OUTPUT_CHARS = maxCharsForTokenBudget(HF_FS_MAX_OUTPUT_TOKENS, APPROX_CHARS_PER_TOKEN);
 export const HF_FS_BATCH_CONCURRENCY = 4;
+export const HF_FS_LISTING_DESCRIPTION_MAX_CHARS = 240;
 const MAX_CAT_BYTES = HF_FS_MAX_OUTPUT_CHARS;
 
 export const HF_FILES_FLAG = 'hf_files' as const;
@@ -154,7 +155,7 @@ function createHfFsResultOutputSchema() {
 			url: z.string().optional(),
 			arxiv_url: z.string().optional(),
 			truncated: z.boolean().optional(),
-			truncation_reason: z.enum(['entry_limit', 'max_bytes', 'limit', 'provider_limit']).optional(),
+			truncation_reason: z.enum(['entry_limit', 'max_bytes', 'limit', 'provider_limit', 'output_budget']).optional(),
 			truncation_message: z.string().optional(),
 			next_offset: z.number().optional(),
 			warnings: z.array(z.string()).optional(),
@@ -422,6 +423,24 @@ function navEntryToFsEntry(entry: HfNavEntry): HfFsEntry {
 	});
 }
 
+function isHfFsListingResult(result: HfFsExecutionResult): result is HfFsLsResult {
+	return !isHfFsAttachExecutionResult(result) && (result.op === 'ls' || result.op === 'find' || result.op === 'search');
+}
+
+/**
+ * Listings carry compact descriptions in every output view. Clients often show raw tool results to the model, so the
+ * text and structured forms must agree; full details (for example paper abstracts) are available from a follow-up
+ * cat or stat of the entry URI.
+ */
+function boundListingDescriptions(result: HfFsLsResult): HfFsLsResult {
+	return withPaperListingOrder(result, {
+		...result,
+		entries: result.entries.map((entry) =>
+			entry.description === undefined ? entry : { ...entry, description: boundedInlineText(entry.description) }
+		),
+	});
+}
+
 function compactEntry(entry: HfFsEntry): HfFsEntry {
 	return Object.fromEntries(Object.entries(entry).filter(([, value]) => value !== undefined)) as HfFsEntry;
 }
@@ -487,7 +506,7 @@ export interface HfFsLsResult {
 	op: 'ls' | 'find' | 'search';
 	entries: HfFsEntry[];
 	truncated?: boolean;
-	truncation_reason?: 'entry_limit' | 'limit' | 'provider_limit';
+	truncation_reason?: 'entry_limit' | 'limit' | 'provider_limit' | 'output_budget';
 	truncation_message?: string;
 	next_offset?: number;
 	warnings?: string[];
@@ -502,7 +521,7 @@ export interface HfFsCatResult {
 	section?: string;
 	bytes: number;
 	truncated: boolean;
-	truncation_reason?: 'max_bytes';
+	truncation_reason?: 'max_bytes' | 'output_budget';
 	truncation_message?: string;
 	next_offset?: number;
 }
@@ -769,6 +788,11 @@ export class HfFsTool {
 	}
 
 	async runCanonical(params: HfFsParams): Promise<HfFsExecutionResult> {
+		const result = await this.executeCanonical(params);
+		return isHfFsListingResult(result) ? boundListingDescriptions(result) : result;
+	}
+
+	private async executeCanonical(params: HfFsParams): Promise<HfFsExecutionResult> {
 		validateHfFsParams(params);
 		if (params.op === 'attach') {
 			return await this.attach(params);
@@ -1648,18 +1672,25 @@ export function formatHfFsMarkdown(result: HfFsResult, maxChars = HF_FS_MAX_OUTP
 	return trimMarkdownToBudget(withWarnings, maxChars);
 }
 
+const HF_FS_OMITTED_OPERATION_TEXT =
+	'_Output omitted to fit the hf_fs output budget. Re-run this operation on its own or with narrower limits._';
+
+/** A batch item after the shared output budget has been applied. Text and structured views both render from this. */
+type HfFsBoundedBatchItem =
+	| { index: number; status: 'success'; result: HfFsResult; output_truncated?: true }
+	| { index: number; status: 'success'; omitted: HfFsOutputResult }
+	| HfFsBatchExecutionError;
+
+interface HfFsBoundedBatch {
+	items: HfFsBoundedBatchItem[];
+	truncated: boolean;
+}
+
 export function formatHfFsBatchMarkdown(
 	items: readonly HfFsBatchExecutionItem[],
 	maxChars = HF_FS_MAX_OUTPUT_CHARS
 ): string {
-	const sections = items.map((item) => {
-		const heading = `## Operation ${(item.index + 1).toString()}`;
-		if (item.status === 'error') {
-			return `${heading}\n\n${formatHfFsRecoveryError(item.error)}`;
-		}
-		return `${heading}\n\n${formatHfFsMarkdown(hfFsExecutionMetadata(item.executionResult), Number.MAX_SAFE_INTEGER)}`;
-	});
-	const markdown = sections.join('\n\n---\n\n');
+	const markdown = renderBoundedBatchMarkdown(boundHfFsBatch(items, maxChars).items);
 	if (fitsWithinCharBudget(markdown, maxChars)) {
 		return markdown;
 	}
@@ -1675,57 +1706,175 @@ export function toHfFsBatchResult(
 	items: readonly HfFsBatchExecutionItem[],
 	maxChars = HF_FS_MAX_OUTPUT_CHARS
 ): HfFsBatchResult {
-	const results: HfFsBatchItemResult[] = [];
+	const bounded = boundHfFsBatch(items, maxChars);
+	return boundedBatchStructured(bounded.items, bounded.truncated);
+}
+
+/**
+ * Apply the cumulative output budget once, degrading gracefully: operations that fit are kept whole, the first
+ * operation that does not fit keeps as many listing entries or as much content as the budget allows, and only then
+ * are operations reduced to their identifying metadata.
+ */
+function boundHfFsBatch(items: readonly HfFsBatchExecutionItem[], maxChars: number): HfFsBoundedBatch {
+	const bounded: HfFsBoundedBatchItem[] = [];
 	let truncated = false;
+	const fits = (candidate: HfFsBoundedBatchItem): boolean => boundedBatchFits([...bounded, candidate], maxChars);
 
 	for (const item of items) {
 		if (item.status === 'error') {
-			results.push({
-				index: item.index,
-				status: 'error',
-				error: item.error,
-			});
+			bounded.push(item);
 			continue;
 		}
 
 		const result = hfFsExecutionMetadata(item.executionResult);
-		const full: HfFsBatchItemResult = {
-			index: item.index,
-			status: 'success',
-			result,
-		};
-		if (batchStructuredChars([...results, full], truncated) <= maxChars) {
-			results.push(full);
+		const full: HfFsBoundedBatchItem = { index: item.index, status: 'success', result };
+		if (fits(full)) {
+			bounded.push(full);
 			continue;
 		}
 
 		truncated = true;
-		results.push({
-			index: item.index,
-			status: 'success',
-			result: compactHfFsOutputResult(result),
-			output_truncated: true,
-		});
+		const fitted = fitHfFsResult(result, (candidate) =>
+			fits({ index: item.index, status: 'success', result: candidate, output_truncated: true })
+		);
+		bounded.push(
+			fitted
+				? { index: item.index, status: 'success', result: fitted, output_truncated: true }
+				: { index: item.index, status: 'success', omitted: compactHfFsOutputResult(result) }
+		);
 	}
 
-	if (batchStructuredChars(results, truncated) > maxChars) {
-		let stringLimit = Math.min(512, Math.max(0, maxChars));
-		let boundedResults = results.map((result) => boundHfFsBatchItem(result, stringLimit));
-		while (batchStructuredChars(boundedResults, true) > maxChars && stringLimit > 0) {
-			stringLimit = Math.floor(stringLimit / 2);
-			boundedResults = results.map((result) => boundHfFsBatchItem(result, stringLimit));
-		}
-		return {
-			results: boundedResults,
-			truncated: true,
-			truncation_reason: 'output_budget',
-		};
+	if (boundedBatchFits(bounded, maxChars)) {
+		return { items: bounded, truncated };
 	}
 
+	let stringLimit = Math.min(512, Math.max(0, maxChars));
+	let minimal = bounded.map((item) => minimalHfFsBatchItem(item, stringLimit));
+	while (!boundedBatchFits(minimal, maxChars) && stringLimit > 0) {
+		stringLimit = Math.floor(stringLimit / 2);
+		minimal = bounded.map((item) => minimalHfFsBatchItem(item, stringLimit));
+	}
+	return { items: minimal, truncated: true };
+}
+
+function boundedBatchFits(items: readonly HfFsBoundedBatchItem[], maxChars: number): boolean {
+	return (
+		JSON.stringify(boundedBatchStructured(items, true)).length <= maxChars &&
+		renderBoundedBatchMarkdown(items).length <= maxChars
+	);
+}
+
+function boundedBatchStructured(items: readonly HfFsBoundedBatchItem[], truncated: boolean): HfFsBatchResult {
 	return {
-		results,
+		results: items.map(toHfFsBatchItemResult),
 		...(truncated ? { truncated: true, truncation_reason: 'output_budget' as const } : {}),
 	};
+}
+
+function toHfFsBatchItemResult(item: HfFsBoundedBatchItem): HfFsBatchItemResult {
+	if (item.status === 'error') {
+		return { index: item.index, status: 'error', error: item.error };
+	}
+	if ('omitted' in item) {
+		return { index: item.index, status: 'success', result: item.omitted, output_truncated: true };
+	}
+	return {
+		index: item.index,
+		status: 'success',
+		result: item.result,
+		...(item.output_truncated ? { output_truncated: true } : {}),
+	};
+}
+
+function renderBoundedBatchMarkdown(items: readonly HfFsBoundedBatchItem[]): string {
+	return items
+		.map((item) => {
+			const heading = `## Operation ${(item.index + 1).toString()}`;
+			if (item.status === 'error') {
+				return `${heading}\n\n${formatHfFsRecoveryError(item.error)}`;
+			}
+			if ('omitted' in item) {
+				return `${heading}\n\n${HF_FS_OMITTED_OPERATION_TEXT}`;
+			}
+			return `${heading}\n\n${formatHfFsMarkdown(item.result, Number.MAX_SAFE_INTEGER)}`;
+		})
+		.join('\n\n---\n\n');
+}
+
+/** Largest prefix of a listing, or of cat content, that satisfies `fits`; undefined when nothing useful fits. */
+function fitHfFsResult(result: HfFsResult, fits: (candidate: HfFsResult) => boolean): HfFsResult | undefined {
+	switch (result.op) {
+		case 'ls':
+		case 'find':
+		case 'search': {
+			const total = result.entries.length;
+			const withCount = (count: number): HfFsLsResult =>
+				withPaperListingOrder(result, {
+					...result,
+					entries: result.entries.slice(0, count),
+					truncated: true,
+					truncation_reason: 'output_budget',
+					truncation_message: `Showing ${count.toString()} of ${total.toString()} entries to fit the hf_fs output budget. Use --limit or a narrower URI, glob or query to see the rest.`,
+				});
+			const count = largestFitting(total, (candidate) => fits(withCount(candidate)));
+			return count === undefined || count === 0 ? undefined : withCount(count);
+		}
+		case 'cat': {
+			const length = largestFitting(result.content.length, (candidate) => fits(truncateCatResult(result, candidate)));
+			return length === undefined || length === 0 ? undefined : truncateCatResult(result, length);
+		}
+		case 'stat':
+		case 'attach':
+			return undefined;
+	}
+}
+
+function truncateCatResult(result: HfFsCatResult, length: number): HfFsCatResult {
+	const content = sliceWithoutSplittingSurrogates(result.content, length);
+	const keptBytes = utf8ByteLength(content);
+	const exactBytes = utf8ByteLength(result.content) === result.bytes;
+	const resumeOffset =
+		exactBytes && result.next_offset !== undefined ? result.next_offset - result.bytes + keptBytes : undefined;
+	const resume =
+		resumeOffset !== undefined
+			? `Resume with offset ${resumeOffset.toString()}.`
+			: `Re-run cat with --offset advanced by ${keptBytes.toString()} bytes, or use a smaller --max-bytes.`;
+	return {
+		...result,
+		content,
+		...(exactBytes ? { bytes: keptBytes } : {}),
+		truncated: true,
+		truncation_reason: 'output_budget',
+		truncation_message: `Content truncated to fit the hf_fs output budget after ${keptBytes.toString()} bytes. ${resume}`,
+		...(resumeOffset !== undefined ? { next_offset: resumeOffset } : {}),
+	};
+}
+
+function largestFitting(max: number, fits: (candidate: number) => boolean): number | undefined {
+	if (!fits(0)) {
+		return undefined;
+	}
+	let low = 0;
+	let high = max;
+	while (low < high) {
+		const mid = Math.ceil((low + high) / 2);
+		if (fits(mid)) {
+			low = mid;
+		} else {
+			high = mid - 1;
+		}
+	}
+	return low;
+}
+
+function sliceWithoutSplittingSurrogates(value: string, length: number): string {
+	const slice = value.slice(0, length);
+	const last = slice.charCodeAt(slice.length - 1);
+	return last >= 0xd800 && last <= 0xdbff ? slice.slice(0, -1) : slice;
+}
+
+function utf8ByteLength(value: string): number {
+	return new TextEncoder().encode(value).byteLength;
 }
 
 function hfFsExecutionMetadata(result: HfFsExecutionResult): HfFsResult {
@@ -1743,7 +1892,7 @@ function compactHfFsOutputResult(result: HfFsResult): HfFsOutputResult {
 	return compact;
 }
 
-function boundHfFsBatchItem(item: HfFsBatchItemResult, stringLimit: number): HfFsBatchItemResult {
+function minimalHfFsBatchItem(item: HfFsBoundedBatchItem, stringLimit: number): HfFsBoundedBatchItem {
 	if (item.status === 'error') {
 		return {
 			index: item.index,
@@ -1756,28 +1905,22 @@ function boundHfFsBatchItem(item: HfFsBatchItemResult, stringLimit: number): HfF
 		};
 	}
 
-	const result = item.result;
+	const result = 'omitted' in item ? item.omitted : item.result;
 	const uri = truncateHfFsBatchString(result.uri, stringLimit);
 	if (result.op === 'attach') {
 		return {
 			index: item.index,
 			status: 'success',
-			result: {
+			omitted: {
 				op: result.op,
 				uri,
 				path: truncateHfFsBatchString(result.path ?? '', stringLimit),
 				mime_type: result.mime_type ?? 'image/png',
 				bytes: result.bytes ?? 0,
 			},
-			output_truncated: true,
 		};
 	}
-	return {
-		index: item.index,
-		status: 'success',
-		result: { op: result.op, uri },
-		output_truncated: true,
-	};
+	return { index: item.index, status: 'success', omitted: { op: result.op, uri } };
 }
 
 function truncateHfFsBatchString(value: string, maxChars: number): string {
@@ -1788,13 +1931,6 @@ function truncateHfFsBatchString(value: string, maxChars: number): string {
 		return value.slice(0, maxChars);
 	}
 	return `${value.slice(0, maxChars - 1)}…`;
-}
-
-function batchStructuredChars(results: readonly HfFsBatchItemResult[], truncated: boolean): number {
-	return JSON.stringify({
-		results,
-		...(truncated ? { truncated: true, truncation_reason: 'output_budget' } : {}),
-	}).length;
 }
 
 function renderHfFsMarkdown(result: HfFsResult): string {
@@ -1933,11 +2069,7 @@ function entryDetails(entry: HfFsEntry): string {
 			? undefined
 			: `semantic relevance=${(entry.semantic_relevance * 100).toFixed(1)}%`,
 		entry.anchor ? `anchor=${entry.anchor}` : undefined,
-		entry.description
-			? entry.type === 'paper'
-				? `summary=${boundedInlineText(entry.description)}`
-				: entry.description
-			: undefined,
+		entry.description && entry.type === 'paper' ? `summary=${entry.description}` : entry.description,
 		entry.upvotes === undefined ? undefined : `upvotes=${entry.upvotes.toString()}`,
 		entry.updated_at ? `updated=${entry.updated_at}` : undefined,
 		entry.created_at ? `created=${entry.created_at}` : undefined,
@@ -1952,7 +2084,7 @@ function entryDetails(entry: HfFsEntry): string {
 	return details.join(', ');
 }
 
-function boundedInlineText(value: string, maxLength = 240): string {
+function boundedInlineText(value: string, maxLength = HF_FS_LISTING_DESCRIPTION_MAX_CHARS): string {
 	const compact = value.replace(/\s+/g, ' ').trim();
 	return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength - 1).trimEnd()}…`;
 }
@@ -1962,7 +2094,7 @@ function trimMarkdownToBudget(markdown: string, maxChars: number): string {
 		return markdown;
 	}
 
-	const suffix = `\n\n_Markdown view truncated to fit the hf_fs output budget of approximately ${HF_FS_MAX_OUTPUT_TOKENS.toString()} tokens. structuredContent contains the full returned result._`;
+	const suffix = `\n\n_Output truncated to fit the hf_fs output budget of approximately ${HF_FS_MAX_OUTPUT_TOKENS.toString()} tokens. Use narrower limits or a smaller --max-bytes._`;
 	if (suffix.length >= maxChars) {
 		return suffix.slice(0, maxChars);
 	}
